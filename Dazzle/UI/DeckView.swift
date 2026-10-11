@@ -49,8 +49,8 @@ struct DeckView: View {
                 SlideStrip(presentation: presentation, state: state, play: play) {
                     PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
                         Image(systemName: "play.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                            .frame(width: 40, height: 40)
+                            .font(.system(size: 17))
+                            .frame(width: 44, height: 44)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white)

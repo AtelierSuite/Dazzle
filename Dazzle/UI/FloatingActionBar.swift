@@ -37,13 +37,14 @@ struct FloatingActionBar: View {
                 .animation(.snappy(duration: 0.2), value: state.selectedShapeID)
             }
             .scrollIndicators(.hidden)
+            .scrollClipDisabled()
             .scrollBounceBehavior(.basedOnSize)
             .onChange(of: state.selectedShapeID) { _, selected in
                 guard selected != nil else { return }
                 withAnimation(.snappy(duration: 0.3)) { proxy.scrollTo(Self.selectionActionsID, anchor: .trailing) }
             }
         }
-        .frame(height: 56)
+        .frame(height: 60)
         .onChange(of: photo) { _, item in
             guard let item else { return }
             photo = nil
@@ -267,10 +268,9 @@ struct FloatingActionBar: View {
     // MARK: - Building blocks
 
     private func group<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 8) {
             content()
         }
-        .padding(.horizontal, 4)
         .glassEffect(.regular.interactive(), in: .capsule)
     }
 
@@ -283,6 +283,7 @@ struct FloatingActionBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
     /// A button that opens a panel and acts as that panel's zoom source.
@@ -469,8 +470,8 @@ private struct ActionSymbol: View {
 
     var body: some View {
         Image(systemName: name)
-            .font(.system(size: 15, weight: .medium))
-            .frame(width: 40, height: 40)
+            .font(.system(size: 17))
+            .frame(width: 44, height: 44)
             .foregroundStyle(isOn ? Color.accentColor : .primary)
             // A round highlight, so an active control reads as a lit key.
             .background(isOn ? Color.accentColor.opacity(0.2) : .clear, in: .circle)
