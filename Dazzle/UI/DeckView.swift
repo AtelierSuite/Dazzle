@@ -8,6 +8,7 @@ struct DeckView: View {
     var fileName: String?
 
     @State private var state = EditorState()
+    @State private var bottomToolbarInset: CGFloat = 0
     @State private var history = DeckHistory()
     /// Tells this window's slideshow apart from another window's.
     @State private var editorID = UUID()
@@ -37,10 +38,10 @@ struct DeckView: View {
                     isRaised: state.presentedPanel != nil
                 )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .bottom) {
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
                         if !state.isDrawing {
                             FloatingActionBar(presentation: presentation, state: state, namespace: panelTransition)
-                                .padding(.bottom, 8)
+                                .padding(.bottom, 8 + (horizontalSizeClass == .compact ? 0 : bottomToolbarInset))
                         }
                     }
             }
@@ -58,6 +59,9 @@ struct DeckView: View {
                 }
                 .background(.bar)
             }
+        }
+        .background {
+            ToolbarBottomSafeAreaReader { bottomToolbarInset = $0 }
         }
         .background(Color(.secondarySystemBackground))
         // Keyboard navigation belongs to the canvas, and only while no panel
@@ -503,5 +507,48 @@ private struct UnsupportedFeatureNotice: View {
         .frame(idealWidth: 320, maxWidth: 360, alignment: .leading)
         // iPhone turns a popover into a sheet unless it is told not to.
         .presentationCompactAdaptation(.popover)
+    }
+}
+
+private struct ToolbarBottomSafeAreaReader: UIViewRepresentable {
+    let insetChanged: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> ObserverView {
+        let view = ObserverView()
+        view.insetChanged = insetChanged
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ view: ObserverView, context: Context) {
+        view.insetChanged = insetChanged
+        view.setNeedsLayout()
+    }
+
+    final class ObserverView: UIView {
+        var insetChanged: ((CGFloat) -> Void)?
+        private var lastInset: CGFloat?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            setNeedsLayout()
+        }
+
+        override func safeAreaInsetsDidChange() {
+            super.safeAreaInsetsDidChange()
+            setNeedsLayout()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard let window else { return }
+            let frameInWindow = convert(bounds, to: window)
+            let safeBottom = window.bounds.maxY - window.safeAreaInsets.bottom
+            let inset = max(0, frameInWindow.maxY - safeBottom)
+            guard lastInset != inset else { return }
+            lastInset = inset
+            let insetChanged = insetChanged
+            DispatchQueue.main.async { insetChanged?(inset) }
+        }
     }
 }
