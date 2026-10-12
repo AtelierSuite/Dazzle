@@ -9,11 +9,19 @@ extension UTType {
     static let macroEnabledPresentation = UTType("org.openxmlformats.presentationml.presentation.macroenabled") ?? .data
     /// The `.ppsx` slide show: a presentation that opens straight into playing.
     static let openXMLSlideShow = UTType("org.openxmlformats.presentationml.slideshow") ?? .data
+    /// A Keynote presentation saved as a single file, as iCloud Drive keeps them.
+    static let keynote = UTType("com.apple.iwork.keynote.sffkey") ?? .data
+    /// A Keynote presentation saved as a package directory.
+    static let keynotePackage = UTType("com.apple.iwork.keynote.key") ?? .package
 }
 
 /// The app's document: one presentation.
 struct DazzleDocument: FileDocument {
-    static let readableContentTypes: [UTType] = [.openXMLPresentation, .macroEnabledPresentation, .openXMLSlideShow]
+    /// Keynote presentations open, converted, but are never written back:
+    /// Dazzle saves only PowerPoint.
+    static let readableContentTypes: [UTType] = [
+        .openXMLPresentation, .macroEnabledPresentation, .openXMLSlideShow, .keynote, .keynotePackage,
+    ]
     static let writableContentTypes: [UTType] = [.openXMLPresentation, .macroEnabledPresentation, .openXMLSlideShow]
 
     var presentation: Presentation
@@ -27,6 +35,10 @@ struct DazzleDocument: FileDocument {
     }
 
     init(configuration: ReadConfiguration) throws {
+        if Self.isKeynote(configuration.contentType) {
+            presentation = try KeynoteImporter.presentation(from: configuration.file)
+            return
+        }
         guard let data = configuration.file.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
         }
@@ -34,7 +46,15 @@ struct DazzleDocument: FileDocument {
     }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: try PPTXWriter.data(from: presentation))
+        // Never write a PowerPoint package over a Keynote file.
+        if Self.isKeynote(configuration.contentType) {
+            throw KeynoteReadError.notWritable
+        }
+        return FileWrapper(regularFileWithContents: try PPTXWriter.data(from: presentation))
+    }
+
+    private static func isKeynote(_ type: UTType) -> Bool {
+        type.conforms(to: .keynote) || type.conforms(to: .keynotePackage)
     }
 }
 

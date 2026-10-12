@@ -38,6 +38,14 @@ struct KeynoteContainerTests {
             _ = try KeynoteImporter.presentation(from: archive)
         }
     }
+
+    @Test("Keynote files open but are never written to")
+    func documentTypes() {
+        #expect(DazzleDocument.readableContentTypes.contains(.keynote))
+        #expect(DazzleDocument.readableContentTypes.contains(.keynotePackage))
+        #expect(!DazzleDocument.writableContentTypes.contains(.keynote))
+        #expect(!DazzleDocument.writableContentTypes.contains(.keynotePackage))
+    }
 }
 
 @Suite("Keynote conversion")

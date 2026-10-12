@@ -42,6 +42,19 @@
 				<string>org.openxmlformats.presentationml.slideshow</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Keynote Presentation</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.apple.iwork.keynote.sffkey</string>
+				<string>com.apple.iwork.keynote.key</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
@@ -151,6 +164,42 @@
 				<key>public.mime-type</key>
 				<array>
 					<string>application/vnd.openxmlformats-officedocument.presentationml.slideshow</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.presentation</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Keynote Presentation</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.apple.iwork.keynote.sffkey</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>key</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+				<string>public.presentation</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Keynote Presentation</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.apple.iwork.keynote.key</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>key</string>
 				</array>
 			</dict>
 		</dict>
