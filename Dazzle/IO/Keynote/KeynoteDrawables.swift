@@ -321,6 +321,8 @@ struct Frame {
     var growsToFit: Bool
     /// Whether the width follows the text too, the text never wrapping.
     var growsWide: Bool
+    /// Whether the drawable is mirrored left to right.
+    var isFlipped: Bool
 
     init?(_ geometry: ProtoMessage?) {
         guard let geometry else { return nil }
@@ -333,6 +335,7 @@ struct Frame {
         let flags = geometry.int(3) ?? 3
         growsToFit = flags & 2 == 0
         growsWide = flags & 1 == 0
+        isFlipped = flags & 4 != 0
     }
 
     var rect: CGRect { CGRect(origin: origin, size: size) }
@@ -344,7 +347,7 @@ struct Frame {
         if rotation < 0 { rotation += 360 }
         let rotationValue = Int((rotation * 60_000).rounded())
         if rotationValue != 0, rotationValue != 21_600_000 { attributes += " rot=\"\(rotationValue)\"" }
-        if flipH { attributes += " flipH=\"1\"" }
+        if flipH != isFlipped { attributes += " flipH=\"1\"" }
         if flipV { attributes += " flipV=\"1\"" }
         var body = """
             <a:off x="\(KeynoteUnits.emu(origin.x))" y="\(KeynoteUnits.emu(origin.y))"/>\
