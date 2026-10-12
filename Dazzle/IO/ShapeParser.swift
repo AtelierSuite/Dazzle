@@ -46,6 +46,7 @@ final class ShapeParser {
         guard let tree else { return [] }
         return tree.children.compactMap { element in
             guard var shape = shape(from: element) else { return nil }
+            shape.isHidden = ["1", "true"].contains(Self.commonProperties(of: element)?.attribute("hidden") ?? "")
             shape.altText = Self.description(of: element)
             shape.link = link(in: Self.commonProperties(of: element))
             if capturesSource {

@@ -41,4 +41,35 @@ struct PictureRenderingTests {
         let unchanged = try #require(plain.dataProvider?.data as Data?)
         #expect(unchanged[0] == 0) // Distinct effects cannot collide in the cache.
     }
+
+    @Test("Hidden reference artwork stays stored but is neither drawn nor linked") @MainActor
+    func hiddenArtwork() throws {
+        let root = try XMLLite.parse(Data("""
+            <p:spTree xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+            <p:sp><p:nvSpPr><p:cNvPr id="23" name="Reference" hidden="1"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+            <p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="127000" cy="127000"/></a:xfrm>
+            <a:prstGeom prst="rect"/><a:solidFill><a:srgbClr val="000000"/></a:solidFill></p:spPr></p:sp>
+            </p:spTree>
+            """.utf8))
+        let shape = try #require(ShapeParser(partPath: "ppt/slides/slide1.xml", relationships: [], namespaces: OOXML.namespaces,
+                                           parts: [:], capturesSource: true).shapes(in: root).first)
+        #expect(shape.isHidden)
+        var presentation = Presentation.blank
+        var hidden = shape
+        hidden.source = nil // Also preserved when reconstructed, not just when source XML is retained.
+        hidden.link = .url("https://example.com")
+        presentation.slides[0].shapes = [hidden]
+        presentation.slides[0].isModified = true
+        let read = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        #expect(read.slides[0].shapes[0].isHidden)
+        let state = EditorState()
+        state.selectAllShapes(in: read)
+        #expect(state.selectedShapeIDs.isEmpty)
+        #expect(SlideRenderer(presentation: read, slide: read.slides[0]).linkAreas().isEmpty)
+        let canvas = try context(width: 10)
+        SlideRenderer(presentation: read, slide: read.slides[0], options: .init(drawsBackground: false))
+            .draw(in: canvas, size: CGSize(width: 10, height: 1))
+        let pixels = try #require(canvas.makeImage()?.dataProvider?.data as Data?)
+        #expect(pixels.allSatisfy { $0 == 0 })
+    }
 }

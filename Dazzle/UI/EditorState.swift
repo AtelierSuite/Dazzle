@@ -114,7 +114,7 @@ final class EditorState {
     }
 
     func selectAllShapes(in presentation: Presentation) {
-        selectedShapeIDs = selectedSlide(in: presentation)?.shapes.map(\.id) ?? []
+        selectedShapeIDs = selectedSlide(in: presentation)?.shapes.filter { !$0.isHidden }.map(\.id) ?? []
         isSelectingMultiple = selectedShapeIDs.count > 1
         if presentedPanel == .text { presentedPanel = nil }
     }

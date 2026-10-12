@@ -90,6 +90,8 @@ struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
     /// `cNvPr id`: unique within a slide, and what animations refer to.
     var shapeID: Int
     var name: String
+    /// `cNvPr hidden`: retained in the file, excluded from drawing and hit tests.
+    var isHidden = false
     var kind: Kind
     /// Where the shape sits. For a placeholder that does not say, this is
     /// where its layout puts it.

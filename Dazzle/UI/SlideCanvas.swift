@@ -479,6 +479,7 @@ struct SlideCanvas: View {
         // A line has no area; give it some, a fingertip's worth.
         let slop = 10 / scale
         return slide.shapes.reversed().first { shape in
+            guard !shape.isHidden else { return false }
             let frame = shape.frame.points
             // A turned shape is tested in its own unturned space.
             let local = Self.rotate(point, around: CGPoint(x: frame.midX, y: frame.midY), by: -shape.rotation)

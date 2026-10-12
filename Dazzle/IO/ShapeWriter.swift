@@ -77,7 +77,8 @@ struct ShapeWriter {
 
     private mutating func skeleton(for shape: SlideShape) -> String {
         let name = XMLLite.escape(shape.name)
-        let identity = "<p:cNvPr id=\"\(shape.shapeID)\" name=\"\(name)\"/>"
+        let hidden = shape.isHidden ? " hidden=\"1\"" : ""
+        let identity = "<p:cNvPr id=\"\(shape.shapeID)\" name=\"\(name)\"\(hidden)/>"
         switch shape.kind {
         case .group(let group):
             // Members are written in full inside the group, each as it would be on the slide.
@@ -122,7 +123,7 @@ struct ShapeWriter {
                 action = "<a:hlinkClick r:id=\"\" action=\"ppaction://media\"/>"
             }
             let common = action.isEmpty ? identity
-                : "<p:cNvPr id=\"\(shape.shapeID)\" name=\"\(name)\">\(action)</p:cNvPr>"
+                : "<p:cNvPr id=\"\(shape.shapeID)\" name=\"\(name)\"\(hidden)>\(action)</p:cNvPr>"
             return """
                 <p:pic><p:nvPicPr>\(common)<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr>\(media)</p:nvPr>\
                 </p:nvPicPr><p:blipFill><a:blip r:embed="\(reference)"/><a:stretch><a:fillRect/></a:stretch>\

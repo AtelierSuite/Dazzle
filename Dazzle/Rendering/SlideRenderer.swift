@@ -83,7 +83,7 @@ struct SlideRenderer {
         let style = style
         let renderer = TextRenderer(style: style, slideNumber: slideNumber)
         var areas: [(CGRect, Hyperlink)] = []
-        for shape in slide.shapes.reversed() where shape.rotation == 0 {
+        for shape in slide.shapes.reversed() where !shape.isHidden && shape.rotation == 0 {
             let sources = style.sources(for: shape)
             if let text = shape.text, case .shape = shape.kind {
                 let textFrame = shape.textFrame?.points ?? shape.geometry.presetName.map {
@@ -103,6 +103,7 @@ struct SlideRenderer {
         groupFill: SlideStyleContext.ResolvedFill? = nil, appearance: AnimatedAppearance? = nil,
         paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
+        guard !shape.isHidden else { return }
         let frame = shape.frame.points
         if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
         context.saveGState()
