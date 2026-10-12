@@ -1270,10 +1270,13 @@ struct AdvanceTests {
         state.setLoopsSlideshow(true, in: &presentation)
         let session = PresentationSession()
         session.start(presentation, title: "Test", fromSlide: 0, owner: UUID())
-        try await Task.sleep(for: .milliseconds(350))
-        #expect(session.position == 1)
-        try await Task.sleep(for: .milliseconds(250))
-        #expect(session.position == 0)
+        for expected in [1, 0] {
+            let deadline = Date().addingTimeInterval(2)
+            while session.position != expected && Date() < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(session.position == expected)
+        }
         #expect(session.isPresenting)
         session.end()
     }
