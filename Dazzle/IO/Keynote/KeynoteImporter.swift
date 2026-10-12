@@ -125,7 +125,7 @@ enum KeynoteImporter {
         }
         guard !slides.isEmpty else { throw KeynoteReadError.notKeynote }
         return Conversion(
-            parts: PresentationTemplate.parts(size: slideSize, slides: slides, media: media.parts),
+            parts: PresentationTemplate.parts(size: slideSize, slides: slides, media: media.parts, mediaTypes: media.contentTypes),
             notes: notes, omissions: omissions
         )
     }

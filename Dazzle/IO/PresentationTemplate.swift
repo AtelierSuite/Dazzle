@@ -30,12 +30,17 @@ enum PresentationTemplate {
     }
 
     /// The template's theme, master and layouts, holding `slides` instead of
-    /// its title slide, with `media` alongside.
-    static func parts(size: EMUSize, slides: [SlidePart], media: [String: Data] = [:]) -> [String: Data] {
+    /// its title slide, with `media` alongside. Media whose extension does
+    /// not settle its type, such as a chart's XML, is given one in `mediaTypes`.
+    static func parts(
+        size: EMUSize, slides: [SlidePart], media: [String: Data] = [:], mediaTypes: [String: String] = [:]
+    ) -> [String: Data] {
         var parts: [String: String] = [
-            "[Content_Types].xml": contentTypes(slideCount: slides.count, mediaExtensions: media.keys.map {
-                ($0 as NSString).pathExtension.lowercased()
-            }),
+            "[Content_Types].xml": contentTypes(
+                slideCount: slides.count,
+                mediaExtensions: media.keys.filter { mediaTypes[$0] == nil }.map { ($0 as NSString).pathExtension.lowercased() },
+                overrides: mediaTypes
+            ),
             "_rels/.rels": rootRelationships,
             "ppt/presentation.xml": presentation(size: size, slideCount: slides.count),
             "ppt/_rels/presentation.xml.rels": presentationRelationships(slideCount: slides.count),
@@ -77,7 +82,7 @@ enum PresentationTemplate {
         return "<Relationships xmlns=\"\(OOXML.packageRelationships)\">\(items.joined())</Relationships>"
     }
 
-    private static func contentTypes(slideCount: Int, mediaExtensions: [String]) -> String {
+    private static func contentTypes(slideCount: Int, mediaExtensions: [String], overrides added: [String: String]) -> String {
         let presentationML = "application/vnd.openxmlformats-officedocument.presentationml."
         var overrides = [
             ("/ppt/presentation.xml", presentationML + "presentation.main+xml"),
@@ -93,6 +98,7 @@ enum PresentationTemplate {
         for index in layouts.indices {
             overrides.append(("/ppt/slideLayouts/slideLayout\(index + 1).xml", presentationML + "slideLayout+xml"))
         }
+        overrides += added.sorted { $0.key < $1.key }.map { ("/" + $0.key, $0.value) }
         let entries = overrides.map { "<Override PartName=\"\($0.0)\" ContentType=\"\($0.1)\"/>" }.joined()
         let media = Set(mediaExtensions).subtracting(["png", "jpeg"]).sorted().map { ext in
             "<Default Extension=\"\(ext)\" ContentType=\"\(UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream")\"/>"

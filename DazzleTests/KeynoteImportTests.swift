@@ -148,6 +148,21 @@ struct KeynoteConversionTests {
         #expect(table.rows[1].cells.map { $0.text?.plainText ?? "" } == ["Apples", "7.5", ""])
     }
 
+    @Test("Charts keep their kind, data and series colours")
+    func chart() throws {
+        let shape = try #require(presentation.slides[1].shapes.first { if case .chart = $0.kind { true } else { false } })
+        guard case .chart(let chart?) = shape.kind else {
+            Issue.record("Expected a chart Dazzle can read")
+            return
+        }
+        #expect(chart.kind == .column)
+        #expect(chart.categories == ["2025", "2026"])
+        #expect(chart.allSeries.map(\.name) == ["Apples", "Pears"])
+        #expect(chart.allSeries.map(\.values) == [[12, 30], [7, 18]])
+        #expect(chart.allSeries.map(\.color) == [.rgb(0x0000FF), .rgb(0x00FF00)])
+        #expect(!chart.hasLegend)
+    }
+
     @Test("What could not be brought across is reported")
     func omissions() {
         #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .transitions])
@@ -268,6 +283,34 @@ enum KeynoteFixture {
             slide.reference(42, 22)
             slide.reference(42, 23)
             slide.reference(42, 60)
+            slide.reference(42, 70)
+        }
+        // A column chart of two series, one per column, the second in green.
+        add(70, KeynoteType.chart) { chart in
+            chart.message(1) { $0.message(1) { $0.geometry(x: 500, y: 100, width: 400, height: 300) } }
+            chart.message(10_000) { info in
+                info.varint(1, 1)
+                info.varint(5, 2)
+                info.message(7) { grid in
+                    grid.string(1, "2025")
+                    grid.string(1, "2026")
+                    grid.string(2, "Apples")
+                    grid.string(2, "Pears")
+                    for row in [[12.0, 7], [30, 18]] {
+                        grid.message(3) { gridRow in
+                            for value in row { gridRow.message(1) { $0.double(1, value) } }
+                        }
+                    }
+                }
+                info.reference(17, 71)
+                info.reference(17, 72)
+            }
+        }
+        add(71, 5028) { style in
+            style.message(10_000) { $0.message(13) { $0.message(1) { $0.color(0, 0, 1) } } }
+        }
+        add(72, 5028) { style in
+            style.message(10_000) { $0.message(13) { $0.message(1) { $0.color(0, 1, 0) } } }
         }
         addTable(add)
         add(23, KeynoteType.group) { group in

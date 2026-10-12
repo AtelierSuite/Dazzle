@@ -14,6 +14,8 @@ final class KeynoteMedia {
     private var paths: [UInt64: String] = [:]
     private var failed: Set<UInt64> = []
     private(set) var parts: [String: Data] = [:]
+    /// Content types for parts their extension does not settle, such as charts.
+    private(set) var contentTypes: [String: String] = [:]
 
     init(archive: KeynoteArchive) {
         self.archive = archive
@@ -22,6 +24,17 @@ final class KeynoteMedia {
     var extensions: Set<String> {
         Set(parts.keys.map { ($0 as NSString).pathExtension.lowercased() })
     }
+
+    /// Adds a chart part, returning where it went.
+    func addChart(_ data: Data) -> String {
+        let path = "ppt/charts/chart\(contentTypes.count + 1).xml"
+        parts[path] = data
+        contentTypes[path] = ChartWriter.contentType
+        return path
+    }
+
+    /// The next chart's path, for a chart model that must name its part.
+    var nextChartPath: String { "ppt/charts/chart\(contentTypes.count + 1).xml" }
 
     func path(for identifier: UInt64) -> String? {
         if let path = paths[identifier] { return path }

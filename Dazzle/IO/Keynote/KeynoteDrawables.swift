@@ -79,6 +79,11 @@ struct KeynoteSlideWriter {
             return picture(drawable: object.message.message(1), data: poster, style: object.message.reference(19), mask: nil)
         case KeynoteType.group:
             return group(object.message)
+        case KeynoteType.chart:
+            return chart(object.message) ?? {
+                skipped.insert(object.type)
+                return nil
+            }()
         case KeynoteType.table:
             return table(object.message) ?? {
                 skipped.insert(object.type)
@@ -216,6 +221,25 @@ struct KeynoteSlideWriter {
             <p:graphicFrame><p:nvGraphicFramePr>\(nonVisual)<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/>\
             </p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>\
             \(frame.xml().replacingOccurrences(of: "a:xfrm", with: "p:xfrm"))\(table.xml)</p:graphicFrame>
+            """
+    }
+
+    private mutating func chart(_ drawable: ProtoMessage) -> String? {
+        guard let frame = Frame(drawable.message(1)?.message(1)),
+              let chart = KeynoteChart(archive: archive, styles: styles).chart(drawable, path: media.nextChartPath),
+              let data = ChartWriter.data(for: chart, original: nil) else { return nil }
+        let path = media.addChart(data)
+        let relationship = Relationship.unusedID(in: relationships)
+        relationships.append(Relationship(
+            id: relationship, type: OOXML.RelationshipType.chart, target: PackagePath.relativeTarget(to: path, from: partName)
+        ))
+        let nonVisual = nonVisual(drawable.message(1), name: "Chart")
+        return """
+            <p:graphicFrame><p:nvGraphicFramePr>\(nonVisual)<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>\
+            \(frame.xml().replacingOccurrences(of: "a:xfrm", with: "p:xfrm"))<a:graphic>\
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">\
+            <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="\(relationship)"/>\
+            </a:graphicData></a:graphic></p:graphicFrame>
             """
     }
 
