@@ -87,6 +87,8 @@ struct DeckView: View {
             // is always in view; export needs the room for its slide picker.
             .presentationDetents(panel == .export ? [.large] : ([.find, .chart, .comments, .headerFooter, .animations].contains(panel) ? [.medium, .large] : [.medium]))
             .presentationDragIndicator(.visible)
+            // Swiping inside a panel scrolls its content rather than growing it.
+            .presentationContentInteraction(.scrolls)
             .presentationBackground(.regularMaterial)
             // The slide stays live above a half-height panel, so changes can be
             // watched as they are made and another shape picked.
@@ -99,6 +101,7 @@ struct DeckView: View {
             UnsupportedFeatureNotice(report: document.presentation.unsupportedFeatures)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
+                .presentationContentInteraction(.scrolls)
         }
         .fullScreenCover(isPresented: slideshowBinding, onDismiss: {
             if let id = session.lastShownSlideID, document.presentation.index(of: id) != nil { state.selectSlide(id) }
