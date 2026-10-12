@@ -22,26 +22,68 @@ struct KeynoteText {
             .replacingOccurrences(of: "\u{2028}", with: "\n")
     }
 
-    /// The `a:p` elements for a storage, or `nil` when it holds no text.
-    func paragraphs(_ storage: KeynoteArchive.Object?) -> String? {
-        guard let storage else { return nil }
-        let message = storage.message
+    /// A storage's text and the tables that style it.
+    private struct Contents {
+        var text: [UInt16]
+        var paragraphStyles: [Span<UInt64?>]
+        var listStyles: [Span<UInt64?>]
+        var characterStyles: [Span<UInt64?>]
+        var levels: [Span<Int>]
+    }
+
+    private func contents(_ storage: KeynoteArchive.Object?) -> Contents? {
+        guard let message = storage?.message else { return nil }
         let text = Array(message.strings(3).joined().utf16)
         guard !text.isEmpty, !Self.clean(String(decoding: text, as: UTF16.self)).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
-
         // A paragraph entry with no style keeps the one before it; a character
         // entry with none ends the character style.
-        let paragraphStyles = objectTable(message.message(5), carryingForward: true)
-        let listStyles = objectTable(message.message(7), carryingForward: true)
-        let characterStyles = objectTable(message.message(8), carryingForward: false)
-        let levels = (message.message(6)?.messages(1) ?? []).compactMap { entry -> Span<Int>? in
-            guard let start = entry.int(1) else { return nil }
-            return Span(start: start, value: entry.int(2) ?? 0)
-        }
-        return paragraphs(
-            text, paragraphStyles: paragraphStyles, listStyles: listStyles, characterStyles: characterStyles, levels: levels
+        return Contents(
+            text: text,
+            paragraphStyles: objectTable(message.message(5), carryingForward: true),
+            listStyles: objectTable(message.message(7), carryingForward: true),
+            characterStyles: objectTable(message.message(8), carryingForward: false),
+            levels: (message.message(6)?.messages(1) ?? []).compactMap { entry -> Span<Int>? in
+                guard let start = entry.int(1) else { return nil }
+                return Span(start: start, value: entry.int(2) ?? 0)
+            }
         )
+    }
+
+    /// The `a:p` elements for a storage, or `nil` when it holds no text.
+    func paragraphs(_ storage: KeynoteArchive.Object?) -> String? {
+        guard let contents = contents(storage) else { return nil }
+        return paragraphs(
+            contents.text, paragraphStyles: contents.paragraphStyles, listStyles: contents.listStyles,
+            characterStyles: contents.characterStyles, levels: contents.levels
+        )
+    }
+
+    /// A placeholder's sample text as a layout's `a:lstStyle`: each level
+    /// formatted as its first sample paragraph is, which is what Keynote's
+    /// prompts — one paragraph per level — are for.
+    func listStyle(_ storage: KeynoteArchive.Object?) -> String {
+        guard let contents = contents(storage) else { return "<a:lstStyle/>" }
+        var levels: [Int: String] = [:]
+        var start = 0
+        while start <= contents.text.count {
+            var end = start
+            while end < contents.text.count, !Self.isParagraphBreak(contents.text[end]) { end += 1 }
+            let level = min(value(in: contents.levels, at: start) ?? 0, 8)
+            if levels[level] == nil {
+                let style = value(in: contents.paragraphStyles, at: start) ?? nil
+                let properties = paragraphProperties(
+                    style, listStyle: value(in: contents.listStyles, at: start) ?? nil, level: level, isFirst: false
+                )
+                let run = runProperties(
+                    paragraph: style, character: value(in: contents.characterStyles, at: start) ?? nil, element: "defRPr"
+                )
+                levels[level] = "<a:lvl\(level + 1)pPr\(properties.attributes)>\(properties.children)\(run)</a:lvl\(level + 1)pPr>"
+            }
+            start = end + 1
+            if end == contents.text.count { break }
+        }
+        return "<a:lstStyle>" + levels.keys.sorted().compactMap { levels[$0] }.joined() + "</a:lstStyle>"
     }
 
     /// Plain text in one paragraph style, as a table cell holds it. Empty
@@ -66,9 +108,9 @@ struct KeynoteText {
             let paragraphStyle = value(in: paragraphStyles, at: paragraphStart) ?? nil
             let listStyle = value(in: listStyles, at: paragraphStart) ?? nil
             let level = value(in: levels, at: paragraphStart) ?? 0
-            result += "<a:p>" + paragraphProperties(
-                paragraphStyle, listStyle: listStyle, level: level, isFirst: paragraphStart == 0
-            )
+            let properties = paragraphProperties(paragraphStyle, listStyle: listStyle, level: level, isFirst: paragraphStart == 0)
+            let levelAttribute = level > 0 ? " lvl=\"\(min(level, 8))\"" : ""
+            result += "<a:p><a:pPr\(levelAttribute)\(properties.attributes)>\(properties.children)</a:pPr>"
 
             // Runs break wherever the character style changes.
             var boundaries = Set([paragraphStart, paragraphEnd])
@@ -135,7 +177,10 @@ struct KeynoteText {
         }
     }
 
-    private func paragraphProperties(_ style: UInt64?, listStyle: UInt64?, level: Int, isFirst: Bool) -> String {
+    /// A paragraph's `a:pPr` attributes, leaving out its level, and children.
+    private func paragraphProperties(
+        _ style: UInt64?, listStyle: UInt64?, level: Int, isFirst: Bool
+    ) -> (attributes: String, children: String) {
         var attributes = ""
         var children = ""
 
@@ -160,7 +205,6 @@ struct KeynoteText {
         } else {
             first -= left
         }
-        if level > 0 { attributes += " lvl=\"\(min(level, 8))\"" }
         attributes += " marL=\"\(KeynoteUnits.emu(left))\" indent=\"\(KeynoteUnits.emu(first))\""
 
         if let spacing = paragraphProperty(style, { $0.message(13) }) {
@@ -179,7 +223,7 @@ struct KeynoteText {
             children += "<a:spcAft><a:spcPts val=\"\(Int((after * 100).rounded()))\"/></a:spcAft>"
         }
         children += bullet
-        return "<a:pPr\(attributes)>\(children)</a:pPr>"
+        return (attributes, children)
     }
 
     /// A list style's value for `level`, from the first style up the chain

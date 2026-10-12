@@ -3,11 +3,10 @@ import Foundation
 /// Opens a Keynote document by converting it into a PowerPoint package and
 /// reading that like any other file.
 ///
-/// Every slide goes onto the built-in template's blank layout with its
-/// objects placed as Keynote had them: the template slide's own objects,
-/// then the slide's, then any title and body text. Keynote's templates are
-/// not carried over as layouts, so a converted deck looks the same but
-/// saves without them.
+/// Each template slide in use becomes a layout of the built-in template's
+/// master, with its background, objects, and title and body placeholders.
+/// Slides go onto their template's layout with their objects placed as
+/// Keynote had them, their title and body as the layout's placeholders.
 enum KeynoteImporter {
     static func presentation(from data: Data) throws -> Presentation {
         try presentation(fromEntries: ZipArchive.entries(in: data))
@@ -112,12 +111,39 @@ enum KeynoteImporter {
         var notes: [String] = []
         var omissions: Set<UnsupportedFeatureReport.Omission> = []
         var animations: [[ShapeAnimation]] = []
+        // A layout for each template slide in use, in order of first use.
+        var layouts: [PresentationTemplate.SlidePart] = []
+        var layoutPaths: [UInt64: String] = [:]
         for node in nodes.compactMap({ archive[$0] }) {
             guard let slide = archive[node.message.reference(2)] else { continue }
+            let template = archive[slide.message.reference(17)]
+            var layoutPath: String?
+            if let template {
+                if let existing = layoutPaths[template.identifier] {
+                    layoutPath = existing
+                } else {
+                    let path = PresentationTemplate.addedLayoutPath(layouts.count)
+                    var writer = KeynoteSlideWriter(
+                        archive: archive, media: media, partName: path,
+                        parent: Relationship(
+                            id: "rId1", type: OOXML.RelationshipType.slideMaster,
+                            target: PackagePath.relativeTarget(to: PresentationTemplate.masterPath, from: path)
+                        ),
+                        isLayout: true
+                    )
+                    let xml = layoutXML(template, number: layouts.count + 1, writer: &writer)
+                    layouts.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
+                    omissions.formUnion(writer.skipped.map(omission))
+                    layoutPaths[template.identifier] = path
+                    layoutPath = path
+                }
+            }
             let partName = "ppt/slides/slide\(slides.count + 1).xml"
+            let layout = layoutPath.map { PackagePath.relativeTarget(to: $0, from: partName) }
+                ?? PresentationTemplate.relativeLayout(from: partName)
             var writer = KeynoteSlideWriter(
                 archive: archive, media: media, partName: partName,
-                layout: PresentationTemplate.relativeLayout(from: partName),
+                parent: Relationship(id: "rId1", type: OOXML.RelationshipType.slideLayout, target: layout),
                 fittedFrames: fittedFrames.indices.contains(slides.count) ? fittedFrames[slides.count] : [:]
             )
             let xml = slideXML(slide, hidden: node.message.bool(4) ?? false, writer: &writer)
@@ -131,7 +157,9 @@ enum KeynoteImporter {
         }
         guard !slides.isEmpty else { throw KeynoteReadError.notKeynote }
         return Conversion(
-            parts: PresentationTemplate.parts(size: slideSize, slides: slides, media: media.parts, mediaTypes: media.contentTypes),
+            parts: PresentationTemplate.parts(
+                size: slideSize, slides: slides, layouts: layouts, media: media.parts, mediaTypes: media.contentTypes
+            ),
             notes: notes, animations: animations, omissions: omissions
         )
     }
@@ -145,36 +173,46 @@ enum KeynoteImporter {
         }
     }
 
+    /// A template slide as a layout: its background, its objects, and its
+    /// title and body placeholders, named as the template is.
+    private static func layoutXML(_ template: KeynoteArchive.Object, number: Int, writer: inout KeynoteSlideWriter) -> String {
+        let background = backgroundXML(template.message.reference(1), writer: &writer)
+        let shapes = drawables(of: template).compactMap { writer.drawable($0) }.joined()
+        let name = XMLLite.escape(template.message.string(10).flatMap { $0.isEmpty ? nil : $0 } ?? "Keynote \(number)")
+        return """
+            <p:sldLayout xmlns:a="\(OOXML.drawingML)" xmlns:r="\(OOXML.relationshipsNS)" xmlns:p="\(OOXML.presentationML)" \
+            preserve="1"><p:cSld name="\(name)">\(background)\(spTree(shapes))</p:cSld>\
+            <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>
+            """
+    }
+
+    private static func backgroundXML(_ style: UInt64?, writer: inout KeynoteSlideWriter) -> String {
+        let fill = writer.styles.resolve(style) { $0.message.message(11)?.message(1) }
+        guard let xml = KeynoteStyles.fill(fill, opacity: 1, image: { writer.imageRelationship($0) }) else { return "" }
+        return "<p:bg><p:bgPr>\(xml)<a:effectLst/></p:bgPr></p:bg>"
+    }
+
+    private static func spTree(_ shapes: String) -> String {
+        """
+        <p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>\
+        <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/>\
+        </a:xfrm></p:grpSpPr>\(shapes)</p:spTree>
+        """
+    }
+
+    /// A slide on its template's layout, which draws the template's objects
+    /// behind it. The slide's own background is written only where it
+    /// differs from the template's.
     private static func slideXML(_ slide: KeynoteArchive.Object, hidden: Bool, writer: inout KeynoteSlideWriter) -> String {
-        let archive = writer.archive
-        let styles = writer.styles
-        let template = archive[slide.message.reference(17)]
-
-        var background = ""
-        let fill = styles.resolve(slide.message.reference(1)) { $0.message.message(11)?.message(1) }
-            ?? styles.resolve(template?.message.reference(1)) { $0.message.message(11)?.message(1) }
-        if let fill = KeynoteStyles.fill(fill, opacity: 1, image: { writer.imageRelationship($0) }) {
-            background = "<p:bg><p:bgPr>\(fill)<a:effectLst/></p:bgPr></p:bg>"
-        }
-
-        var shapes = ""
-        // The template's own objects sit behind the slide's; its placeholders
-        // only stand in for the slide's.
-        if let template {
-            for identifier in drawables(of: template) where archive[identifier]?.type != KeynoteType.placeholder {
-                shapes += writer.drawable(identifier) ?? ""
-            }
-        }
-        for identifier in drawables(of: slide) {
-            shapes += writer.drawable(identifier) ?? ""
-        }
-
+        let template = writer.archive[slide.message.reference(17)]
+        let style = slide.message.reference(1)
+        let background = template != nil && style == template?.message.reference(1)
+            ? "" : backgroundXML(style, writer: &writer)
+        let shapes = drawables(of: slide).compactMap { writer.drawable($0) }.joined()
         let show = hidden ? " show=\"0\"" : ""
         return """
             <p:sld xmlns:a="\(OOXML.drawingML)" xmlns:r="\(OOXML.relationshipsNS)" xmlns:p="\(OOXML.presentationML)"\(show)>\
-            <p:cSld>\(background)<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>\
-            <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/>\
-            </a:xfrm></p:grpSpPr>\(shapes)</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>\
+            <p:cSld>\(background)\(spTree(shapes))</p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>\
             \(transitionXML(slide.message.message(4)?.message(2)?.message(8)))</p:sld>
             """
     }

@@ -2,7 +2,9 @@ import CoreGraphics
 import Foundation
 
 /// Writes one Keynote slide's drawables as `p:spTree` children, collecting
-/// the relationships they need.
+/// the relationships they need. A template slide is written as a layout:
+/// its title and body placeholders are kept, sample text and all, to
+/// format what slides made from it say.
 struct KeynoteSlideWriter {
     let archive: KeynoteArchive
     let styles: KeynoteStyles
@@ -17,8 +19,13 @@ struct KeynoteSlideWriter {
     private var nextShapeID = 2
     /// Measured frames for text that grows to fit, by shape id.
     private let fittedFrames: [Int: EMURect]
+    let isLayout: Bool
 
-    init(archive: KeynoteArchive, media: KeynoteMedia, partName: String, layout: String, fittedFrames: [Int: EMURect] = [:]) {
+    /// `parent` is the part's first relationship: a slide's layout, or a layout's master.
+    init(
+        archive: KeynoteArchive, media: KeynoteMedia, partName: String, parent: Relationship,
+        isLayout: Bool = false, fittedFrames: [Int: EMURect] = [:]
+    ) {
         self.archive = archive
         styles = KeynoteStyles(archive: archive)
         text = KeynoteText(archive: archive, styles: styles)
@@ -26,7 +33,8 @@ struct KeynoteSlideWriter {
         self.partName = partName
         locale = archive.locale
         self.fittedFrames = fittedFrames
-        relationships = [Relationship(id: "rId1", type: OOXML.RelationshipType.slideLayout, target: layout)]
+        self.isLayout = isLayout
+        relationships = [parent]
     }
 
     /// A relationship to the picture, adding one the first time it is asked for.
@@ -77,10 +85,18 @@ struct KeynoteSlideWriter {
             return shapeInfo(object.message)
         case KeynoteType.placeholder:
             guard let info = object.message.message(1) else { return nil }
+            let type: String? = switch object.message.int(2) {
+            case 2: "title"
+            case 3: "body"
+            default: nil
+            }
+            if isLayout {
+                return type.flatMap { shapeInfo(info, placeholder: $0) }
+            }
             // An empty placeholder shows only its prompt, which never plays.
             let storage = archive[info.reference(4) ?? info.reference(3)]
             guard !text.plainText(storage).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            return shapeInfo(info)
+            return shapeInfo(info, placeholder: type)
         case KeynoteType.image:
             return image(object.message)
         case KeynoteType.movie:
@@ -106,10 +122,10 @@ struct KeynoteSlideWriter {
         }
     }
 
-    private mutating func shapeInfo(_ info: ProtoMessage) -> String? {
+    private mutating func shapeInfo(_ info: ProtoMessage, placeholder: String? = nil) -> String? {
         guard let shape = info.message(1) else { return nil }
         let storage = archive[info.reference(4) ?? info.reference(3)]
-        return self.shape(shape, storage: storage, isTextBox: info.bool(6) ?? false)
+        return self.shape(shape, storage: storage, isTextBox: placeholder == nil && info.bool(6) == true, placeholder: placeholder)
     }
 
     private mutating func nonVisual(_ drawable: ProtoMessage?, name: String) -> String {
@@ -124,7 +140,10 @@ struct KeynoteSlideWriter {
         return "<p:cNvPr\(attributes)/>"
     }
 
-    private mutating func shape(_ shape: ProtoMessage, storage: KeynoteArchive.Object?, isTextBox: Bool) -> String? {
+    /// `placeholder` is the `p:ph` type for a title or body.
+    private mutating func shape(
+        _ shape: ProtoMessage, storage: KeynoteArchive.Object?, isTextBox: Bool, placeholder: String? = nil
+    ) -> String? {
         let drawable = shape.message(1)
         guard var frame = Frame(drawable?.message(1)) else { return nil }
         let style = shape.reference(2)
@@ -147,11 +166,20 @@ struct KeynoteSlideWriter {
         let transform = frame.xml(flipH: pathSource?.bool(1) ?? false, flipV: pathSource?.bool(2) ?? false)
         let geometry = KeynoteGeometry.xml(pathSource, size: frame.size)
 
-        let name = isTextBox ? "TextBox" : storage == nil ? "Shape" : "Text"
+        let name = switch placeholder {
+        case "title"?: "Title"
+        case "body"?: "Body"
+        default: isTextBox ? "TextBox" : storage == nil ? "Shape" : "Text"
+        }
         let nonVisual = nonVisual(drawable, name: name)
         let textBody = textBody(storage, style: style, growsToFit: frame.growsToFit)
+        let properties = switch placeholder {
+        case "body"?: "<p:cNvSpPr><a:spLocks noGrp=\"1\"/></p:cNvSpPr><p:nvPr><p:ph type=\"body\" idx=\"1\"/></p:nvPr>"
+        case let type?: "<p:cNvSpPr><a:spLocks noGrp=\"1\"/></p:cNvSpPr><p:nvPr><p:ph type=\"\(type)\"/></p:nvPr>"
+        case nil: "<p:cNvSpPr\(isTextBox ? " txBox=\"1\"" : "")/><p:nvPr/>"
+        }
         return """
-            <p:sp><p:nvSpPr>\(nonVisual)<p:cNvSpPr\(isTextBox ? " txBox=\"1\"" : "")/><p:nvPr/></p:nvSpPr>\
+            <p:sp><p:nvSpPr>\(nonVisual)\(properties)</p:nvSpPr>\
             <p:spPr>\(transform)\(geometry)\(fill)\(line)\(effects)</p:spPr>\(textBody)</p:sp>
             """
     }
@@ -179,7 +207,8 @@ struct KeynoteSlideWriter {
         let vertical = property({ $0.bool(8) ?? $0.bool(11) }) == true ? " vert=\"eaVert\"" : ""
         return """
             <p:txBody><a:bodyPr wrap="square" lIns="\(inset(1))" tIns="\(inset(2))" rIns="\(inset(3))" \
-            bIns="\(inset(4))" anchor="\(anchor)" rtlCol="0"\(vertical)>\(autofit)</a:bodyPr><a:lstStyle/>\
+            bIns="\(inset(4))" anchor="\(anchor)" rtlCol="0"\(vertical)>\(autofit)</a:bodyPr>\
+            \(isLayout ? text.listStyle(storage) : "<a:lstStyle/>")\
             \(paragraphs)</p:txBody>
             """
     }

@@ -86,6 +86,21 @@ struct KeynoteConversionTests {
         #expect(run.properties.latinFont == "Helvetica")
     }
 
+    @Test("Templates become layouts, which slides are on and draw behind them")
+    func layouts() throws {
+        let layout = try #require(presentation.resources.layouts[presentation.slides[0].layoutPath])
+        #expect(layout.name == "Title Only")
+        #expect(presentation.resources.orderedLayouts.contains { $0.name == "Title Only" })
+        // The band is the layout's, not copied onto the slide.
+        #expect(layout.shapes.contains { if case .solid(let color)? = $0.fill { color.base == .rgb(0x808080) } else { false } })
+        #expect(!presentation.slides[0].shapes.contains { $0.frame.width == 1_024 * 12_700 })
+        #expect(layout.shapes.contains { $0.placeholder?.isTitle == true })
+        // The slide's title is the layout's title placeholder.
+        #expect(presentation.slides[0].title == "Hello Keynote")
+        // A slide without a template stays on the blank layout.
+        #expect(presentation.resources.layouts[presentation.slides[1].layoutPath]?.name == "Blank")
+    }
+
     @Test("Shapes keep their fill and turn the same way")
     func shape() throws {
         let shape = try #require(presentation.slides[0].shapes.first { $0.fill != nil && $0.text == nil })
@@ -252,6 +267,7 @@ enum KeynoteFixture {
         }
         add(11, KeynoteType.slide) { slide in
             slide.reference(1, 12)
+            slide.reference(17, 90)
             slide.reference(5, 13)
             slide.reference(27, 16)
             for drawable: UInt64 in [13, 14, 15, 17] { slide.reference(42, drawable) }
@@ -279,6 +295,38 @@ enum KeynoteFixture {
             build.reference(1, 14)
             build.string(2, "All at Once")
             build.message(4) { $0.message(18) { $0.string(1, "Action"); $0.string(2, "apple:action-motion-path") } }
+        }
+        // The slide's template: a grey band behind everything, and a title
+        // placeholder whose sample text sets the title's size.
+        add(90, KeynoteType.templateSlide) { template in
+            template.reference(1, 91)
+            template.string(10, "Title Only")
+            template.reference(42, 92)
+            template.reference(42, 93)
+        }
+        add(91, KeynoteType.slideStyle) { style in
+            style.message(11) { $0.message(1) { $0.message(1) { $0.color(1, 1, 1) } } }
+        }
+        add(92, KeynoteType.shape) { shape in
+            shape.message(1) { $0.message(1) { $0.geometry(x: 0, y: 0, width: 1_024, height: 30) } }
+            shape.reference(2, 94)
+        }
+        add(94, KeynoteType.shapeStyle) { style in
+            style.message(11) { $0.message(1) { $0.message(1) { $0.color(0.5, 0.5, 0.5) } } }
+        }
+        add(93, KeynoteType.placeholder) { placeholder in
+            placeholder.message(1) { info in
+                info.message(1) { $0.message(1) { $0.message(1) { $0.geometry(x: 50, y: 40, width: 900, height: 120) } } }
+                info.reference(4, 95)
+            }
+            placeholder.varint(2, 2)
+        }
+        add(95, KeynoteType.storage) { storage in
+            storage.string(3, "Title")
+            storage.message(5) { $0.message(1) { entry in
+                entry.varint(1, 0)
+                entry.reference(2, 40)
+            } }
         }
         // An equation, which Dazzle cannot convert.
         add(17, 2015) { equation in
