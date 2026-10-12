@@ -60,7 +60,7 @@ enum AnimationXML {
                                       isAdditive: motion.firstChild(named: "cBhvr")?.attribute("additive") == "sum"))
         }
         var scaling: AnimationScale?
-        if effect == .growShrink, let scale = firstElement(named: "animScale", in: node) {
+        if category == .emphasis, let scale = firstElement(named: "animScale", in: node) {
             func value(_ name: String) -> CGSize? {
                 guard let point = scale.firstChild(named: name),
                       let x = point.attribute("x").flatMap(Double.init),
@@ -74,10 +74,21 @@ enum AnimationXML {
             AnimationTimingCurve(acceleration: (node.attribute("accel").flatMap(Double.init) ?? 0) / 100_000,
                                  deceleration: (node.attribute("decel").flatMap(Double.init) ?? 0) / 100_000)
         } else { nil }
+        let behaviourTiming = firstElement(named: "cTn", in: node) {
+            $0.attribute("repeatCount") != nil || $0.attribute("autoRev") != nil || $0.attribute("repeatDur") != nil
+        }
+        let repeatNode = [node, behaviourTiming].compactMap { $0 }.first {
+            $0.attribute("repeatCount") != nil || $0.attribute("autoRev") != nil || $0.attribute("repeatDur") != nil
+        }
+        let repetition = repeatNode.map {
+            AnimationRepetition(count: $0.attribute("repeatCount") == "indefinite" ? nil : (milliseconds($0.attribute("repeatCount")) ?? 1),
+                                autoReverses: ["1", "true"].contains($0.attribute("autoRev") ?? ""),
+                                repeatDuration: milliseconds($0.attribute("repeatDur")))
+        }
         return ShapeAnimation(
             shapeID: shapeID, paragraphs: paragraphs, category: category, effect: effect, trigger: trigger,
             duration: duration(of: node), delay: milliseconds(delay(of: node)) ?? 0,
-            source: XMLLite.serialize(par), scaling: scaling, timingCurve: timingCurve
+            source: XMLLite.serialize(par), scaling: scaling, timingCurve: timingCurve, repetition: repetition
         )
     }
 
@@ -104,10 +115,7 @@ enum AnimationXML {
         func visit(_ element: XMLElement) {
             if element.name == "cBhvr", let timing = element.firstChild(named: "cTn") {
                 let length = milliseconds(timing.attribute("dur")) ?? 0
-                // Repeats are counted in thousandths.
-                let repeats = milliseconds(timing.attribute("repeatCount")) ?? 1
-                let reverses = timing.attribute("autoRev") == "1" ? 2.0 : 1
-                end = max(end, (milliseconds(delay(of: timing)) ?? 0) + length * repeats * reverses)
+                end = max(end, (milliseconds(delay(of: timing)) ?? 0) + length)
             }
             element.children.forEach(visit)
         }
@@ -247,10 +255,15 @@ enum AnimationXML {
         let curve = animation.timingCurve.map {
             " accel=\"\(Int(($0.acceleration * 100_000).rounded()))\" decel=\"\(Int(($0.deceleration * 100_000).rounded()))\""
         } ?? ""
+        let repeatTiming = animation.repetition.map {
+            let count = $0.count.map { ms($0) } ?? "indefinite"
+            let duration = $0.repeatDuration.map { " repeatDur=\"\(ms($0))\"" } ?? ""
+            return " repeatCount=\"\(count)\" autoRev=\"\($0.autoReverses ? 1 : 0)\"" + duration
+        } ?? ""
         return """
             <p:par><p:cTn id="\(id)" presetID="\(animation.effect.presetID)" presetClass="\(category.presetClass)" \
             presetSubtype="\(animation.effect.presetSubtype)" fill="hold" grpId="0" \
-            nodeType="\(nodeType)"\(curve)><p:stCondLst><p:cond delay="\(ms(animation.delay))"/></p:stCondLst>\
+            nodeType="\(nodeType)"\(curve)\(repeatTiming)><p:stCondLst><p:cond delay="\(ms(animation.delay))"/></p:stCondLst>\
             <p:childTnLst>\(behaviours)</p:childTnLst></p:cTn></p:par>
             """
     }
@@ -340,6 +353,9 @@ enum AnimationXML {
             return fade("out") + move("ppt_x", from: "#ppt_x", to: "#ppt_x") + move("ppt_y", from: "#ppt_y", to: "#ppt_y-.1")
                 + visibility("hidden", at: duration - 0.001)
         case (.emphasis, .pulse):
+            if animation.repetition != nil {
+                return behaviour("animScale", dur: duration, extra: " fill=\"hold\"", content: "<p:by x=\"105000\" y=\"105000\"/>")
+            }
             return behaviour("animScale", dur: duration / 2, extra: " autoRev=\"1\" fill=\"hold\"",
                              content: "<p:by x=\"105000\" y=\"105000\"/>")
         case (.emphasis, .spin):

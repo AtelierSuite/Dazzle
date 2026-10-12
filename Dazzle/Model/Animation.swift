@@ -172,11 +172,19 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
     /// The independent axis values of an imported grow/shrink behaviour.
     var scaling: AnimationScale?
     var timingCurve: AnimationTimingCurve?
+    var repetition: AnimationRepetition?
+
+    var activeDuration: Double { repetition?.duration(base: duration) ?? duration }
+
+    func progress(elapsed: Double, finished: Bool = false) -> Double {
+        if let repetition { return repetition.progress(elapsed: elapsed, base: duration, finished: finished) }
+        return finished || duration <= 0 ? 1 : min(elapsed / duration, 1)
+    }
 
     init(
         id: UUID = UUID(), shapeID: Int, paragraphs: ClosedRange<Int>? = nil, category: Category, effect: Effect,
         trigger: Trigger = .onClick, duration: Double? = nil, delay: Double = 0, source: String? = nil,
-        scaling: AnimationScale? = nil, timingCurve: AnimationTimingCurve? = nil
+        scaling: AnimationScale? = nil, timingCurve: AnimationTimingCurve? = nil, repetition: AnimationRepetition? = nil
     ) {
         self.id = id
         self.shapeID = shapeID
@@ -189,6 +197,7 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         self.source = source
         self.scaling = scaling
         self.timingCurve = timingCurve
+        self.repetition = repetition
     }
 
     /// The same effect, as a new entry, for a copy of its slide.
@@ -196,7 +205,7 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         self.init(
             shapeID: animation.shapeID, paragraphs: animation.paragraphs, category: animation.category,
             effect: animation.effect, trigger: animation.trigger, duration: animation.duration,
-            delay: animation.delay, source: animation.source, scaling: animation.scaling, timingCurve: animation.timingCurve
+            delay: animation.delay, source: animation.source, scaling: animation.scaling, timingCurve: animation.timingCurve, repetition: animation.repetition
         )
     }
 
@@ -362,7 +371,7 @@ struct AnimationTimeline: Sendable {
     struct Entry: Sendable {
         var animation: ShapeAnimation
         var start: Double
-        var end: Double { start + animation.duration }
+        var end: Double { start + animation.activeDuration }
     }
 
     private(set) var steps: [[Entry]] = []
@@ -416,10 +425,9 @@ struct AnimationTimeline: Sendable {
                 $0.element.start == $1.element.start ? $0.offset < $1.offset : $0.element.start < $1.element.start
             }) {
                 if index < begun - 1 {
-                    progress[entry.animation.id] = 1
+                    progress[entry.animation.id] = entry.animation.progress(elapsed: entry.animation.activeDuration, finished: true)
                 } else if elapsed >= entry.start {
-                    progress[entry.animation.id] = entry.animation.duration > 0
-                        ? min((elapsed - entry.start) / entry.animation.duration, 1) : 1
+                    progress[entry.animation.id] = entry.animation.progress(elapsed: elapsed - entry.start)
                 }
                 if progress[entry.animation.id] != nil { ordered.append(entry.animation) }
             }
@@ -526,12 +534,15 @@ struct AnimationTimeline: Sendable {
                 appearance.opacity *= 1 - progress
             }
         case .emphasis:
-            switch animation.effect {
+            if let scaling = animation.scaling {
+                appearance.axisScale = scaling.value(at: progress)
+            } else { switch animation.effect {
             case .pulse: appearance.scale *= 1 + 0.05 * sin(.pi * progress)
             case .spin: appearance.rotation += 360 * eased
             case .growShrink: appearance.axisScale = (animation.scaling ?? AnimationScale()).value(at: progress)
             case .teeter: appearance.rotation += Teeter.angle(at: progress)
             default: break
+            }
             }
         case .motionPath:
             guard case .path(let path) = animation.effect else { return }

@@ -379,6 +379,7 @@ final class EditorState {
         animationPreviewTask?.cancel()
         animationPreviewStartedAt = Date()
         let duration = slide.animationTimeline.playingThroughDuration + 0.6
+        guard duration.isFinite else { animationPreviewTask = nil; return }
         animationPreviewTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled else { return }

@@ -132,6 +132,7 @@ final class PresentationSession {
         guard isPresenting, !isBlanked, let seconds = currentSlide?.autoAdvanceAfter else { return }
         let shown = (position, builds)
         let wait = max(seconds, 0.1) + animationTimeLeft
+        guard wait.isFinite else { return }
         advanceTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(wait))
             guard !Task.isCancelled, let self, self.isPresenting, self.position == shown.0, self.builds == shown.1,
@@ -203,7 +204,7 @@ final class PresentationSession {
         animatingTask?.cancel()
         let remaining = animationTimeLeft
         isAnimating = remaining > 0
-        guard isAnimating else { return }
+        guard isAnimating, remaining.isFinite else { return }
         animatingTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(remaining))
             guard !Task.isCancelled else { return }
