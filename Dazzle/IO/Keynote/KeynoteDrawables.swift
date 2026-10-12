@@ -13,13 +13,16 @@ struct KeynoteSlideWriter {
     private(set) var relationships: [Relationship]
     private(set) var skipped: Set<UInt32> = []
     private var nextShapeID = 2
+    /// Measured frames for text that grows to fit, by shape id.
+    private let fittedFrames: [Int: EMURect]
 
-    init(archive: KeynoteArchive, media: KeynoteMedia, partName: String, layout: String) {
+    init(archive: KeynoteArchive, media: KeynoteMedia, partName: String, layout: String, fittedFrames: [Int: EMURect] = [:]) {
         self.archive = archive
         styles = KeynoteStyles(archive: archive)
         text = KeynoteText(archive: archive, styles: styles)
         self.media = media
         self.partName = partName
+        self.fittedFrames = fittedFrames
         relationships = [Relationship(id: "rId1", type: OOXML.RelationshipType.slideLayout, target: layout)]
     }
 
@@ -99,7 +102,7 @@ struct KeynoteSlideWriter {
 
     private mutating func shape(_ shape: ProtoMessage, storage: KeynoteArchive.Object?, isTextBox: Bool) -> String? {
         let drawable = shape.message(1)
-        guard let frame = Frame(drawable?.message(1)) else { return nil }
+        guard var frame = Frame(drawable?.message(1)) else { return nil }
         let style = shape.reference(2)
         let pathSource = shape.message(3)
         let opacity = styles.opacity(style)
@@ -112,6 +115,11 @@ struct KeynoteSlideWriter {
             opacity: opacity
         )
         let effects = KeynoteStyles.effects(styles.drawingProperty(style, .shadow), opacity: opacity) ?? ""
+        // The shape takes the id its non-visual properties are about to claim.
+        if let fitted = fittedFrames[nextShapeID] {
+            frame.origin.y = EMU.points(fitted.y)
+            frame.size.height = EMU.points(fitted.height)
+        }
         let transform = frame.xml(flipH: pathSource?.bool(1) ?? false, flipV: pathSource?.bool(2) ?? false)
         let geometry = KeynoteGeometry.xml(pathSource, size: frame.size)
 
@@ -191,23 +199,14 @@ struct KeynoteSlideWriter {
 
     private mutating func group(_ group: ProtoMessage) -> String? {
         guard let frame = Frame(group.message(1)?.message(1)) else { return nil }
-        let childIDs = group.references(2)
-        let children = childIDs.compactMap { drawable($0) }
-        guard !children.isEmpty else { return nil }
-        // Children may be placed in the group's space or the slide's; their
-        // bounds map onto the group's frame either way.
-        let childFrames = childIDs.compactMap { archive[$0] }.compactMap { child -> Frame? in
-            let drawable = switch child.type {
-            case KeynoteType.shapeInfo: child.message.message(1)?.message(1)
-            default: child.message.message(1)
-            }
-            return Frame(drawable?.message(1))
-        }
-        let bounds = childFrames.dropFirst().reduce(childFrames.first?.rect ?? frame.rect) { $0.union($1.rect) }
+        // Children are placed in the group's own space, from its top-left
+        // corner. The group claims its id before they do.
         let nonVisual = nonVisual(group.message(1), name: "Group")
+        let children = group.references(2).compactMap { drawable($0) }
+        guard !children.isEmpty else { return nil }
         return """
             <p:grpSp><p:nvGrpSpPr>\(nonVisual)<p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr>\
-            \(frame.xml(children: bounds))</p:grpSpPr>\(children.joined())</p:grpSp>
+            \(frame.xml(children: CGRect(origin: .zero, size: frame.size)))</p:grpSpPr>\(children.joined())</p:grpSp>
             """
     }
 }

@@ -32,40 +32,51 @@ enum KeynoteImporter {
         return try presentation(fromEntries: entries)
     }
 
+    /// Keynote saves no height for text that sets its own, and only laying
+    /// the text out can tell it. So the deck is converted once, read, its
+    /// growing text measured, and converted again with those heights.
     static func presentation(fromEntries entries: [String: Data]) throws -> Presentation {
-        let converted = try convert(KeynoteArchive(entries: entries))
+        let archive = try KeynoteArchive(entries: entries)
+        let media = KeynoteMedia(archive: archive)
+        var converted = try convert(archive, media: media)
         var presentation = try PPTXReader.presentation(fromParts: converted.parts)
+        let fitted = fittedFrames(in: presentation)
+        if fitted.contains(where: { !$0.isEmpty }) {
+            converted = try convert(archive, media: media, fittedFrames: fitted)
+            presentation = try PPTXReader.presentation(fromParts: converted.parts)
+        }
         for (index, notes) in converted.notes.enumerated() where !notes.isEmpty && presentation.slides.indices.contains(index) {
             presentation.slides[index].notes = notes
             presentation.slides[index].areNotesModified = true
         }
-        fitTextHeights(in: &presentation)
         return presentation
     }
 
-    /// Keynote saves no height for text that sets its own; measure it here,
-    /// where text can be laid out. Such text grows from where it is
-    /// anchored: down from the top, out from the middle, up from the bottom.
-    private static func fitTextHeights(in presentation: inout Presentation) {
-        for slideIndex in presentation.slides.indices {
-            let slide = presentation.slides[slideIndex]
-            let renderer = TextRenderer(style: SlideStyleContext(presentation: presentation, slide: slide), slideNumber: slideIndex + 1)
-            for shapeIndex in slide.shapes.indices {
-                let shape = slide.shapes[shapeIndex]
-                guard let body = shape.text, case .shape = body.properties.autofit else { continue }
-                let height = EMU.from(points: renderer.height(of: body, shape: shape, width: shape.frame.points.width))
-                let growth: Double = switch body.properties.anchor {
-                case .center?: 0.5
-                case .bottom?: 1
-                default: 0
+    /// Where growing text ends up, by slide and shape id, in the space of
+    /// whatever holds it. It grows from where it is anchored: down from the
+    /// top, out from the middle, up from the bottom.
+    private static func fittedFrames(in presentation: Presentation) -> [[Int: EMURect]] {
+        presentation.slides.enumerated().map { index, slide in
+            let renderer = TextRenderer(style: SlideStyleContext(presentation: presentation, slide: slide), slideNumber: index + 1)
+            var frames: [Int: EMURect] = [:]
+            func visit(_ shapes: [SlideShape]) {
+                for shape in shapes {
+                    if case .group(let group) = shape.kind { visit(group.children) }
+                    guard let body = shape.text, case .shape = body.properties.autofit else { continue }
+                    let height = EMU.from(points: renderer.height(of: body, shape: shape, width: shape.frame.points.width))
+                    let growth: Double = switch body.properties.anchor {
+                    case .center?: 0.5
+                    case .bottom?: 1
+                    default: 0
+                    }
+                    var frame = shape.frame
+                    frame.y -= Int((Double(height - frame.height) * growth).rounded())
+                    frame.height = height
+                    frames[shape.shapeID] = frame
                 }
-                var frame = shape.frame
-                frame.y -= Int((Double(height - frame.height) * growth).rounded())
-                frame.height = height
-                presentation.slides[slideIndex].shapes[shapeIndex].frame = frame
-                presentation.slides[slideIndex].shapes[shapeIndex].edits.insert(.transform)
-                presentation.slides[slideIndex].isModified = true
             }
+            visit(slide.shapes)
+            return frames
         }
     }
 
@@ -75,7 +86,7 @@ enum KeynoteImporter {
         var notes: [String]
     }
 
-    static func convert(_ archive: KeynoteArchive) throws -> Conversion {
+    static func convert(_ archive: KeynoteArchive, media: KeynoteMedia, fittedFrames: [[Int: EMURect]] = []) throws -> Conversion {
         guard let document = archive.objects.values.first(where: { $0.type == KeynoteType.document }),
               let show = archive[document.message.reference(2)] else {
             throw KeynoteReadError.notKeynote
@@ -85,7 +96,6 @@ enum KeynoteImporter {
             width: KeynoteUnits.emu(size?.float(1) ?? 1_920), height: KeynoteUnits.emu(size?.float(2) ?? 1_080)
         )
         let nodes = show.message.message(3)?.references(2) ?? []
-        let media = KeynoteMedia(archive: archive)
         let text = KeynoteText(archive: archive, styles: KeynoteStyles(archive: archive))
 
         var slides: [PresentationTemplate.SlidePart] = []
@@ -95,7 +105,8 @@ enum KeynoteImporter {
             let partName = "ppt/slides/slide\(slides.count + 1).xml"
             var writer = KeynoteSlideWriter(
                 archive: archive, media: media, partName: partName,
-                layout: PresentationTemplate.relativeLayout(from: partName)
+                layout: PresentationTemplate.relativeLayout(from: partName),
+                fittedFrames: fittedFrames.indices.contains(slides.count) ? fittedFrames[slides.count] : [:]
             )
             let xml = slideXML(slide, hidden: node.message.bool(4) ?? false, writer: &writer)
             slides.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))

@@ -135,6 +135,19 @@ struct KeynoteConversionTests {
         #expect(box.frame.height > 0)
         #expect(box.text?.properties.autofit == .shape)
     }
+
+    @Test("Groups place their children in their own space, growing text included")
+    func groups() throws {
+        let shape = try #require(presentation.slides[1].shapes.last)
+        guard case .group(let group) = shape.kind, let child = group.children.first else {
+            Issue.record("Expected a group with a child")
+            return
+        }
+        #expect(group.childFrame == EMURect(x: 0, y: 0, width: 300 * 12_700, height: 200 * 12_700))
+        #expect(child.frame.x == 10 * 12_700)
+        #expect(child.frame.y == 20 * 12_700)
+        #expect(child.frame.height > 0)
+    }
 }
 
 /// Builds a small Keynote document object by object, so what each test
@@ -219,7 +232,18 @@ enum KeynoteFixture {
         add(21, KeynoteType.slide) { slide in
             slide.reference(1, 12)
             slide.reference(42, 22)
+            slide.reference(42, 23)
         }
+        add(23, KeynoteType.group) { group in
+            group.message(1) { $0.message(1) { $0.geometry(x: 500, y: 500, width: 300, height: 200) } }
+            group.reference(2, 24)
+        }
+        add(24, KeynoteType.shapeInfo) { info in
+            info.message(1) { $0.message(1) { $0.message(1) { $0.geometry(x: 10, y: 20, width: 280, height: 0, flags: 1) } } }
+            info.reference(4, 33)
+            info.varint(6, 1)
+        }
+        add(33, KeynoteType.storage) { $0.string(3, "Grouped") }
         add(22, KeynoteType.shapeInfo) { info in
             info.message(1) { $0.message(1) { $0.message(1) { $0.geometry(x: 100, y: 200, width: 400, height: 0, flags: 1) } } }
             info.reference(4, 32)
