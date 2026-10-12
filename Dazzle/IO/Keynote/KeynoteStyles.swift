@@ -120,6 +120,10 @@ struct KeynoteStyles {
             let alpha = opacity < 0.999 ? "<a:alphaModFix amt=\"\(Int(opacity * 100_000))\"/>" : ""
             return "<a:blipFill rotWithShape=\"1\"><a:blip r:embed=\"\(relationship)\">\(alpha)</a:blip>\(mode)</a:blipFill>"
         }
+        // A texture the document doesn't carry leaves the colour it was tinted with.
+        if let tint = fill.message(3)?.message(3) {
+            return solidFill(tint, opacity: opacity)
+        }
         return nil
     }
 
