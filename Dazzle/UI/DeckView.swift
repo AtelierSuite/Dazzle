@@ -494,22 +494,30 @@ private struct UnsupportedFeatureNotice: View {
             Label("Notice.UnsupportedFeatures.Title", systemImage: "exclamationmark.triangle")
                 .font(.headline)
                 .labelStyle(.titleAndIcon)
-            Text("Notice.UnsupportedFeatures.Intro")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(report.noticeMessage)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                // A popover sizes itself to its content, and without this the
-                // message is laid out on one unbroken line.
-                .fixedSize(horizontal: false, vertical: true)
+            if !report.omissions.isEmpty {
+                message("Notice.Omitted.Intro", report.omissionMessage)
+            }
+            if !report.features.isEmpty {
+                message("Notice.UnsupportedFeatures.Intro", report.noticeMessage)
+            }
         }
         .multilineTextAlignment(.leading)
         .padding(20)
         .frame(idealWidth: 320, maxWidth: 360, alignment: .leading)
         // iPhone turns a popover into a sheet unless it is told not to.
         .presentationCompactAdaptation(.popover)
+    }
+
+    private func message(_ intro: LocalizedStringKey, _ list: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(intro)
+            Text(list)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        // A popover sizes itself to its content, and without this the
+        // message is laid out on one unbroken line.
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

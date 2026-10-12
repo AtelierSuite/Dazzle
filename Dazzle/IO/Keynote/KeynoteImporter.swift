@@ -43,8 +43,8 @@ enum KeynoteImporter {
         let fitted = fittedFrames(in: presentation)
         if fitted.contains(where: { !$0.isEmpty }) {
             converted = try convert(archive, media: media, fittedFrames: fitted)
-            presentation = try PPTXReader.presentation(fromParts: converted.parts)
         }
+        presentation = try PPTXReader.presentation(fromParts: converted.parts, omissions: converted.omissions)
         for (index, notes) in converted.notes.enumerated() where !notes.isEmpty && presentation.slides.indices.contains(index) {
             presentation.slides[index].notes = notes
             presentation.slides[index].areNotesModified = true
@@ -84,6 +84,8 @@ enum KeynoteImporter {
         var parts: [String: Data]
         /// Speaker notes by slide, which Dazzle writes when it saves.
         var notes: [String]
+        /// What could not be brought across.
+        var omissions: Set<UnsupportedFeatureReport.Omission>
     }
 
     static func convert(_ archive: KeynoteArchive, media: KeynoteMedia, fittedFrames: [[Int: EMURect]] = []) throws -> Conversion {
@@ -100,6 +102,7 @@ enum KeynoteImporter {
 
         var slides: [PresentationTemplate.SlidePart] = []
         var notes: [String] = []
+        var omissions: Set<UnsupportedFeatureReport.Omission> = []
         for node in nodes.compactMap({ archive[$0] }) {
             guard let slide = archive[node.message.reference(2)] else { continue }
             let partName = "ppt/slides/slide\(slides.count + 1).xml"
@@ -110,11 +113,30 @@ enum KeynoteImporter {
             )
             let xml = slideXML(slide, hidden: node.message.bool(4) ?? false, writer: &writer)
             slides.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
+            omissions.formUnion(writer.skipped.map(omission))
+            if !slide.message.references(2).isEmpty || !slide.message.references(43).isEmpty {
+                omissions.insert(.builds)
+            }
+            if let effect = slide.message.message(4)?.message(2)?.message(8)?.string(2), effect != "none" {
+                omissions.insert(.transitions)
+            }
             let note = archive[slide.message.reference(27)]
             notes.append(text.plainText(archive[note?.message.reference(1)]).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         guard !slides.isEmpty else { throw KeynoteReadError.notKeynote }
-        return Conversion(parts: PresentationTemplate.parts(size: slideSize, slides: slides, media: media.parts), notes: notes)
+        return Conversion(
+            parts: PresentationTemplate.parts(size: slideSize, slides: slides, media: media.parts),
+            notes: notes, omissions: omissions
+        )
+    }
+
+    private static func omission(_ type: UInt32) -> UnsupportedFeatureReport.Omission {
+        switch type {
+        case KeynoteType.table: .tables
+        case KeynoteType.chart: .charts
+        case KeynoteType.movie: .movies
+        default: .otherObjects
+        }
     }
 
     private static func slideXML(_ slide: KeynoteArchive.Object, hidden: Bool, writer: inout KeynoteSlideWriter) -> String {

@@ -92,6 +92,7 @@ enum KeynoteType {
     static let connectionLine: UInt32 = 3009
     static let shapeStyle: UInt32 = 3015
     static let mediaStyle: UInt32 = 3016
+    static let chart: UInt32 = 5021
     static let table: UInt32 = 6000
     static let packageMetadata: UInt32 = 11006
 }

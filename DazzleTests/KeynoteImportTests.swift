@@ -129,6 +129,12 @@ struct KeynoteConversionTests {
         }
     }
 
+    @Test("What could not be brought across is reported")
+    func omissions() {
+        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .transitions])
+        #expect(presentation.unsupportedFeatures.features.isEmpty)
+    }
+
     @Test("Text that sets its own height is measured")
     func growingText() throws {
         let box = try #require(presentation.slides[1].shapes.first)
@@ -182,7 +188,12 @@ enum KeynoteFixture {
             slide.reference(1, 12)
             slide.reference(5, 13)
             slide.reference(27, 16)
-            for drawable: UInt64 in [13, 14, 15] { slide.reference(42, drawable) }
+            for drawable: UInt64 in [13, 14, 15, 17] { slide.reference(42, drawable) }
+            slide.message(4) { $0.message(2) { $0.message(8) { $0.string(2, "apple:dissolve") } } }
+        }
+        // An equation, which Dazzle cannot convert.
+        add(17, 2015) { equation in
+            equation.message(1) { $0.message(1) { $0.message(1) { $0.geometry(x: 0, y: 0, width: 10, height: 10) } } }
         }
         add(12, KeynoteType.slideStyle) { style in
             style.message(11) { $0.message(1) { $0.message(1) { $0.color(0.2, 0.4, 0.6) } } }

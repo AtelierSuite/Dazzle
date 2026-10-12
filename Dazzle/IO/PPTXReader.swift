@@ -14,7 +14,10 @@ enum PPTXReader {
         try presentation(fromParts: ZipArchive.entries(in: data))
     }
 
-    static func presentation(fromParts parts: [String: Data]) throws -> Presentation {
+    /// `omissions` is what a file converted into these parts lost on the way.
+    static func presentation(
+        fromParts parts: [String: Data], omissions: Set<UnsupportedFeatureReport.Omission> = []
+    ) throws -> Presentation {
         let rootRelationships = Relationship.parse(parts["_rels/.rels"])
         let mainPart = rootRelationships.first { $0.type == OOXML.RelationshipType.officeDocument }
             .map { PackagePath.resolve($0.target, from: "") } ?? "ppt/presentation.xml"
@@ -102,7 +105,7 @@ enum PPTXReader {
             resources: resources,
             package: Package(
                 parts: parts, mainPart: mainPart,
-                unsupportedFeatures: UnsupportedFeatureReport(features: features)
+                unsupportedFeatures: UnsupportedFeatureReport(features: features, omissions: omissions)
             )
         )
         presentation.commentAuthors = authors

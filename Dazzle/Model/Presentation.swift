@@ -205,11 +205,38 @@ struct UnsupportedFeatureReport: Equatable, Sendable {
         }
     }
 
-    var features: Set<Feature> = []
+    /// What a file converted on opening, such as a Keynote presentation,
+    /// lost on the way in. Unlike `features`, none of it is saved.
+    enum Omission: String, CaseIterable, Sendable {
+        case tables
+        case charts
+        case builds
+        case transitions
+        case movies
+        case otherObjects
 
-    var isEmpty: Bool { features.isEmpty }
+        var message: String {
+            switch self {
+            case .tables: String(localized: "Notice.Omission.Tables")
+            case .charts: String(localized: "Notice.Omission.Charts")
+            case .builds: String(localized: "Notice.Omission.Builds")
+            case .transitions: String(localized: "Notice.Omission.Transitions")
+            case .movies: String(localized: "Notice.Omission.Movies")
+            case .otherObjects: String(localized: "Notice.Omission.Other")
+            }
+        }
+    }
+
+    var features: Set<Feature> = []
+    var omissions: Set<Omission> = []
+
+    var isEmpty: Bool { features.isEmpty && omissions.isEmpty }
 
     var noticeMessage: String {
         Feature.allCases.filter(features.contains).map { "• " + $0.message }.joined(separator: "\n")
+    }
+
+    var omissionMessage: String {
+        Omission.allCases.filter(omissions.contains).map { "• " + $0.message }.joined(separator: "\n")
     }
 }
