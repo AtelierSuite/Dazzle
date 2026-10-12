@@ -74,7 +74,7 @@ struct TextRenderer {
         var originX = inner.minX
         var frameWidth = layoutWidth
         if !wraps {
-            frameWidth = max(ceil(size.width) + 1, inner.width)
+            frameWidth = max(ceil(size.width + trailingWhitespace(framesetter)) + 1, inner.width)
             switch body.paragraphs.first?.properties.alignment ?? .left {
             case .center: originX = inner.midX - frameWidth / 2
             case .right: originX = inner.maxX - frameWidth
@@ -216,6 +216,15 @@ struct TextRenderer {
         let string = attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil)
         let size = suggestedSize(CTFramesetterCreateWithAttributedString(string), string: string, width: max(width - horizontal, 1))
         return ceil(size.height) + vertical
+    }
+
+    /// The widest run of spaces ending a line. Suggested sizes leave these
+    /// out, but a frame only that wide wraps the line before them.
+    private func trailingWhitespace(_ framesetter: CTFramesetter) -> CGFloat {
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: 100_000, height: 100_000), transform: nil)
+        let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
+        let lines = CTFrameGetLines(frame) as? [CTLine] ?? []
+        return lines.map { CGFloat(CTLineGetTrailingWhitespaceWidth($0)) }.max() ?? 0
     }
 
     private func suggestedSize(_ framesetter: CTFramesetter, string: NSAttributedString, width: CGFloat) -> CGSize {
