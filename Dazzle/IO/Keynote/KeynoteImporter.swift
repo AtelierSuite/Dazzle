@@ -9,7 +9,9 @@ import Foundation
 /// Keynote had them, their title and body as the layout's placeholders.
 enum KeynoteImporter {
     static func presentation(from data: Data) throws -> Presentation {
-        try presentation(fromEntries: ZipArchive.entries(in: data))
+        // A file that isn't a ZIP archive isn't a Keynote document either.
+        guard let entries = try? ZipArchive.entries(in: data) else { throw KeynoteReadError.notKeynote }
+        return try presentation(fromEntries: entries)
     }
 
     /// Reads a `.key` package directory.
