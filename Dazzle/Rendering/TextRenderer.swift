@@ -218,6 +218,16 @@ struct TextRenderer {
         return ceil(size.height) + vertical
     }
 
+    /// The width `body` takes, insets included, when its lines never wrap.
+    func unwrappedWidth(of body: TextBody, shape: SlideShape) -> CGFloat {
+        let properties = style.bodyProperties(for: shape, sources: []).merged(over: body.properties)
+        let horizontal = EMU.points((properties.leftInset ?? 91_440) + (properties.rightInset ?? 91_440))
+        let string = attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil)
+        let framesetter = CTFramesetterCreateWithAttributedString(string)
+        let size = suggestedSize(framesetter, string: string, width: 100_000)
+        return ceil(size.width + trailingWhitespace(framesetter)) + 1 + horizontal
+    }
+
     /// The widest run of spaces ending a line. Suggested sizes leave these
     /// out, but a frame only that wide wraps the line before them.
     private func trailingWhitespace(_ framesetter: CTFramesetter) -> CGFloat {

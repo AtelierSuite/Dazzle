@@ -70,13 +70,25 @@ enum KeynoteImporter {
                 for shape in shapes {
                     if case .group(let group) = shape.kind { visit(group.children) }
                     guard let body = shape.text, case .shape = body.properties.autofit else { continue }
-                    let height = EMU.from(points: renderer.height(of: body, shape: shape, width: shape.frame.points.width))
+                    var frame = shape.frame
+                    // Text that doesn't wrap is as wide as its longest line, and
+                    // grows away from the side it's aligned to.
+                    if body.properties.wraps == false {
+                        let width = EMU.from(points: renderer.unwrappedWidth(of: body, shape: shape))
+                        let spread: Double = switch body.paragraphs.first?.properties.alignment {
+                        case .center?: 0.5
+                        case .right?: 1
+                        default: 0
+                        }
+                        frame.x -= Int((Double(width - frame.width) * spread).rounded())
+                        frame.width = width
+                    }
+                    let height = EMU.from(points: renderer.height(of: body, shape: shape, width: EMU.points(frame.width)))
                     let growth: Double = switch body.properties.anchor {
                     case .center?: 0.5
                     case .bottom?: 1
                     default: 0
                     }
-                    var frame = shape.frame
                     frame.y -= Int((Double(height - frame.height) * growth).rounded())
                     frame.height = height
                     frames[shape.shapeID] = frame

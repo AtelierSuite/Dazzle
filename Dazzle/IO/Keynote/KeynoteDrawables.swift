@@ -159,9 +159,12 @@ struct KeynoteSlideWriter {
         )
         let effects = KeynoteStyles.effects(styles.drawingProperty(style, .shadow), opacity: opacity) ?? ""
         // The shape takes the id its non-visual properties are about to claim.
+        // Text that sets its own width saves no size, only the point it grows
+        // from; measuring it gives it one.
+        let wraps = storage == nil || !frame.growsWide
         if let fitted = fittedFrames[nextShapeID] {
-            frame.origin.y = EMU.points(fitted.y)
-            frame.size.height = EMU.points(fitted.height)
+            frame.origin = CGPoint(x: EMU.points(fitted.x), y: EMU.points(fitted.y))
+            frame.size = CGSize(width: EMU.points(fitted.width), height: EMU.points(fitted.height))
         }
         let transform = frame.xml(flipH: pathSource?.bool(1) ?? false, flipV: pathSource?.bool(2) ?? false)
         let geometry = KeynoteGeometry.xml(pathSource, size: frame.size)
@@ -172,7 +175,7 @@ struct KeynoteSlideWriter {
         default: isTextBox ? "TextBox" : storage == nil ? "Shape" : "Text"
         }
         let nonVisual = nonVisual(drawable, name: name)
-        let textBody = textBody(storage, style: style, growsToFit: frame.growsToFit)
+        let textBody = textBody(storage, style: style, growsToFit: frame.growsToFit, wraps: wraps)
         let properties = switch placeholder {
         case "body"?: "<p:cNvSpPr><a:spLocks noGrp=\"1\"/></p:cNvSpPr><p:nvPr><p:ph type=\"body\" idx=\"1\"/></p:nvPr>"
         case let type?: "<p:cNvSpPr><a:spLocks noGrp=\"1\"/></p:cNvSpPr><p:nvPr><p:ph type=\"\(type)\"/></p:nvPr>"
@@ -184,7 +187,7 @@ struct KeynoteSlideWriter {
             """
     }
 
-    private func textBody(_ storage: KeynoteArchive.Object?, style: UInt64?, growsToFit: Bool) -> String {
+    private func textBody(_ storage: KeynoteArchive.Object?, style: UInt64?, growsToFit: Bool, wraps: Bool) -> String {
         guard let paragraphs = text.paragraphs(storage) else { return "" }
         func property<Value>(_ read: (ProtoMessage) -> Value?) -> Value? {
             styles.resolve(style) { object in
@@ -206,7 +209,7 @@ struct KeynoteSlideWriter {
         }
         let vertical = property({ $0.bool(8) ?? $0.bool(11) }) == true ? " vert=\"eaVert\"" : ""
         return """
-            <p:txBody><a:bodyPr wrap="square" lIns="\(inset(1))" tIns="\(inset(2))" rIns="\(inset(3))" \
+            <p:txBody><a:bodyPr wrap="\(wraps ? "square" : "none")" lIns="\(inset(1))" tIns="\(inset(2))" rIns="\(inset(3))" \
             bIns="\(inset(4))" anchor="\(anchor)" rtlCol="0"\(vertical)>\(autofit)</a:bodyPr>\
             \(isLayout ? text.listStyle(storage) : "<a:lstStyle/>")\
             \(paragraphs)</p:txBody>
@@ -305,6 +308,8 @@ struct Frame {
     var angle: Double
     /// Whether the height follows the text, in which case Keynote saves none.
     var growsToFit: Bool
+    /// Whether the width follows the text too, the text never wrapping.
+    var growsWide: Bool
 
     init?(_ geometry: ProtoMessage?) {
         guard let geometry else { return nil }
@@ -314,7 +319,9 @@ struct Frame {
         self.size = CGSize(width: size?.float(1) ?? 0, height: size?.float(2) ?? 0)
         angle = geometry.float(4) ?? 0
         // Flags say which of width and height are fixed.
-        growsToFit = (geometry.int(3) ?? 3) & 2 == 0
+        let flags = geometry.int(3) ?? 3
+        growsToFit = flags & 2 == 0
+        growsWide = flags & 1 == 0
     }
 
     var rect: CGRect { CGRect(origin: origin, size: size) }
