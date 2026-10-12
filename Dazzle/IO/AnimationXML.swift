@@ -57,10 +57,21 @@ enum AnimationXML {
         if category == .motionPath, let path = firstElement(named: "animMotion", in: node)?.attribute("path") {
             effect = .path(MotionPath(path: path))
         }
+        var scaling: AnimationScale?
+        if effect == .growShrink, let scale = firstElement(named: "animScale", in: node) {
+            func value(_ name: String) -> CGSize? {
+                guard let point = scale.firstChild(named: name),
+                      let x = point.attribute("x").flatMap(Double.init),
+                      let y = point.attribute("y").flatMap(Double.init) else { return nil }
+                return CGSize(width: x / 100_000, height: y / 100_000)
+            }
+            scaling = AnimationScale(from: value("from") ?? CGSize(width: 1, height: 1),
+                                     to: value("to") ?? value("by") ?? CGSize(width: 1.5, height: 1.5))
+        }
         return ShapeAnimation(
             shapeID: shapeID, paragraphs: paragraphs, category: category, effect: effect, trigger: trigger,
             duration: duration(of: node), delay: milliseconds(delay(of: node)) ?? 0,
-            source: XMLLite.serialize(par)
+            source: XMLLite.serialize(par), scaling: scaling
         )
     }
 
@@ -325,7 +336,10 @@ enum AnimationXML {
         case (.emphasis, .spin):
             return behaviour("animRot", attributes: " by=\"21600000\"", dur: duration, extra: " fill=\"hold\"", attribute: ["r"])
         case (.emphasis, .growShrink):
-            return behaviour("animScale", dur: duration, extra: " fill=\"hold\"", content: "<p:by x=\"150000\" y=\"150000\"/>")
+            let scale = animation.scaling ?? AnimationScale()
+            let from = "<p:from x=\"\(Int((scale.from.width * 100_000).rounded()))\" y=\"\(Int((scale.from.height * 100_000).rounded()))\"/>"
+            let to = "<p:to x=\"\(Int((scale.to.width * 100_000).rounded()))\" y=\"\(Int((scale.to.height * 100_000).rounded()))\"/>"
+            return behaviour("animScale", dur: duration, extra: " fill=\"hold\"", content: from + to)
         case (.emphasis, .teeter):
             var start = 0.0
             return Teeter.swings.map { swing in

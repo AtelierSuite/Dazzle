@@ -352,6 +352,7 @@ final class EditorState {
         updateAnimation(id, in: &presentation) { animation in
             // Another effect starts at its own length; another edge keeps the one chosen.
             if !animation.effect.isKind(of: effect) { animation.duration = effect.defaultDuration }
+            if animation.effect != effect { animation.scaling = nil }
             animation.effect = effect
         }
     }

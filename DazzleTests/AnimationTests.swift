@@ -166,4 +166,22 @@ struct AnimationTests {
         #expect(path.offset(at: 0.5) == CGPoint(x: 0.5, y: 0))
         #expect(path.offset(at: 1) == CGPoint(x: 0.5, y: 0.5))
     }
+    @Test("Custom scale axes survive copy and duration edits") @MainActor
+    func customScaleRoundTrip() throws {
+        var presentation = Presentation.blank
+        let shape = presentation.slides[0].shapes[0].shapeID
+        let animation = ShapeAnimation(shapeID: shape, category: .emphasis, effect: .growShrink,
+                                       scaling: AnimationScale(to: CGSize(width: 1, height: 0)))
+        #expect(ShapeAnimation(copying: animation).scaling == animation.scaling)
+        presentation.slides[0].animations = [animation]
+        presentation.slides[0].areAnimationsModified = true
+        presentation.slides[0].isModified = true
+        var read = try reread(presentation)
+        let state = EditorState()
+        state.updateAnimation(read.slides[0].animations[0].id, in: &read) { $0.duration = 1.25 }
+        let final = try reread(read).slides[0].animations[0]
+        #expect(final.scaling?.to == CGSize(width: 1, height: 0))
+        #expect(final.duration == 1.25)
+    }
+
 }

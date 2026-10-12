@@ -104,7 +104,7 @@ struct SlideRenderer {
         paragraphOpacity: [Int: Double] = [:]
     ) {
         let frame = shape.frame.points
-        if let appearance, appearance.opacity <= 0.001 { return }
+        if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
         context.saveGState()
         defer { context.restoreGState() }
         let isFaded = appearance.map { Self.apply($0, to: frame, context: context) } ?? false
@@ -169,13 +169,14 @@ struct SlideRenderer {
     /// Moves, sizes, turns, wipes and fades what is drawn next as an
     /// animation has left the shape. Returns whether it began a transparency
     /// layer, for the caller to end.
-    private static func apply(_ appearance: AnimatedAppearance, to frame: CGRect, context: CGContext) -> Bool {
+    static func apply(_ appearance: AnimatedAppearance, to frame: CGRect, context: CGContext) -> Bool {
         context.translateBy(x: appearance.offset.width, y: appearance.offset.height)
-        if appearance.scale != 1 || appearance.rotation != 0 {
-            let scale = max(appearance.scale, 0.0001)
+        if appearance.scale != 1 || appearance.axisScale != CGSize(width: 1, height: 1) || appearance.rotation != 0 {
+            let scaleX = max(appearance.scale * appearance.axisScale.width, 0.0001)
+            let scaleY = max(appearance.scale * appearance.axisScale.height, 0.0001)
             context.translateBy(x: frame.midX, y: frame.midY)
             context.rotate(by: appearance.rotation * .pi / 180)
-            context.scaleBy(x: scale, y: scale)
+            context.scaleBy(x: scaleX, y: scaleY)
             context.translateBy(x: -frame.midX, y: -frame.midY)
         }
         if let reveal = appearance.reveal {

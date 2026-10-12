@@ -169,10 +169,13 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
     /// so whatever Dazzle does not model about it survives; dropped once the
     /// effect itself is changed and has to be written anew.
     var source: String?
+    /// The independent axis values of an imported grow/shrink behaviour.
+    var scaling: AnimationScale?
 
     init(
         id: UUID = UUID(), shapeID: Int, paragraphs: ClosedRange<Int>? = nil, category: Category, effect: Effect,
-        trigger: Trigger = .onClick, duration: Double? = nil, delay: Double = 0, source: String? = nil
+        trigger: Trigger = .onClick, duration: Double? = nil, delay: Double = 0, source: String? = nil,
+        scaling: AnimationScale? = nil
     ) {
         self.id = id
         self.shapeID = shapeID
@@ -183,6 +186,7 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         self.duration = duration ?? effect.defaultDuration
         self.delay = delay
         self.source = source
+        self.scaling = scaling
     }
 
     /// The same effect, as a new entry, for a copy of its slide.
@@ -190,13 +194,25 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         self.init(
             shapeID: animation.shapeID, paragraphs: animation.paragraphs, category: animation.category,
             effect: animation.effect, trigger: animation.trigger, duration: animation.duration,
-            delay: animation.delay, source: animation.source
+            delay: animation.delay, source: animation.source, scaling: animation.scaling
         )
     }
 
     /// Whether it starts a video or sound the slide holds.
     var playsMedia: Bool {
         category == .other("mediacall") && source?.contains("playFrom") == true
+    }
+}
+
+/// Scale percentages are measured against the original layout, independently
+/// on each axis. A later scale replaces the earlier held value.
+struct AnimationScale: Equatable, Hashable, Sendable {
+    var from = CGSize(width: 1, height: 1)
+    var to = CGSize(width: 1.5, height: 1.5)
+
+    func value(at progress: Double) -> CGSize {
+        CGSize(width: from.width + (to.width - from.width) * progress,
+               height: from.height + (to.height - from.height) * progress)
     }
 }
 
@@ -299,6 +315,7 @@ struct AnimatedAppearance: Equatable, Hashable, Sendable {
     /// Points the shape has moved.
     var offset = CGSize.zero
     var scale = 1.0
+    var axisScale = CGSize(width: 1, height: 1)
     /// Degrees clockwise, on top of the shape's own.
     var rotation = 0.0
     var reveal: Reveal?
@@ -486,7 +503,7 @@ struct AnimationTimeline: Sendable {
             switch animation.effect {
             case .pulse: appearance.scale *= 1 + 0.05 * sin(.pi * progress)
             case .spin: appearance.rotation += 360 * eased
-            case .growShrink: appearance.scale *= 1 + 0.5 * eased
+            case .growShrink: appearance.axisScale = (animation.scaling ?? AnimationScale()).value(at: progress)
             case .teeter: appearance.rotation += Teeter.angle(at: progress)
             default: break
             }
