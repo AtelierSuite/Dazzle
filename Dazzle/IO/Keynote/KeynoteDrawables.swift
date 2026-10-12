@@ -9,6 +9,8 @@ struct KeynoteSlideWriter {
     let text: KeynoteText
     let media: KeynoteMedia
     let partName: String
+    /// The document's locale, which table values are written in.
+    let locale: Locale
 
     private(set) var relationships: [Relationship]
     private(set) var skipped: Set<UInt32> = []
@@ -22,6 +24,7 @@ struct KeynoteSlideWriter {
         text = KeynoteText(archive: archive, styles: styles)
         self.media = media
         self.partName = partName
+        locale = archive.locale
         self.fittedFrames = fittedFrames
         relationships = [Relationship(id: "rId1", type: OOXML.RelationshipType.slideLayout, target: layout)]
     }
@@ -76,6 +79,11 @@ struct KeynoteSlideWriter {
             return picture(drawable: object.message.message(1), data: poster, style: object.message.reference(19), mask: nil)
         case KeynoteType.group:
             return group(object.message)
+        case KeynoteType.table:
+            return table(object.message) ?? {
+                skipped.insert(object.type)
+                return nil
+            }()
         default:
             skipped.insert(object.type)
             return nil
@@ -194,6 +202,20 @@ struct KeynoteSlideWriter {
             <p:blipFill><a:blip r:embed="\(relationship)">\(alpha)</a:blip>\(sourceRect)\
             <a:stretch><a:fillRect/></a:stretch></p:blipFill>\
             <p:spPr>\(frame.xml())\(geometry)\(line)\(effects)</p:spPr></p:pic>
+            """
+    }
+
+    private mutating func table(_ info: ProtoMessage) -> String? {
+        guard var frame = Frame(info.message(1)?.message(1)), let model = archive[info.reference(2)],
+              let table = KeynoteTable(archive: archive, styles: styles, text: text, locale: locale).graphic(model: model)
+        else { return nil }
+        // The rows and columns say how big the table is.
+        frame.size = table.size
+        let nonVisual = nonVisual(info.message(1), name: "Table")
+        return """
+            <p:graphicFrame><p:nvGraphicFramePr>\(nonVisual)<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/>\
+            </p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>\
+            \(frame.xml().replacingOccurrences(of: "a:xfrm", with: "p:xfrm"))\(table.xml)</p:graphicFrame>
             """
     }
 

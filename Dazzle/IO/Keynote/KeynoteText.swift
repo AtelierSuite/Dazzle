@@ -39,7 +39,24 @@ struct KeynoteText {
             guard let start = entry.int(1) else { return nil }
             return Span(start: start, value: entry.int(2) ?? 0)
         }
+        return paragraphs(
+            text, paragraphStyles: paragraphStyles, listStyles: listStyles, characterStyles: characterStyles, levels: levels
+        )
+    }
 
+    /// Plain text in one paragraph style, as a table cell holds it. Empty
+    /// text still makes a paragraph, so the cell keeps its text size.
+    func paragraphs(plain: String, style: UInt64?) -> String {
+        paragraphs(
+            Array(plain.utf16), paragraphStyles: [Span(start: 0, value: style)],
+            listStyles: [], characterStyles: [], levels: []
+        )
+    }
+
+    private func paragraphs(
+        _ text: [UInt16], paragraphStyles: [Span<UInt64?>], listStyles: [Span<UInt64?>],
+        characterStyles: [Span<UInt64?>], levels: [Span<Int>]
+    ) -> String {
         var result = ""
         var paragraphStart = 0
         while paragraphStart <= text.count {

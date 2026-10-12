@@ -146,12 +146,15 @@ struct KeynoteStyles {
 
     // MARK: - Stroke
 
-    /// A `TSD.StrokeArchive` and line ends as `a:ln`.
-    static func line(_ stroke: ProtoMessage?, head: ProtoMessage?, tail: ProtoMessage?, opacity: Double) -> String {
+    /// A `TSD.StrokeArchive` and line ends as `a:ln`, or as a table cell's
+    /// `a:lnL` and the like.
+    static func line(
+        _ stroke: ProtoMessage?, head: ProtoMessage?, tail: ProtoMessage?, opacity: Double, element: String = "ln"
+    ) -> String {
         guard let stroke, let width = stroke.float(2), width > 0,
               stroke.message(6)?.int(1) != 2,
               let color = solidFill(stroke.message(1), opacity: opacity) else {
-            return "<a:ln><a:noFill/></a:ln>"
+            return "<a:\(element)><a:noFill/></a:\(element)>"
         }
         let cap = switch stroke.int(3) ?? 0 {
         case 1: " cap=\"rnd\""
@@ -175,7 +178,7 @@ struct KeynoteStyles {
         default: "<a:miter lim=\"800000\"/>"
         }
         let ends = (lineEnd(head, element: "headEnd") ?? "") + (lineEnd(tail, element: "tailEnd") ?? "")
-        return "<a:ln w=\"\(KeynoteUnits.emu(width))\"\(cap)>\(color)\(dash)\(join)\(ends)</a:ln>"
+        return "<a:\(element) w=\"\(KeynoteUnits.emu(width))\"\(cap)>\(color)\(dash)\(join)\(ends)</a:\(element)>"
     }
 
     private static func lineEnd(_ end: ProtoMessage?, element: String) -> String? {

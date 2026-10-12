@@ -67,6 +67,13 @@ struct KeynoteArchive {
     subscript(identifier: UInt64?) -> Object? {
         identifier.flatMap { objects[$0] }
     }
+
+    /// The locale the document was written in, from its `TSA.DocumentArchive`.
+    var locale: Locale {
+        let document = objects.values.first { $0.type == KeynoteType.document }
+        let identifier = document?.message.message(3)?.message(1)?.string(4)
+        return identifier.map(Locale.init(identifier:)) ?? Locale(identifier: "en_US")
+    }
 }
 
 /// Message type numbers from Keynote's type registry.
@@ -94,6 +101,9 @@ enum KeynoteType {
     static let mediaStyle: UInt32 = 3016
     static let chart: UInt32 = 5021
     static let table: UInt32 = 6000
+    static let tableModel: UInt32 = 6001
+    static let tableStyle: UInt32 = 6003
+    static let cellStyle: UInt32 = 6004
     static let packageMetadata: UInt32 = 11006
 }
 

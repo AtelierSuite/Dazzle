@@ -129,6 +129,25 @@ struct KeynoteConversionTests {
         }
     }
 
+    @Test("Tables keep their sizes, merges, values and fills")
+    func table() throws {
+        let shape = try #require(presentation.slides[1].shapes.first { if case .table = $0.kind { true } else { false } })
+        guard case .table(let table) = shape.kind else { return }
+        #expect(shape.frame == EMURect(x: 20 * 12_700, y: 600 * 12_700, width: 350 * 12_700, height: 80 * 12_700))
+        #expect(table.columnWidths == [100, 100, 150].map { $0 * 12_700 })
+        #expect(table.rows.map(\.height) == [30, 50].map { $0 * 12_700 })
+        let header = table.rows[0].cells
+        #expect(header[0].text?.plainText == "Fruit")
+        #expect(header[0].columnSpan == 2)
+        #expect(header[1].isHorizontalMerge)
+        guard case .solid(let color)? = header[2].fill else {
+            Issue.record("Expected the header row's fill")
+            return
+        }
+        #expect(color.base == .rgb(0x0000FF))
+        #expect(table.rows[1].cells.map { $0.text?.plainText ?? "" } == ["Apples", "7.5", ""])
+    }
+
     @Test("What could not be brought across is reported")
     func omissions() {
         #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .transitions])
@@ -144,7 +163,7 @@ struct KeynoteConversionTests {
 
     @Test("Groups place their children in their own space, growing text included")
     func groups() throws {
-        let shape = try #require(presentation.slides[1].shapes.last)
+        let shape = try #require(presentation.slides[1].shapes.first { if case .group = $0.kind { true } else { false } })
         guard case .group(let group) = shape.kind, let child = group.children.first else {
             Issue.record("Expected a group with a child")
             return
@@ -170,7 +189,11 @@ enum KeynoteFixture {
             objects.append((id, type, writer))
         }
 
-        add(1, KeynoteType.document) { $0.reference(2, 2) }
+        // In `en_US`, so numbers are written the way the tests expect.
+        add(1, KeynoteType.document) { document in
+            document.reference(2, 2)
+            document.message(3) { $0.message(1) { $0.string(4, "en_US") } }
+        }
         add(2, KeynoteType.show) { show in
             show.message(3) { tree in
                 tree.reference(2, 10)
@@ -244,7 +267,9 @@ enum KeynoteFixture {
             slide.reference(1, 12)
             slide.reference(42, 22)
             slide.reference(42, 23)
+            slide.reference(42, 60)
         }
+        addTable(add)
         add(23, KeynoteType.group) { group in
             group.message(1) { $0.message(1) { $0.geometry(x: 500, y: 500, width: 300, height: 200) } }
             group.reference(2, 24)
@@ -296,6 +321,102 @@ enum KeynoteFixture {
         ])
     }
 
+    /// A 2 × 3 table: a header row whose first two cells are merged, then
+    /// a text cell, a number and an empty cell.
+    private static func addTable(_ add: (UInt64, UInt32, (inout ProtoWriter) -> Void) -> Void) {
+        add(60, KeynoteType.table) { info in
+            info.message(1) { $0.message(1) { $0.geometry(x: 20, y: 600, width: 1, height: 1) } }
+            info.reference(2, 61)
+        }
+        add(61, KeynoteType.tableModel) { model in
+            model.message(4) { store in
+                store.message(1) { $0.reference(2, 62) }
+                store.reference(2, 63)
+                store.message(3) { tiles in
+                    tiles.message(1) { tile in
+                        tile.varint(1, 0)
+                        tile.reference(2, 64)
+                    }
+                }
+                store.reference(4, 65)
+            }
+            model.varint(6, 2)
+            model.varint(7, 3)
+            model.varint(9, 1)
+            model.double(16, 30)
+            model.double(17, 100)
+            model.reference(19, 66)
+            // Merge A1:B1, as a formula naming the range.
+            model.message(47) { $0.message(2) { $0.message(3) { pair in
+                pair.message(2) { $0.message(1) { $0.message(1) { node in
+                    node.varint(1, 67)
+                    node.message(40) { tract in
+                        tract.message(3) { $0.varint(1, 0); $0.varint(2, 1) }
+                        tract.message(4) { $0.varint(1, 0) }
+                    }
+                } } }
+            } } }
+        }
+        add(62, 6006) { bucket in
+            bucket.message(2) { header in
+                header.varint(1, 1)
+                header.float(2, 50)
+            }
+        }
+        add(63, 6006) { bucket in
+            bucket.message(2) { header in
+                header.varint(1, 2)
+                header.float(2, 150)
+            }
+        }
+        add(64, 6002) { tile in
+            tile.message(5) { row in
+                row.varint(1, 0)
+                row.data(6, cell(type: 3, flags: 0x8, keys: [1]))
+                row.data(7, offsets([0]))
+            }
+            tile.message(5) { row in
+                row.varint(1, 1)
+                let text = cell(type: 3, flags: 0x8, keys: [2])
+                // 7.5: a coefficient of 75 and an exponent of -1.
+                var number = cell(type: 2, flags: 0x1, keys: [])
+                var decimal = [UInt8](repeating: 0, count: 16)
+                decimal[0] = 75
+                let exponent = 0x1820 - 1
+                decimal[14] = UInt8((exponent << 1) & 0xFF)
+                decimal[15] = UInt8(exponent >> 7)
+                number += decimal
+                row.data(6, text + number)
+                row.data(7, offsets([0, text.count]))
+            }
+        }
+        add(65, 6005) { list in
+            list.message(3) { $0.varint(1, 1); $0.string(3, "Fruit") }
+            list.message(3) { $0.varint(1, 2); $0.string(3, "Apples") }
+        }
+        add(66, KeynoteType.cellStyle) { style in
+            style.message(11) { $0.message(1) { $0.message(1) { $0.color(0, 0, 1) } } }
+        }
+    }
+
+    /// A packed table cell: its header, then four-byte keys after any value.
+    private static func cell(type: UInt8, flags: UInt32, keys: [UInt32]) -> [UInt8] {
+        var bytes: [UInt8] = [5, type, 0, 0, 0, 0, 0, 0]
+        withUnsafeBytes(of: flags.littleEndian) { bytes += $0 }
+        for key in keys { withUnsafeBytes(of: key.littleEndian) { bytes += $0 } }
+        return bytes
+    }
+
+    /// A row's offsets: one per column, 0xFFFF for an empty cell.
+    private static func offsets(_ values: [Int]) -> [UInt8] {
+        var bytes: [UInt8] = []
+        for column in 0..<256 {
+            let value = column < values.count ? UInt16(values[column]) : 0xFFFF
+            bytes += [UInt8(value & 0xFF), UInt8(value >> 8)]
+        }
+        return bytes
+    }
+
     /// Objects as an `.iwa`: each behind its `TSP.ArchiveInfo`, the lot
     /// compressed as Snappy literals.
     private static func iwa(_ objects: [(id: UInt64, type: UInt32, message: ProtoWriter)]) -> Data {
@@ -340,6 +461,11 @@ struct ProtoWriter {
 
     mutating func varint(_ field: Int, _ value: UInt64) {
         bytes += Self.varint(UInt64(field << 3)) + Self.varint(value)
+    }
+
+    mutating func double(_ field: Int, _ value: Double) {
+        bytes += Self.varint(UInt64(field << 3 | 1))
+        withUnsafeBytes(of: value.bitPattern.littleEndian) { bytes += $0 }
     }
 
     mutating func float(_ field: Int, _ value: Float) {
