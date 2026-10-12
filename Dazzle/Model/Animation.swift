@@ -171,11 +171,12 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
     var source: String?
     /// The independent axis values of an imported grow/shrink behaviour.
     var scaling: AnimationScale?
+    var timingCurve: AnimationTimingCurve?
 
     init(
         id: UUID = UUID(), shapeID: Int, paragraphs: ClosedRange<Int>? = nil, category: Category, effect: Effect,
         trigger: Trigger = .onClick, duration: Double? = nil, delay: Double = 0, source: String? = nil,
-        scaling: AnimationScale? = nil
+        scaling: AnimationScale? = nil, timingCurve: AnimationTimingCurve? = nil
     ) {
         self.id = id
         self.shapeID = shapeID
@@ -187,6 +188,7 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         self.delay = delay
         self.source = source
         self.scaling = scaling
+        self.timingCurve = timingCurve
     }
 
     /// The same effect, as a new entry, for a copy of its slide.
@@ -194,13 +196,30 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         self.init(
             shapeID: animation.shapeID, paragraphs: animation.paragraphs, category: animation.category,
             effect: animation.effect, trigger: animation.trigger, duration: animation.duration,
-            delay: animation.delay, source: animation.source, scaling: animation.scaling
+            delay: animation.delay, source: animation.source, scaling: animation.scaling, timingCurve: animation.timingCurve
         )
     }
 
     /// Whether it starts a video or sound the slide holds.
     var playsMedia: Bool {
         category == .other("mediacall") && source?.contains("playFrom") == true
+    }
+}
+
+/// OOXML's acceleration/deceleration fractions remap time without changing
+/// the duration. Integrating the piecewise linear speed gives the position.
+struct AnimationTimingCurve: Equatable, Hashable, Sendable {
+    var acceleration = 0.0
+    var deceleration = 0.0
+
+    func value(at progress: Double) -> Double {
+        let t = min(max(progress, 0), 1)
+        let a = min(max(acceleration, 0), 1)
+        let d = min(max(deceleration, 0), 1 - a)
+        let rate = 1 / (1 - (a + d) / 2)
+        if a > 0, t < a { return rate * t * t / (2 * a) }
+        if d > 0, t > 1 - d { return 1 - rate * pow(1 - t, 2) / (2 * d) }
+        return rate * (t - a / 2)
     }
 }
 
@@ -460,7 +479,8 @@ struct AnimationTimeline: Sendable {
         _ animation: ShapeAnimation, at progress: Double, to appearance: inout AnimatedAppearance,
         frame: CGRect, slideSize: CGSize
     ) {
-        let eased = 1 - pow(1 - progress, 3)
+        let progress = animation.timingCurve?.value(at: progress) ?? progress
+        let eased = animation.timingCurve == nil ? 1 - pow(1 - progress, 3) : progress
         switch animation.category {
         case .entrance:
             appearance.opacity = 1
@@ -491,16 +511,16 @@ struct AnimationTimeline: Sendable {
             case .appear: break
             case .fly(let direction):
                 let end = offscreen(direction, frame: frame, slideSize: slideSize)
-                let accelerated = pow(progress, 3)
+                let accelerated = animation.timingCurve == nil ? pow(progress, 3) : progress
                 appearance.offset.width += end.width * accelerated
                 appearance.offset.height += end.height * accelerated
             case .wipe(let direction):
                 appearance.reveal = .init(edge: direction.opposite, fraction: 1 - progress)
             case .zoom:
-                appearance.scale *= 1 - pow(progress, 3)
+                appearance.scale *= 1 - (animation.timingCurve == nil ? pow(progress, 3) : progress)
                 appearance.opacity *= 1 - progress
             case .float:
-                appearance.offset.height -= slideSize.height * 0.1 * pow(progress, 3)
+                appearance.offset.height -= slideSize.height * 0.1 * (animation.timingCurve == nil ? pow(progress, 3) : progress)
                 appearance.opacity *= 1 - progress
             default:
                 appearance.opacity *= 1 - progress

@@ -70,10 +70,14 @@ enum AnimationXML {
             scaling = AnimationScale(from: value("from") ?? CGSize(width: 1, height: 1),
                                      to: value("to") ?? value("by") ?? CGSize(width: 1.5, height: 1.5))
         }
+        let timingCurve: AnimationTimingCurve? = if node.attribute("accel") != nil || node.attribute("decel") != nil {
+            AnimationTimingCurve(acceleration: (node.attribute("accel").flatMap(Double.init) ?? 0) / 100_000,
+                                 deceleration: (node.attribute("decel").flatMap(Double.init) ?? 0) / 100_000)
+        } else { nil }
         return ShapeAnimation(
             shapeID: shapeID, paragraphs: paragraphs, category: category, effect: effect, trigger: trigger,
             duration: duration(of: node), delay: milliseconds(delay(of: node)) ?? 0,
-            source: XMLLite.serialize(par), scaling: scaling
+            source: XMLLite.serialize(par), scaling: scaling, timingCurve: timingCurve
         )
     }
 
@@ -240,10 +244,13 @@ enum AnimationXML {
         let category = animation.category
         let id = take(&nextID)
         let behaviours = behavioursXML(animation, nextID: &nextID)
+        let curve = animation.timingCurve.map {
+            " accel=\"\(Int(($0.acceleration * 100_000).rounded()))\" decel=\"\(Int(($0.deceleration * 100_000).rounded()))\""
+        } ?? ""
         return """
             <p:par><p:cTn id="\(id)" presetID="\(animation.effect.presetID)" presetClass="\(category.presetClass)" \
             presetSubtype="\(animation.effect.presetSubtype)" fill="hold" grpId="0" \
-            nodeType="\(nodeType)"><p:stCondLst><p:cond delay="\(ms(animation.delay))"/></p:stCondLst>\
+            nodeType="\(nodeType)"\(curve)><p:stCondLst><p:cond delay="\(ms(animation.delay))"/></p:stCondLst>\
             <p:childTnLst>\(behaviours)</p:childTnLst></p:cTn></p:par>
             """
     }

@@ -213,7 +213,47 @@ struct AnimationTests {
         #expect(abs(appearance.offset.height) < 0.01)
     }
 
+    @Test("LCD smooth-end motion paths preserve their speed curves")
+    func lcdDeceleration() throws {
+        let third = try lcdAnimations(slide: 3)
+        #expect(third.filter { $0.timingCurve != nil }.count == 12)
+        #expect(third.filter { $0.timingCurve?.deceleration == 1 }.count == 9)
+        #expect(third.filter { $0.timingCurve?.deceleration == 0.66667 }.count == 3)
+        let fifth = try lcdAnimations(slide: 5)
+        let animation = try #require(fifth.first { $0.timingCurve != nil })
+        #expect(animation.shapeID == 339)
+        #expect(animation.duration == 1.7)
+        #expect(ShapeAnimation(copying: animation).timingCurve == animation.timingCurve)
+        let timeline = AnimationTimeline(animations: fifth)
+        let frame = timeline.frame(begun: 1, elapsed: 0.85, shapes: shapes(for: fifth), slideSize: CGSize(width: 960, height: 540))
+        // Full-duration deceleration is 75% along its path halfway through,
+        // rather than 50%. The original sample path ends at x = 0.94128.
+        #expect(abs((frame.shapes[339]?.offset.width ?? 0) - 677.72175) < 0.01)
+        #expect(AnimationTimingCurve(deceleration: 1).value(at: 0.5) == 0.75)
+        #expect(abs(AnimationTimingCurve(deceleration: 2.0 / 3).value(at: 0.5) - 0.71875) < 0.00001)
+        let symmetric = AnimationTimingCurve(acceleration: 0.5, deceleration: 0.5)
+        #expect(symmetric.value(at: 0.25) == 0.125)
+        #expect(symmetric.value(at: 0.5) == 0.5)
+        #expect(symmetric.value(at: 0.75) == 0.875)
+    }
 
+    @Test("Editing a motion path duration keeps its deceleration on export") @MainActor
+    func decelerationRoundTrip() throws {
+        var presentation = Presentation.blank
+        let shape = presentation.slides[0].shapes[0].shapeID
+        presentation.slides[0].animations = [
+            ShapeAnimation(shapeID: shape, category: .motionPath, effect: .path(MotionPath(path: "M 0 0 L 0.5 0 E")),
+                           duration: 1.7, timingCurve: AnimationTimingCurve(deceleration: 1)),
+        ]
+        presentation.slides[0].areAnimationsModified = true
+        presentation.slides[0].isModified = true
+        var read = try reread(presentation)
+        let state = EditorState()
+        state.updateAnimation(read.slides[0].animations[0].id, in: &read) { $0.duration = 3 }
+        let final = try reread(read).slides[0].animations[0]
+        #expect(final.duration == 3)
+        #expect(final.timingCurve?.deceleration == 1)
+    }
 
     @Test("Later layout paths replace held positions while additive paths sum")
     func successivePaths() {
