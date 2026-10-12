@@ -221,6 +221,11 @@ struct AnimationScale: Equatable, Hashable, Sendable {
 struct MotionPath: Equatable, Hashable, Sendable {
     /// The path as written, such as `M 0 0 L 0.25 0.1 E`.
     var path: String
+    /// Layout paths are offsets from the original object center. Parent
+    /// paths give centers measured from the slide's upper-left corner.
+    var usesSlideOrigin = false
+    var isAdditive = false
+
 
     /// The path flattened into points, in fractions of the slide.
     var points: [CGPoint] {
@@ -510,8 +515,16 @@ struct AnimationTimeline: Sendable {
         case .motionPath:
             guard case .path(let path) = animation.effect else { return }
             let point = path.offset(at: progress)
-            appearance.offset.width += point.x * slideSize.width
-            appearance.offset.height += point.y * slideSize.height
+            let offset = CGSize(
+                width: point.x * slideSize.width - (path.usesSlideOrigin ? frame.midX : 0),
+                height: point.y * slideSize.height - (path.usesSlideOrigin ? frame.midY : 0)
+            )
+            if path.isAdditive {
+                appearance.offset.width += offset.width
+                appearance.offset.height += offset.height
+            } else {
+                appearance.offset = offset
+            }
         case .other:
             break
         }

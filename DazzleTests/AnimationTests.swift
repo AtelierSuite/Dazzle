@@ -184,4 +184,28 @@ struct AnimationTests {
         #expect(final.duration == 1.25)
     }
 
+    private func shapes(for animations: [ShapeAnimation]) -> [SlideShape] {
+        Set(animations.map(\.shapeID)).map {
+            SlideShape(shapeID: $0, name: "", kind: .shape,
+                       frame: EMURect(x: 127_000, y: 127_000, width: 1_270_000, height: 1_270_000))
+        }
+    }
+    @Test("Later layout paths replace held positions while additive paths sum")
+    func successivePaths() {
+        let first = ShapeAnimation(shapeID: 2, category: .motionPath, effect: .path(MotionPath(path: "M 0 0 L 0.2 0 E")), trigger: .withPrevious, duration: 1)
+        let second = ShapeAnimation(shapeID: 2, category: .motionPath, effect: .path(MotionPath(path: "M 0.2 0 L 0.4 0 E")), trigger: .afterPrevious, duration: 1)
+        let shapes = shapes(for: [first])
+        let size = CGSize(width: 1_000, height: 500)
+        let frame = AnimationTimeline(animations: [first, second]).frame(begun: 1, elapsed: 2, shapes: shapes, slideSize: size)
+        #expect(frame.shapes[2]?.offset.width == 400)
+        var additive = second
+        additive.effect = .path(MotionPath(path: "M 0 0 L 0.4 0 E", isAdditive: true))
+        let summed = AnimationTimeline(animations: [first, additive]).frame(begun: 1, elapsed: 2, shapes: shapes, slideSize: size)
+        #expect(summed.shapes[2]?.offset.width == 600)
+        var parent = second
+        parent.effect = .path(MotionPath(path: "M 0.2 0 L 0.4 0.5 E", usesSlideOrigin: true))
+        let absolute = AnimationTimeline(animations: [parent]).frame(begun: 1, elapsed: 2, shapes: shapes, slideSize: size)
+        #expect(absolute.shapes[2]?.offset == CGSize(width: 340, height: 190))
+    }
+
 }

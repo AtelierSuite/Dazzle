@@ -54,8 +54,10 @@ enum AnimationXML {
         let presetID = node.attribute("presetID").flatMap(Int.init) ?? 0
         let subtype = node.attribute("presetSubtype").flatMap(Int.init) ?? 0
         var effect = Self.effect(category: category, presetID: presetID, subtype: subtype)
-        if category == .motionPath, let path = firstElement(named: "animMotion", in: node)?.attribute("path") {
-            effect = .path(MotionPath(path: path))
+        if category == .motionPath, let motion = firstElement(named: "animMotion", in: node),
+           let path = motion.attribute("path") {
+            effect = .path(MotionPath(path: path, usesSlideOrigin: motion.attribute("origin") != "layout",
+                                      isAdditive: motion.firstChild(named: "cBhvr")?.attribute("additive") == "sum"))
         }
         var scaling: AnimationScale?
         if effect == .growShrink, let scale = firstElement(named: "animScale", in: node) {
@@ -349,8 +351,8 @@ enum AnimationXML {
             }.joined()
         case (.motionPath, .path(let path)):
             return behaviour(
-                "animMotion", attributes: " origin=\"layout\" path=\"\(XMLLite.escape(path.path))\" pathEditMode=\"relative\" ptsTypes=\"\"",
-                dur: duration, extra: " fill=\"hold\"", attribute: ["ppt_x", "ppt_y"]
+                "animMotion", attributes: " origin=\"\(path.usesSlideOrigin ? "parent" : "layout")\" path=\"\(XMLLite.escape(path.path))\" pathEditMode=\"relative\" ptsTypes=\"\"",
+                additive: path.isAdditive ? " additive=\"sum\"" : "", dur: duration, extra: " fill=\"hold\"", attribute: ["ppt_x", "ppt_y"]
             )
         default:
             // Nothing Dazzle makes; shown as it fades, so written as one.
