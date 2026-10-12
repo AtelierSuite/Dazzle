@@ -104,7 +104,7 @@ enum KeynoteImporter {
         let slideSize = EMUSize(
             width: KeynoteUnits.emu(size?.float(1) ?? 1_920), height: KeynoteUnits.emu(size?.float(2) ?? 1_080)
         )
-        let nodes = show.message.message(3)?.references(2) ?? []
+        let nodes = slideNodes(show.message.message(3), in: archive)
         let text = KeynoteText(archive: archive, styles: KeynoteStyles(archive: archive))
 
         var slides: [PresentationTemplate.SlidePart] = []
@@ -162,6 +162,22 @@ enum KeynoteImporter {
             ),
             notes: notes, animations: animations, omissions: omissions
         )
+    }
+
+    /// The show's slide nodes in order. Keynote 6 kept them as a tree under
+    /// a root node, with each slide's indented slides as its children.
+    private static func slideNodes(_ tree: ProtoMessage?, in archive: KeynoteArchive) -> [UInt64] {
+        let slides = tree?.references(2) ?? []
+        guard slides.isEmpty, let root = tree?.reference(1) else { return slides }
+        var nodes: [UInt64] = []
+        var visited: Set<UInt64> = []
+        func visit(_ identifier: UInt64) {
+            guard visited.insert(identifier).inserted, let node = archive[identifier] else { return }
+            if node.message.has(2) { nodes.append(identifier) }
+            node.message.references(1).forEach(visit)
+        }
+        visit(root)
+        return nodes
     }
 
     private static func omission(_ type: UInt32) -> UnsupportedFeatureReport.Omission {
