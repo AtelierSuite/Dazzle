@@ -21,6 +21,14 @@ enum PresentationTemplate {
         PackagePath.relativeTarget(to: "ppt/slideLayouts/slideLayout\(layouts.count).xml", from: partName)
     }
 
+    /// Where the `index`th of the layouts given to `parts(size:slides:layouts:media:mediaTypes:)` goes.
+    static func addedLayoutPath(_ index: Int) -> String {
+        "ppt/slideLayouts/slideLayout\(layouts.count + index + 1).xml"
+    }
+
+    /// The master, for an added layout's first relationship.
+    static let masterPath = "ppt/slideMasters/slideMaster1.xml"
+
     static func parts() -> [String: Data] {
         parts(size: .widescreen, slides: [
             SlidePart(xml: firstSlide, relationships: [
@@ -30,14 +38,17 @@ enum PresentationTemplate {
     }
 
     /// The template's theme, master and layouts, holding `slides` instead of
-    /// its title slide, with `media` alongside. Media whose extension does
-    /// not settle its type, such as a chart's XML, is given one in `mediaTypes`.
+    /// its title slide, with `media` alongside. `layouts` are added after the
+    /// template's own. Media whose extension does not settle its type, such
+    /// as a chart's XML, is given one in `mediaTypes`.
     static func parts(
-        size: EMUSize, slides: [SlidePart], media: [String: Data] = [:], mediaTypes: [String: String] = [:]
+        size: EMUSize, slides: [SlidePart], layouts added: [SlidePart] = [],
+        media: [String: Data] = [:], mediaTypes: [String: String] = [:]
     ) -> [String: Data] {
+        let layoutCount = layouts.count + added.count
         var parts: [String: String] = [
             "[Content_Types].xml": contentTypes(
-                slideCount: slides.count,
+                slideCount: slides.count, layoutCount: layoutCount,
                 mediaExtensions: media.keys.filter { mediaTypes[$0] == nil }.map { ($0 as NSString).pathExtension.lowercased() },
                 overrides: mediaTypes
             ),
@@ -48,8 +59,8 @@ enum PresentationTemplate {
             "ppt/viewProps.xml": viewProperties,
             "ppt/tableStyles.xml": tableStyles,
             "ppt/theme/theme1.xml": theme,
-            "ppt/slideMasters/slideMaster1.xml": master,
-            "ppt/slideMasters/_rels/slideMaster1.xml.rels": masterRelationships,
+            "ppt/slideMasters/slideMaster1.xml": master(layoutCount: layoutCount),
+            "ppt/slideMasters/_rels/slideMaster1.xml.rels": masterRelationships(layoutCount: layoutCount),
         ]
         for (index, layout) in layouts.enumerated() {
             parts["ppt/slideLayouts/slideLayout\(index + 1).xml"] = layout
@@ -60,6 +71,11 @@ enum PresentationTemplate {
         for (index, slide) in slides.enumerated() {
             data["ppt/slides/slide\(index + 1).xml"] = Data((PackagePath.declaration + slide.xml).utf8)
             data["ppt/slides/_rels/slide\(index + 1).xml.rels"] = Relationship.xml(slide.relationships)
+        }
+        for (index, layout) in added.enumerated() {
+            let path = addedLayoutPath(index)
+            data[path] = Data((PackagePath.declaration + layout.xml).utf8)
+            data[PackagePath.relationships(of: path)] = Relationship.xml(layout.relationships)
         }
         return data.merging(media) { _, added in added }
     }
@@ -82,7 +98,7 @@ enum PresentationTemplate {
         return "<Relationships xmlns=\"\(OOXML.packageRelationships)\">\(items.joined())</Relationships>"
     }
 
-    private static func contentTypes(slideCount: Int, mediaExtensions: [String], overrides added: [String: String]) -> String {
+    private static func contentTypes(slideCount: Int, layoutCount: Int, mediaExtensions: [String], overrides added: [String: String]) -> String {
         let presentationML = "application/vnd.openxmlformats-officedocument.presentationml."
         var overrides = [
             ("/ppt/presentation.xml", presentationML + "presentation.main+xml"),
@@ -95,7 +111,7 @@ enum PresentationTemplate {
         for index in 0..<slideCount {
             overrides.append(("/ppt/slides/slide\(index + 1).xml", OOXML.ContentType.slide))
         }
-        for index in layouts.indices {
+        for index in 0..<layoutCount {
             overrides.append(("/ppt/slideLayouts/slideLayout\(index + 1).xml", presentationML + "slideLayout+xml"))
         }
         overrides += added.sorted { $0.key < $1.key }.map { ("/" + $0.key, $0.value) }
@@ -237,7 +253,7 @@ enum PresentationTemplate {
             """
     }
 
-    private static let master: String = {
+    private static func master(layoutCount: Int) -> String {
         let bullet = "<a:buFont typeface=\"Arial\" panose=\"020B0604020202020204\"/><a:buChar char=\"•\"/>"
         let bodyLevels = [(2800, 228_600), (2400, 685_800), (2000, 1_143_000), (1800, 1_600_200), (1800, 2_057_400)]
             .enumerated().map { index, level in
@@ -283,7 +299,7 @@ enum PresentationTemplate {
                 bodyProperties: footer, listStyle: footerStyle("r"), prompt: ""
             ),
         ].joined()
-        let layoutIDs = layouts.indices.map {
+        let layoutIDs = (0..<layoutCount).map {
             "<p:sldLayoutId id=\"\(2_147_483_649 + $0)\" r:id=\"rId\($0 + 1)\"/>"
         }.joined()
         return """
@@ -302,11 +318,11 @@ enum PresentationTemplate {
             <a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/><a:cs typeface="+mn-cs"/></a:defRPr></a:lvl1pPr>\
             </p:otherStyle></p:txStyles></p:sldMaster>
             """
-    }()
+    }
 
-    private static var masterRelationships: String {
+    private static func masterRelationships(layoutCount: Int) -> String {
         relationships(
-            layouts.indices.map { (layout, "../slideLayouts/slideLayout\($0 + 1).xml") }
+            (0..<layoutCount).map { (layout, "../slideLayouts/slideLayout\($0 + 1).xml") }
                 + [(OOXML.RelationshipType.theme, "../theme/theme1.xml")]
         )
     }
