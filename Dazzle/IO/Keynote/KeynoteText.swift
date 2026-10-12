@@ -314,14 +314,18 @@ struct KeynoteText {
         func property<Value>(_ read: (ProtoMessage) -> Value?) -> Value? {
             characterProperty(paragraph: paragraph, character: character, read)
         }
+        /// A property a style can set to nothing, which ends the search there.
+        func nullable<Value>(_ isNull: Int, _ read: @escaping (ProtoMessage) -> Value?) -> Value? {
+            property { $0.bool(isNull) == true ? .some(nil) : read($0).map { .some($0) } } ?? nil
+        }
         // Keynote writes languages as `en_US`; DrawingML wants `en-US`.
-        let language = (property { $0.bool(8) == true ? nil : $0.string(9) } ?? "en-US").replacingOccurrences(of: "_", with: "-")
+        let language = (nullable(8) { $0.string(9) } ?? "en-US").replacingOccurrences(of: "_", with: "-")
         var attributes = " lang=\"\(XMLLite.escape(language))\""
         var children = ""
         let size = property { $0.float(3) } ?? Self.defaultFontSize
         attributes += " sz=\"\(Int((size * 100).rounded()))\""
 
-        let fontName = property { $0.bool(4) == true ? nil : $0.string(5) }
+        let fontName = nullable(4) { $0.string(5) }
         let font = fontName.map(Self.font)
         // An explicit bold or italic flag wins over the face: Keynote keeps the
         // face for its family and draws the flagged style of it.
@@ -355,10 +359,10 @@ struct KeynoteText {
         default: break
         }
 
-        if property({ $0.bool(6) == true ? false : $0.has(7) }) == true {
-            children += KeynoteStyles.solidFill(property { $0.bool(6) == true ? nil : $0.message(7) }) ?? ""
+        if let color = nullable(6, { $0.message(7) }) {
+            children += KeynoteStyles.solidFill(color) ?? ""
         }
-        if let highlight = property({ $0.bool(25) == true ? nil : $0.message(26) }),
+        if let highlight = nullable(25, { $0.message(26) }),
            let color = KeynoteStyles.colorXML(highlight) {
             children += "<a:highlight>\(color)</a:highlight>"
         }
