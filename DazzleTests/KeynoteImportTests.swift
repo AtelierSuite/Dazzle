@@ -677,3 +677,182 @@ struct ProtoWriter {
         float(4, angle)
     }
 }
+
+@Suite("Keynote details from real documents")
+struct KeynoteDetailTests {
+    private let presentation: Presentation
+
+    init() throws {
+        presentation = try KeynoteImporter.presentation(from: KeynoteFixture.olderDeck())
+    }
+
+    @Test("A file that isn't an archive is not a Keynote file")
+    func rejectsOtherData() {
+        #expect(throws: KeynoteReadError.notKeynote) {
+            _ = try KeynoteImporter.presentation(from: Data(count: 64))
+        }
+    }
+
+    @Test("Keynote 6 slides are read from their tree, indented slides included")
+    func slideTree() {
+        #expect(presentation.slides.count == 2)
+    }
+
+    @Test("A placeholder with no frame or text field of its own takes its template's")
+    func inheritedPlaceholder() throws {
+        let title = try #require(presentation.slides[0].shapes.first { $0.text?.plainText == "Inherited title" })
+        #expect(title.frame == EMURect(x: 50 * 12_700, y: 40 * 12_700, width: 900 * 12_700, height: 120 * 12_700))
+        #expect(title.fill == .solid(.rgb(0xFF0000)))
+    }
+
+    @Test("Text with no size grows from its point, without wrapping, past trailing spaces")
+    func zeroSizeText() throws {
+        let box = try #require(presentation.slides[0].shapes.first { $0.text?.plainText == "Centred " })
+        #expect(box.text?.properties.wraps == false)
+        #expect(box.frame.width > 0)
+        #expect(abs(box.frame.x + box.frame.width / 2 - 512 * 12_700) <= 12_700)
+        // One line of 30-point text, not two.
+        #expect(box.frame.height < 60 * 12_700)
+    }
+
+    @Test("Colour comes from a parent style when the nearer one leaves it unset")
+    func inheritedColor() throws {
+        let box = try #require(presentation.slides[0].shapes.first { $0.text?.plainText == "Centred " })
+        let run = try #require(box.text?.paragraphs.first?.runs.first)
+        #expect(run.properties.color == .rgb(0xFFFFFF))
+        #expect(run.properties.isBold != true)
+    }
+
+    @Test("Spacing of at least less than a single line leaves lines single")
+    func minimumLineSpacing() throws {
+        let box = try #require(presentation.slides[0].shapes.first { $0.text?.plainText == "Centred " })
+        #expect(box.text?.paragraphs.first?.properties.lineSpacing == nil)
+    }
+
+    @Test("A drawable flagged as flipped is mirrored")
+    func flippedGroup() throws {
+        let group = try #require(presentation.slides[0].shapes.first { if case .group = $0.kind { true } else { false } })
+        #expect(group.flipsHorizontally)
+    }
+
+    @Test("A texture the file doesn't carry falls back to its tint")
+    func missingTexture() throws {
+        let shape = try #require(presentation.slides[1].shapes.first)
+        #expect(shape.fill == .solid(.rgb(0x0000FF)))
+    }
+}
+
+extension KeynoteFixture {
+    /// A document laid out as Keynote 6 saved them: slides in a tree under a
+    /// root node, and a title placeholder that leaves its frame, style and
+    /// text field to the template.
+    static func olderDeck() throws -> Data {
+        var objects: [(id: UInt64, type: UInt32, message: ProtoWriter)] = []
+        func add(_ id: UInt64, _ type: UInt32, _ build: (inout ProtoWriter) -> Void) {
+            var writer = ProtoWriter()
+            build(&writer)
+            objects.append((id, type, writer))
+        }
+
+        add(1, KeynoteType.document) { $0.reference(2, 2) }
+        add(2, KeynoteType.show) { show in
+            show.message(3) { $0.reference(1, 3) }
+            show.message(4) { $0.size(1_024, 768) }
+        }
+        add(3, KeynoteType.slideNode) { $0.reference(1, 10) }
+        add(10, KeynoteType.slideNode) { node in
+            node.reference(1, 20)
+            node.reference(2, 11)
+        }
+        add(20, KeynoteType.slideNode) { $0.reference(2, 21) }
+
+        add(90, KeynoteType.templateSlide) { template in
+            template.reference(5, 93)
+            template.reference(42, 93)
+        }
+        add(93, KeynoteType.placeholder) { placeholder in
+            placeholder.message(1) { info in
+                info.message(1) { shape in
+                    shape.message(1) { $0.message(1) { $0.geometry(x: 50, y: 40, width: 900, height: 120) } }
+                    shape.reference(2, 94)
+                }
+                info.reference(4, 95)
+            }
+            placeholder.varint(2, 2)
+        }
+        add(94, KeynoteType.shapeStyle) { style in
+            style.message(11) { $0.message(1) { $0.message(1) { $0.color(1, 0, 0) } } }
+        }
+        add(95, KeynoteType.storage) { $0.string(3, "Sample title") }
+
+        add(11, KeynoteType.slide) { slide in
+            slide.reference(17, 90)
+            for drawable: UInt64 in [13, 14, 15] { slide.reference(42, drawable) }
+        }
+        add(13, KeynoteType.placeholder) { placeholder in
+            placeholder.message(1) { info in
+                info.message(1) { $0.message(1) { _ in } }
+                info.reference(2, 30)
+            }
+            placeholder.varint(2, 2)
+        }
+        add(30, KeynoteType.storage) { $0.string(3, "Inherited title") }
+
+        // Centred text with no size: its position is its middle.
+        add(14, KeynoteType.shapeInfo) { info in
+            info.message(1) { $0.message(1) { $0.message(1) { $0.geometry(x: 512, y: 100, width: 0, height: 0, flags: 0) } } }
+            info.reference(4, 31)
+            info.varint(6, 1)
+        }
+        add(31, KeynoteType.storage) { storage in
+            storage.string(3, "Centred ")
+            storage.message(5) { $0.message(1) { entry in
+                entry.varint(1, 0)
+                entry.reference(2, 41)
+            } }
+        }
+        add(40, KeynoteType.paragraphStyle) { style in
+            style.message(11) { characters in
+                characters.varint(1, 1)
+                characters.message(7) { $0.color(1, 1, 1) }
+            }
+        }
+        add(41, KeynoteType.paragraphStyle) { style in
+            style.message(1) { $0.reference(3, 40) }
+            style.message(11) { characters in
+                characters.varint(1, 0)
+                characters.float(3, 30)
+            }
+            style.message(12) { paragraph in
+                paragraph.varint(1, 2)
+                paragraph.message(13) { spacing in
+                    spacing.varint(1, 1)
+                    spacing.float(2, 10)
+                }
+            }
+        }
+
+        add(15, KeynoteType.group) { group in
+            group.message(1) { $0.message(1) { $0.geometry(x: 100, y: 500, width: 100, height: 100, flags: 7) } }
+            group.reference(2, 16)
+        }
+        add(16, KeynoteType.shape) { shape in
+            shape.message(1) { $0.message(1) { $0.geometry(x: 0, y: 0, width: 50, height: 50) } }
+        }
+
+        add(21, KeynoteType.slide) { $0.reference(42, 22) }
+        add(22, KeynoteType.shape) { shape in
+            shape.message(1) { $0.message(1) { $0.geometry(x: 0, y: 0, width: 100, height: 100) } }
+            shape.reference(2, 23)
+        }
+        add(23, KeynoteType.shapeStyle) { style in
+            style.message(11) { $0.message(1) { $0.message(3) { texture in
+                texture.varint(2, 2)
+                texture.message(3) { $0.color(0, 0, 1) }
+                texture.reference(6, 999)
+            } } }
+        }
+
+        return try ZipArchive.archive(entries: [("Index/Document.iwa", iwa(objects))])
+    }
+}
