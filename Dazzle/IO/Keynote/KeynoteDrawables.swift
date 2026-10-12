@@ -20,6 +20,9 @@ struct KeynoteSlideWriter {
     /// Measured frames for text that grows to fit, by shape id.
     private let fittedFrames: [Int: EMURect]
     let isLayout: Bool
+    /// The template slide's placeholders by kind, whose frame and style a
+    /// slide's placeholder takes when it has none of its own.
+    var templatePlaceholders: [Int: ProtoMessage] = [:]
 
     /// `parent` is the part's first relationship: a slide's layout, or a layout's master.
     init(
@@ -94,9 +97,10 @@ struct KeynoteSlideWriter {
                 return type.flatMap { shapeInfo(info, placeholder: $0) }
             }
             // An empty placeholder shows only its prompt, which never plays.
-            let storage = archive[info.reference(4) ?? info.reference(3)]
+            let storage = archive[info.reference(4) ?? info.reference(3) ?? info.reference(2)]
             guard !text.plainText(storage).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            return shapeInfo(info, placeholder: type)
+            let inherited = object.message.int(2).flatMap { templatePlaceholders[$0] }?.message(1)
+            return shapeInfo(info, placeholder: type, inherited: inherited)
         case KeynoteType.image:
             return image(object.message)
         case KeynoteType.movie:
@@ -122,10 +126,14 @@ struct KeynoteSlideWriter {
         }
     }
 
-    private mutating func shapeInfo(_ info: ProtoMessage, placeholder: String? = nil) -> String? {
+    /// Older documents keep a shape's text in the deprecated field 2.
+    private mutating func shapeInfo(_ info: ProtoMessage, placeholder: String? = nil, inherited: ProtoMessage? = nil) -> String? {
         guard let shape = info.message(1) else { return nil }
-        let storage = archive[info.reference(4) ?? info.reference(3)]
-        return self.shape(shape, storage: storage, isTextBox: placeholder == nil && info.bool(6) == true, placeholder: placeholder)
+        let storage = archive[info.reference(4) ?? info.reference(3) ?? info.reference(2)]
+        return self.shape(
+            shape, storage: storage, isTextBox: placeholder == nil && info.bool(6) == true,
+            placeholder: placeholder, inherited: inherited
+        )
     }
 
     private mutating func nonVisual(_ drawable: ProtoMessage?, name: String) -> String {
@@ -140,14 +148,17 @@ struct KeynoteSlideWriter {
         return "<p:cNvPr\(attributes)/>"
     }
 
-    /// `placeholder` is the `p:ph` type for a title or body.
+    /// `placeholder` is the `p:ph` type for a title or body; `inherited` the
+    /// template's shape for it, which fills in what the shape leaves out.
     private mutating func shape(
-        _ shape: ProtoMessage, storage: KeynoteArchive.Object?, isTextBox: Bool, placeholder: String? = nil
+        _ shape: ProtoMessage, storage: KeynoteArchive.Object?, isTextBox: Bool, placeholder: String? = nil,
+        inherited: ProtoMessage? = nil
     ) -> String? {
-        let drawable = shape.message(1)
+        let ownDrawable = shape.message(1)
+        let drawable = ownDrawable?.has(1) == true ? ownDrawable : inherited?.message(1) ?? ownDrawable
         guard var frame = Frame(drawable?.message(1)) else { return nil }
-        let style = shape.reference(2)
-        let pathSource = shape.message(3)
+        let style = shape.reference(2) ?? inherited?.reference(2)
+        let pathSource = shape.message(3).flatMap { $0.fields.isEmpty ? nil : $0 } ?? inherited?.message(3)
         let opacity = styles.opacity(style)
 
         let fill = KeynoteStyles.fill(styles.drawingProperty(style, .fill), opacity: opacity) { imageRelationship($0) }

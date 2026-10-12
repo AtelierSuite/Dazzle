@@ -160,6 +160,12 @@ enum KeynoteImporter {
                 parent: Relationship(id: "rId1", type: OOXML.RelationshipType.slideLayout, target: layout),
                 fittedFrames: fittedFrames.indices.contains(slides.count) ? fittedFrames[slides.count] : [:]
             )
+            // Placeholders by kind: slide number, title, body and object.
+            for (kind, field) in [(1, 20), (2, 5), (3, 6), (4, 30)] {
+                if let placeholder = archive[template?.message.reference(field)]?.message.message(1) {
+                    writer.templatePlaceholders[kind] = placeholder
+                }
+            }
             let xml = slideXML(slide, hidden: node.message.bool(4) ?? false, writer: &writer)
             slides.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
             omissions.formUnion(writer.skipped.map(omission))
