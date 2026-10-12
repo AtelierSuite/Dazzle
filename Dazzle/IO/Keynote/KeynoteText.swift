@@ -209,10 +209,20 @@ struct KeynoteText {
 
         if let spacing = paragraphProperty(style, { $0.message(13) }) {
             let amount = spacing.float(2) ?? 1
-            switch spacing.int(1) ?? 0 {
-            case 0: children += "<a:lnSpc><a:spcPct val=\"\(Int((amount * 100_000).rounded()))\"/></a:lnSpc>"
-            case 1, 2: children += "<a:lnSpc><a:spcPts val=\"\(Int((amount * 100).rounded()))\"/></a:lnSpc>"
-            default: break
+            // DrawingML spaces lines by a share of single spacing or exactly,
+            // so the bounded modes are exact only where the bound bites.
+            let single = fontSize(paragraph: style) * 1.2
+            let points: Double? = switch spacing.int(1) ?? 0 {
+            case 1: amount > single ? amount : nil
+            case 2: amount
+            case 3: amount < single ? amount : nil
+            case 4: single + amount
+            default: nil
+            }
+            if spacing.int(1) ?? 0 == 0 {
+                children += "<a:lnSpc><a:spcPct val=\"\(Int((amount * 100_000).rounded()))\"/></a:lnSpc>"
+            } else if let points {
+                children += "<a:lnSpc><a:spcPts val=\"\(Int((points * 100).rounded()))\"/></a:lnSpc>"
             }
         }
         // Keynote leaves no space above the first paragraph.
