@@ -109,6 +109,8 @@ struct KeynoteConversionTests {
             return
         }
         #expect(color.base == .rgb(0xFF0000))
+        #expect(shape.line?.head == nil)
+        #expect(shape.line?.tail == "arrow")
         // Thirty degrees anticlockwise in Keynote.
         #expect(abs(shape.rotation - 330) < 0.01)
         #expect(shape.frame == EMURect(x: 100 * 12_700, y: 400 * 12_700, width: 200 * 12_700, height: 100 * 12_700))
@@ -363,7 +365,15 @@ enum KeynoteFixture {
             shape.reference(2, 41)
         }
         add(41, KeynoteType.shapeStyle) { style in
-            style.message(11) { $0.message(1) { $0.message(1) { $0.color(1, 0, 0) } } }
+            style.message(11) { properties in
+                properties.message(1) { $0.message(1) { $0.color(1, 0, 0) } }
+                properties.message(2) { stroke in
+                    stroke.message(1) { $0.color(0, 0, 0) }
+                    stroke.float(2, 2)
+                }
+                // An arrowhead at Keynote's head: where the path ends.
+                properties.message(6) { $0.string(5, "simple arrow") }
+            }
         }
         add(15, KeynoteType.image) { image in
             image.message(1) { $0.message(1) { $0.geometry(x: 600, y: 300, width: 160, height: 120) } }

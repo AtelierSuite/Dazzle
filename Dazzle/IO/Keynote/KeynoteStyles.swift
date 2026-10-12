@@ -177,7 +177,8 @@ struct KeynoteStyles {
         case 2: "<a:bevel/>"
         default: "<a:miter lim=\"800000\"/>"
         }
-        let ends = (lineEnd(head, element: "headEnd") ?? "") + (lineEnd(tail, element: "tailEnd") ?? "")
+        // Keynote's head is where the path ends; DrawingML's where the line starts.
+        let ends = (lineEnd(tail, element: "headEnd") ?? "") + (lineEnd(head, element: "tailEnd") ?? "")
         return "<a:\(element) w=\"\(KeynoteUnits.emu(width))\"\(cap)>\(color)\(dash)\(join)\(ends)</a:\(element)>"
     }
 
