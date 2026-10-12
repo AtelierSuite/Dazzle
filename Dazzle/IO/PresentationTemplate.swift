@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 /// The package a new presentation starts as: a 16:9 deck with a theme of
 /// HIG system colours set in Arial and Meiryo UI, five common layouts and
@@ -7,27 +8,55 @@ import Foundation
 /// Built here rather than shipped as a file so every part is readable in
 /// review, and read back through `PPTXReader` like any other file.
 enum PresentationTemplate {
+    /// A slide for `parts(size:slides:media:)`: its XML and its relationships,
+    /// the first of which should be to its layout.
+    struct SlidePart {
+        var xml: String
+        var relationships: [Relationship]
+    }
+
+    /// The target of the layout with nothing on it, from a slide at
+    /// `partName`, for slides that place everything themselves.
+    static func relativeLayout(from partName: String) -> String {
+        PackagePath.relativeTarget(to: "ppt/slideLayouts/slideLayout\(layouts.count).xml", from: partName)
+    }
+
     static func parts() -> [String: Data] {
+        parts(size: .widescreen, slides: [
+            SlidePart(xml: firstSlide, relationships: [
+                Relationship(id: "rId1", type: layout, target: "../slideLayouts/slideLayout1.xml"),
+            ]),
+        ])
+    }
+
+    /// The template's theme, master and layouts, holding `slides` instead of
+    /// its title slide, with `media` alongside.
+    static func parts(size: EMUSize, slides: [SlidePart], media: [String: Data] = [:]) -> [String: Data] {
         var parts: [String: String] = [
-            "[Content_Types].xml": contentTypes,
+            "[Content_Types].xml": contentTypes(slideCount: slides.count, mediaExtensions: media.keys.map {
+                ($0 as NSString).pathExtension.lowercased()
+            }),
             "_rels/.rels": rootRelationships,
-            "ppt/presentation.xml": presentation,
-            "ppt/_rels/presentation.xml.rels": presentationRelationships,
+            "ppt/presentation.xml": presentation(size: size, slideCount: slides.count),
+            "ppt/_rels/presentation.xml.rels": presentationRelationships(slideCount: slides.count),
             "ppt/presProps.xml": presentationProperties,
             "ppt/viewProps.xml": viewProperties,
             "ppt/tableStyles.xml": tableStyles,
             "ppt/theme/theme1.xml": theme,
             "ppt/slideMasters/slideMaster1.xml": master,
             "ppt/slideMasters/_rels/slideMaster1.xml.rels": masterRelationships,
-            "ppt/slides/slide1.xml": firstSlide,
-            "ppt/slides/_rels/slide1.xml.rels": relationships([(layout, "../slideLayouts/slideLayout1.xml")]),
         ]
         for (index, layout) in layouts.enumerated() {
             parts["ppt/slideLayouts/slideLayout\(index + 1).xml"] = layout
             parts["ppt/slideLayouts/_rels/slideLayout\(index + 1).xml.rels"] =
                 relationships([(masterType, "../slideMasters/slideMaster1.xml")])
         }
-        return parts.mapValues { Data((PackagePath.declaration + $0).utf8) }
+        var data = parts.mapValues { Data((PackagePath.declaration + $0).utf8) }
+        for (index, slide) in slides.enumerated() {
+            data["ppt/slides/slide\(index + 1).xml"] = Data((PackagePath.declaration + slide.xml).utf8)
+            data["ppt/slides/_rels/slide\(index + 1).xml.rels"] = Relationship.xml(slide.relationships)
+        }
+        return data.merging(media) { _, added in added }
     }
 
     // MARK: - Package
@@ -48,7 +77,7 @@ enum PresentationTemplate {
         return "<Relationships xmlns=\"\(OOXML.packageRelationships)\">\(items.joined())</Relationships>"
     }
 
-    private static var contentTypes: String {
+    private static func contentTypes(slideCount: Int, mediaExtensions: [String]) -> String {
         let presentationML = "application/vnd.openxmlformats-officedocument.presentationml."
         var overrides = [
             ("/ppt/presentation.xml", presentationML + "presentation.main+xml"),
@@ -57,19 +86,24 @@ enum PresentationTemplate {
             ("/ppt/tableStyles.xml", presentationML + "tableStyles+xml"),
             ("/ppt/theme/theme1.xml", OOXML.ContentType.theme),
             ("/ppt/slideMasters/slideMaster1.xml", presentationML + "slideMaster+xml"),
-            ("/ppt/slides/slide1.xml", OOXML.ContentType.slide),
         ]
+        for index in 0..<slideCount {
+            overrides.append(("/ppt/slides/slide\(index + 1).xml", OOXML.ContentType.slide))
+        }
         for index in layouts.indices {
             overrides.append(("/ppt/slideLayouts/slideLayout\(index + 1).xml", presentationML + "slideLayout+xml"))
         }
         let entries = overrides.map { "<Override PartName=\"\($0.0)\" ContentType=\"\($0.1)\"/>" }.joined()
+        let media = Set(mediaExtensions).subtracting(["png", "jpeg"]).sorted().map { ext in
+            "<Default Extension=\"\(ext)\" ContentType=\"\(UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream")\"/>"
+        }.joined()
         return """
             <Types xmlns="\(OOXML.contentTypesNS)">\
             <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\
             <Default Extension="xml" ContentType="application/xml"/>\
             <Default Extension="png" ContentType="image/png"/>\
             <Default Extension="jpeg" ContentType="image/jpeg"/>\
-            \(entries)</Types>
+            \(media)\(entries)</Types>
             """
     }
 
@@ -77,16 +111,21 @@ enum PresentationTemplate {
         (OOXML.RelationshipType.officeDocument, "ppt/presentation.xml"),
     ])
 
-    private static let presentationRelationships = relationships([
-        (masterType, "slideMasters/slideMaster1.xml"),
-        (OOXML.RelationshipType.slide, "slides/slide1.xml"),
-        (OOXML.RelationshipType.theme, "theme/theme1.xml"),
-        ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps", "presProps.xml"),
-        ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps", "viewProps.xml"),
-        ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles", "tableStyles.xml"),
-    ])
+    /// The master is `rId1` and the slides follow from `rId2`.
+    private static func presentationRelationships(slideCount: Int) -> String {
+        relationships(
+            [(masterType, "slideMasters/slideMaster1.xml")]
+                + (0..<slideCount).map { (OOXML.RelationshipType.slide, "slides/slide\($0 + 1).xml") }
+                + [
+                    (OOXML.RelationshipType.theme, "theme/theme1.xml"),
+                    ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/presProps", "presProps.xml"),
+                    ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/viewProps", "viewProps.xml"),
+                    ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/tableStyles", "tableStyles.xml"),
+                ]
+        )
+    }
 
-    private static var presentation: String {
+    private static func presentation(size: EMUSize, slideCount: Int) -> String {
         let levels = (1...9).map { level in
             """
             <a:lvl\(level)pPr marL="\((level - 1) * 457_200)" algn="l" defTabSz="914400" rtl="0" eaLnBrk="1" \
@@ -95,11 +134,12 @@ enum PresentationTemplate {
             </a:defRPr></a:lvl\(level)pPr>
             """
         }.joined()
+        let slideIDs = (0..<slideCount).map { "<p:sldId id=\"\(256 + $0)\" r:id=\"rId\($0 + 2)\"/>" }.joined()
         return """
             <p:presentation \(namespaces) saveSubsetFonts="1">\
             <p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>\
-            <p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst>\
-            <p:sldSz cx="\(EMUSize.widescreen.width)" cy="\(EMUSize.widescreen.height)"/>\
+            <p:sldIdLst>\(slideIDs)</p:sldIdLst>\
+            <p:sldSz cx="\(size.width)" cy="\(size.height)"/>\
             <p:notesSz cx="6858000" cy="9144000"/>\
             <p:defaultTextStyle><a:defPPr><a:defRPr lang="en-US"/></a:defPPr>\(levels)</p:defaultTextStyle>\
             </p:presentation>
