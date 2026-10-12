@@ -69,4 +69,47 @@ struct PowerPointPlaybackTests {
         session.next()
         #expect(!session.isPresenting)
     }
+    @Test("All supported named filters import and produce deterministic reveal masks")
+    func transitionFilters() throws {
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 100)
+        for name in AnimationFilter.names {
+            let animation = try imported(behavior("animEffect", attributes: "transition=\"in\" filter=\"\(name)\""), category: "entr")
+            guard case .filter(let filter, _, _) = animation.effect else { Issue.record("Filter \(name) was flattened"); continue }
+            #expect(filter.name == name)
+            #expect(appearance(animation, time: 0.5).mask?.filter == filter)
+            #expect(filter.path(progress: 0, frame: rect).isEmpty)
+            #expect(filter.path(progress: 1, frame: rect).contains(CGPoint(x: 50, y: 50)))
+            let mask = filter.path(progress: 0.5, frame: rect)
+            let points = (0..<10).flatMap { y in (0..<10).map { x in CGPoint(x: Double(x)*10+5, y: Double(y)*10+5) } }
+            let count = points.filter { mask.contains($0, using: .evenOdd) }.count
+            #expect(count > 0 && count < 100)
+            #expect(mask == filter.path(progress: 0.5, frame: rect))
+        }
+        #expect(AnimationFilter("wheel(9999999)") == nil)
+        let exit = try imported(behavior("animEffect", attributes: "transition=\"out\" filter=\"blinds(horizontal)\""), category: "exit")
+        #expect(appearance(exit, time: 1).opacity == 0)
+    }
+    @Test("Filter masks and colour emphasis reach rendered pixels")
+    func renderedEffects() throws {
+        var presentation = Presentation.blank
+        presentation.slideSize = EMUSize(width: 1_270_000, height: 1_270_000)
+        var drawing = shape
+        drawing.fill = .solid(.rgb(0xFF0000))
+        drawing.line = LineStyle(fill: .none, width: 0)
+        presentation.slides[0].shapes = [drawing]
+        func pixels(_ animation: ShapeAnimation) throws -> [UInt8] {
+            let frame = AnimationTimeline(animations: [animation]).frame(begun: 1, elapsed: 0.5, shapes: [drawing], slideSize: CGSize(width: 100, height: 100))
+            let context = try #require(CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 400,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.translateBy(x: 0, y: 100); context.scaleBy(x: 1, y: -1)
+            SlideRenderer(presentation: presentation, slide: presentation.slides[0], options: .init(drawsBackground: false, animation: frame))
+                .draw(in: context, size: CGSize(width: 100, height: 100))
+            return Array(try #require(context.makeImage()?.dataProvider?.data as Data?))
+        }
+        let blinds = try imported(behavior("animEffect", attributes: "transition=\"in\" filter=\"blinds(horizontal)\""), category: "entr")
+        let clipped = try pixels(blinds)
+        let visible = stride(from: 3, to: clipped.count, by: 4).filter { clipped[$0] > 127 }.count
+        #expect(visible >= 4_500 && visible <= 5_500)
+    }
+
 }

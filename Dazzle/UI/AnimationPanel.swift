@@ -298,6 +298,21 @@ extension ShapeAnimation.Effect {
         case .growShrink: String(localized: "Animation.Effect.GrowShrink")
         case .teeter: String(localized: "Animation.Effect.Teeter")
         case .path: String(localized: "Animation.Effect.Path")
+        case .filter(let filter, _, _):
+            switch filter.kind {
+            case "blinds": String(localized: "Animation.Effect.Blinds")
+            case "box": String(localized: "Animation.Effect.Box")
+            case "checkerboard": String(localized: "Animation.Effect.Checkerboard")
+            case "circle": String(localized: "Animation.Effect.Circle")
+            case "diamond": String(localized: "Animation.Effect.Diamond")
+            case "dissolve": String(localized: "Animation.Effect.Dissolve")
+            case "plus": String(localized: "Animation.Effect.Plus")
+            case "barn": String(localized: "Animation.Effect.Split")
+            case "randombar": String(localized: "Animation.Effect.RandomBars")
+            case "strips": String(localized: "Animation.Effect.Strips")
+            case "wedge": String(localized: "Animation.Effect.Wedge")
+            default: String(localized: "Animation.Effect.Wheel")
+            }
         case .preset:
             category == .other("mediacall") ? String(localized: "Animation.Effect.Media") : String(localized: "Animation.Effect.Custom")
         }
@@ -316,7 +331,7 @@ extension ShapeAnimation.Effect {
         case .growShrink: "arrow.up.left.and.arrow.down.right"
         case .teeter: "metronome"
         case .path: "point.topleft.down.to.point.bottomright.curvepath"
-        case .preset: "sparkles"
+        case .preset, .filter: "sparkles"
         }
     }
 }

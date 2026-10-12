@@ -65,6 +65,7 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         case growShrink
         case teeter
         case path(MotionPath)
+        case filter(AnimationFilter, id: Int, subtype: Int)
         /// An effect Dazzle does not make itself: played as near as it can,
         /// and written back as read.
         case preset(id: Int, subtype: Int)
@@ -92,7 +93,7 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
             case .float: 42
             case .zoom: 53
             case .path: 0
-            case .preset(let id, _): id
+            case .preset(let id, _), .filter(_, let id, _): id
             }
         }
 
@@ -100,7 +101,7 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
             switch self {
             case .fly(let direction), .wipe(let direction): direction.rawValue
             case .zoom: 16
-            case .preset(_, let subtype): subtype
+            case .preset(_, let subtype), .filter(_, _, let subtype): subtype
             default: 0
             }
         }
@@ -136,13 +137,13 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
             case .fade, .fly, .wipe, .zoom, .pulse: 0.5
             case .float, .teeter: 1
             case .spin, .growShrink, .path: 2
-            case .preset: 0.5
+            case .preset, .filter: 0.5
             }
         }
 
         /// Whether Dazzle writes the effect itself, so can change its timing.
         var isMadeByDazzle: Bool {
-            if case .preset = self { return false }
+            switch self { case .preset, .filter: return false; default: break }
             return true
         }
     }
@@ -343,6 +344,12 @@ struct AnimatedAppearance: Equatable, Hashable, Sendable {
         var fraction: Double
     }
 
+    struct Mask: Equatable, Hashable, Sendable {
+        var filter: AnimationFilter
+        var progress: Double
+    }
+
+    var mask: Mask?
     var opacity = 1.0
     /// Points the shape has moved.
     var offset = CGSize.zero
@@ -493,8 +500,11 @@ struct AnimationTimeline: Sendable {
         case .entrance:
             appearance.opacity = 1
             appearance.reveal = nil
+            appearance.mask = nil
             switch animation.effect {
             case .appear: break
+            case .filter(let filter, _, _):
+                if progress < 1 { appearance.mask = .init(filter: filter, progress: progress) }
             case .fly(let direction):
                 let start = offscreen(direction, frame: frame, slideSize: slideSize)
                 appearance.offset.width += start.width * (1 - eased)
@@ -517,6 +527,8 @@ struct AnimationTimeline: Sendable {
             }
             switch animation.effect {
             case .appear: break
+            case .filter(let filter, _, _):
+                appearance.mask = .init(filter: filter, progress: 1 - progress)
             case .fly(let direction):
                 let end = offscreen(direction, frame: frame, slideSize: slideSize)
                 let accelerated = animation.timingCurve == nil ? pow(progress, 3) : progress

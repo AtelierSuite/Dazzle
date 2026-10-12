@@ -59,6 +59,19 @@ enum AnimationXML {
             effect = .path(MotionPath(path: path, usesSlideOrigin: motion.attribute("origin") != "layout",
                                       isAdditive: motion.firstChild(named: "cBhvr")?.attribute("additive") == "sum"))
         }
+        if case .preset = effect, let filter = firstElement(named: "animEffect", in: node)?.attribute("filter") {
+            if let transition = AnimationFilter(filter) {
+                effect = .filter(transition, id: presetID, subtype: subtype)
+            } else {
+                let directions: [String: ShapeAnimation.Effect] = [
+                    "slide(fromTop)": .fly(.top), "slide(fromBottom)": .fly(.bottom),
+                    "slide(fromLeft)": .fly(.left), "slide(fromRight)": .fly(.right),
+                    "wipe(up)": .wipe(.bottom), "wipe(down)": .wipe(.top),
+                    "wipe(left)": .wipe(.right), "wipe(right)": .wipe(.left),
+                ]
+                effect = directions[filter] ?? effect
+            }
+        }
         var scaling: AnimationScale?
         if category == .emphasis, let scale = firstElement(named: "animScale", in: node) {
             func value(_ name: String) -> CGSize? {
@@ -352,6 +365,10 @@ enum AnimationXML {
         case (.exit, .float):
             return fade("out") + move("ppt_x", from: "#ppt_x", to: "#ppt_x") + move("ppt_y", from: "#ppt_y", to: "#ppt_y-.1")
                 + visibility("hidden", at: duration - 0.001)
+        case (.entrance, .filter(let filter, _, _)):
+            return visibility("visible") + fade("in", filter: filter.name)
+        case (.exit, .filter(let filter, _, _)):
+            return fade("out", filter: filter.name) + visibility("hidden", at: duration - 0.001)
         case (.emphasis, .pulse):
             if animation.repetition != nil {
                 return behaviour("animScale", dur: duration, extra: " fill=\"hold\"", content: "<p:by x=\"105000\" y=\"105000\"/>")

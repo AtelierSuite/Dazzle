@@ -180,6 +180,10 @@ struct SlideRenderer {
             context.scaleBy(x: scaleX, y: scaleY)
             context.translateBy(x: -frame.midX, y: -frame.midY)
         }
+        if let mask = appearance.mask {
+            context.addPath(mask.filter.path(progress: mask.progress, frame: frame))
+            context.clip(using: .evenOdd)
+        }
         if let reveal = appearance.reveal {
             // Open on every side but the one the wipe is moving, so outlines
             // and shadows there are not cut off.
