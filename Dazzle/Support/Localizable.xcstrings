@@ -12690,41 +12690,6 @@
         }
       }
     },
-    "Notice.Omission.Transitions" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Slide transitions"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "スライドトランジション"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "슬라이드 전환"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "幻灯片过渡效果"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "幻燈片轉場效果"
-          }
-        }
-      }
-    },
     "Notice.Omitted.Intro" : {
       "extractionState" : "manual",
       "localizations" : {

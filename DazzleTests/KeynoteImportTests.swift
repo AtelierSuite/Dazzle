@@ -165,8 +165,15 @@ struct KeynoteConversionTests {
 
     @Test("What could not be brought across is reported")
     func omissions() {
-        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .transitions])
-        #expect(presentation.unsupportedFeatures.features.isEmpty)
+        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects])
+    }
+
+    @Test("Transitions are kept as PowerPoint's nearest, and automatic ones move on by themselves")
+    func transitions() {
+        #expect(presentation.unsupportedFeatures.features == [.transitions])
+        #expect(presentation.slides[0].autoAdvanceAfter == 2)
+        #expect(!presentation.slides[0].advancesOnClick)
+        #expect(presentation.slides[1].autoAdvanceAfter == nil)
     }
 
     @Test("Text that sets its own height is measured")
@@ -227,7 +234,12 @@ enum KeynoteFixture {
             slide.reference(5, 13)
             slide.reference(27, 16)
             for drawable: UInt64 in [13, 14, 15, 17] { slide.reference(42, drawable) }
-            slide.message(4) { $0.message(2) { $0.message(8) { $0.string(2, "apple:dissolve") } } }
+            slide.message(4) { $0.message(2) { $0.message(8) { attributes in
+                attributes.string(2, "apple:dissolve")
+                attributes.double(3, 1.5)
+                attributes.double(5, 2)
+                attributes.varint(6, 1)
+            } } }
         }
         // An equation, which Dazzle cannot convert.
         add(17, 2015) { equation in

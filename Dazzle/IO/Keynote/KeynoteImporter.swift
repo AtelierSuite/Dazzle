@@ -117,9 +117,6 @@ enum KeynoteImporter {
             if !slide.message.references(2).isEmpty || !slide.message.references(43).isEmpty {
                 omissions.insert(.builds)
             }
-            if let effect = slide.message.message(4)?.message(2)?.message(8)?.string(2), effect != "none" {
-                omissions.insert(.transitions)
-            }
             let note = archive[slide.message.reference(27)]
             notes.append(text.plainText(archive[note?.message.reference(1)]).trimmingCharacters(in: .whitespacesAndNewlines))
         }
@@ -168,8 +165,41 @@ enum KeynoteImporter {
             <p:sld xmlns:a="\(OOXML.drawingML)" xmlns:r="\(OOXML.relationshipsNS)" xmlns:p="\(OOXML.presentationML)"\(show)>\
             <p:cSld>\(background)<p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>\
             <p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/>\
-            </a:xfrm></p:grpSpPr>\(shapes)</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>
+            </a:xfrm></p:grpSpPr>\(shapes)</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>\
+            \(transitionXML(slide.message.message(4)?.message(2)?.message(8)))</p:sld>
             """
+    }
+
+    /// A slide's `KN.AnimationAttributesArchive` as `p:transition`: the
+    /// nearest of PowerPoint's own effects, at the nearest of its speeds,
+    /// moving on by itself after the delay if Keynote's does.
+    private static func transitionXML(_ attributes: ProtoMessage?) -> String {
+        guard let attributes else { return "" }
+        let effect = (attributes.string(2) ?? "none").lowercased()
+        let isAutomatic = attributes.bool(6) ?? false
+        guard effect != "none" || isAutomatic else { return "" }
+        let element: String? = if effect == "none" {
+            nil
+        } else if effect.contains("push") {
+            "push"
+        } else if effect.contains("wipe") {
+            "wipe"
+        } else if effect.contains("move-in") || effect.contains("cover") {
+            "cover"
+        } else if effect.contains("reveal") || effect.contains("pull") {
+            "pull"
+        } else if effect.contains("zoom") || effect.contains("scale") {
+            "zoom"
+        } else {
+            // Dissolve, Magic Move and everything PowerPoint has no match for.
+            "fade"
+        }
+        let duration = attributes.float(3) ?? 1
+        var properties = element == nil ? "" : " spd=\"\(duration < 0.75 ? "fast" : duration < 1.25 ? "med" : "slow")\""
+        if isAutomatic {
+            properties += " advClick=\"0\" advTm=\"\(Int(((attributes.float(5) ?? 0) * 1_000).rounded()))\""
+        }
+        return "<p:transition\(properties)>\(element.map { "<p:\($0)/>" } ?? "")</p:transition>"
     }
 
     /// Back to front. Older files list only the slide's own objects.
