@@ -525,7 +525,7 @@ struct SlideRenderer {
         let tones = effects.duotone.map { style.color($0, placeholder: placeholderColor) }
         return ImageCache.shared.recolored(
             image, key: "\(path)#\(data.count)#\(effects.isGreyscale)#\(tones.map(\.hexValue))",
-            isGreyscale: effects.isGreyscale, duotone: tones
+            isGreyscale: effects.isGreyscale, duotone: tones, brightness: effects.brightness, contrast: effects.contrast
         )
     }
 

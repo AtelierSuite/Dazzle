@@ -249,14 +249,12 @@ struct ShapeWriter {
         switch fill {
         case .picture(let path, let effects), .tiledPicture(let path, let effects):
             let reference = relationshipID(forImage: path)
-            let alpha = effects.opacity < 1 ? "<a:alphaModFix amt=\"\(Int((effects.opacity * 100_000).rounded()))\"/>" : ""
-            let grey = effects.isGreyscale ? "<a:grayscl/>" : ""
             let layout = if case .tiledPicture = fill {
                 "<a:tile tx=\"0\" ty=\"0\" sx=\"100000\" sy=\"100000\" flip=\"none\" algn=\"tl\"/>"
             } else {
                 "<a:stretch><a:fillRect/></a:stretch>"
             }
-            return "<a:blipFill dpi=\"0\" rotWithShape=\"1\"><a:blip r:embed=\"\(reference)\">\(alpha)\(grey)</a:blip>"
+            return "<a:blipFill dpi=\"0\" rotWithShape=\"1\"><a:blip r:embed=\"\(reference)\">\(effects.xml)</a:blip>"
                 + "<a:srcRect/>\(layout)</a:blipFill>"
         default:
             return fill.xml
@@ -382,6 +380,12 @@ struct ShapeWriter {
         guard let fill = element.firstChild(named: "blipFill") else { return }
         if let path = picture.imagePath, let blip = fill.firstChild(named: "blip") {
             blip.setAttribute("embed", relationshipID(forImage: path))
+            for child in blip.children where ["alphaModFix", "grayscl", "duotone", "lum"].contains(child.name) {
+                blip.removeChild(child)
+            }
+            if let effects = fragment("<a:blip>\(picture.effects.xml)</a:blip>") {
+                for child in effects.children { blip.insertChild(child, at: blip.children.firstIndex { $0.name == "extLst" } ?? blip.children.count) }
+            }
         }
         fill.firstChild(named: "srcRect").map(fill.removeChild)
         let edges = [("l", picture.cropLeft), ("t", picture.cropTop), ("r", picture.cropRight), ("b", picture.cropBottom)]

@@ -105,6 +105,9 @@ struct BlipEffects: Equatable, Hashable, Sendable {
     var isGreyscale = false
     /// `duotone`: dark to light mapped onto these two colours.
     var duotone: [DrawingColor] = []
+    /// `lum`: picture brightness and contrast, distinct from its alpha.
+    var brightness = 0.0
+    var contrast = 0.0
 
     init() {
         // No effects: the picture as it is.
@@ -116,10 +119,23 @@ struct BlipEffects: Equatable, Hashable, Sendable {
         isGreyscale = blip.firstChild(named: "grayscl") != nil
         let tones = blip.firstChild(named: "duotone")?.children.compactMap(DrawingColor.init(element:)) ?? []
         if tones.count == 2 { duotone = tones }
+        if let lum = blip.firstChild(named: "lum") {
+            brightness = (lum.attribute("bright").flatMap(Double.init) ?? 0) / 100_000
+            contrast = (lum.attribute("contrast").flatMap(Double.init) ?? 0) / 100_000
+        }
     }
 
     /// Whether the picture's colours change at all.
-    var altersColor: Bool { isGreyscale || !duotone.isEmpty }
+    var altersColor: Bool { isGreyscale || !duotone.isEmpty || brightness != 0 || contrast != 0 }
+
+    var xml: String {
+        let alpha = opacity < 1 ? "<a:alphaModFix amt=\"\(Int((opacity * 100_000).rounded()))\"/>" : ""
+        let grey = isGreyscale ? "<a:grayscl/>" : ""
+        let tones = duotone.count == 2 ? "<a:duotone>\(duotone.map(\.xml).joined())</a:duotone>" : ""
+        let lum = brightness != 0 || contrast != 0
+            ? "<a:lum bright=\"\(Int((brightness * 100_000).rounded()))\" contrast=\"\(Int((contrast * 100_000).rounded()))\"/>" : ""
+        return alpha + grey + tones + lum
+    }
 }
 
 /// The outline of a shape.
