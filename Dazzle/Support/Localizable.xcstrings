@@ -6961,6 +6961,41 @@
         }
       }
     },
+    "Error.NotAKeynotePresentation" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This file isn’t a Keynote presentation Dazzle can open."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "このファイルはDazzleで開けるKeynoteプレゼンテーションではありません。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 파일은 Dazzle에서 열 수 있는 Keynote 프레젠테이션이 아닙니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此文件不是 Dazzle 可以打开的 Keynote 演示文稿。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此檔案不是 Dazzle 可以打開的 Keynote 簡報。"
+          }
+        }
+      }
+    },
     "Error.NotAPresentation" : {
       "extractionState" : "manual",
       "localizations" : {
