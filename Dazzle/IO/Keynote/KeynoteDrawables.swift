@@ -57,7 +57,18 @@ struct KeynoteSlideWriter {
 
     // MARK: - Drawables
 
+    /// The shape id each drawable was written with, for builds to name.
+    private(set) var shapeIDs: [UInt64: Int] = [:]
+
     mutating func drawable(_ identifier: UInt64) -> String? {
+        // A drawable's first id is its own; a group's children follow it.
+        let shapeID = nextShapeID
+        let xml = drawableXML(identifier)
+        if xml != nil { shapeIDs[identifier] = shapeID }
+        return xml
+    }
+
+    private mutating func drawableXML(_ identifier: UInt64) -> String? {
         guard let object = archive[identifier] else { return nil }
         switch object.type {
         case KeynoteType.shape, KeynoteType.connectionLine:

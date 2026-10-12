@@ -165,7 +165,28 @@ struct KeynoteConversionTests {
 
     @Test("What could not be brought across is reported")
     func omissions() {
-        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects])
+        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .builds])
+    }
+
+    @Test("Builds become animations on the shapes they build")
+    func builds() throws {
+        let shape = try #require(presentation.slides[0].shapes.first { $0.fill != nil && $0.text == nil })
+        let dissolve = try #require(presentation.slides[0].animations.first)
+        #expect(presentation.slides[0].animations.count == 1)
+        #expect(dissolve.shapeID == shape.shapeID)
+        #expect(dissolve.category == .entrance)
+        #expect(dissolve.effect == .fade)
+        #expect(dissolve.trigger == .onClick)
+        #expect(dissolve.duration == 0.75)
+
+        let box = try #require(presentation.slides[1].shapes.first)
+        let paragraphs = presentation.slides[1].animations
+        #expect(paragraphs.map(\.shapeID) == [box.shapeID, box.shapeID])
+        #expect(paragraphs.map(\.paragraphs) == [0...0, 1...1])
+        #expect(paragraphs.allSatisfy { $0.effect == .appear && $0.trigger == .afterPrevious && $0.delay == 0.5 })
+
+        let reread = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        #expect(reread.slides[1].animations.map(\.paragraphs) == [0...0, 1...1])
     }
 
     @Test("Transitions are kept as PowerPoint's nearest, and automatic ones move on by themselves")
@@ -234,12 +255,30 @@ enum KeynoteFixture {
             slide.reference(5, 13)
             slide.reference(27, 16)
             for drawable: UInt64 in [13, 14, 15, 17] { slide.reference(42, drawable) }
+            // The red shape dissolves in on a tap; a motion path has no match.
+            slide.reference(43, 80)
+            slide.reference(43, 82)
             slide.message(4) { $0.message(2) { $0.message(8) { attributes in
                 attributes.string(2, "apple:dissolve")
                 attributes.double(3, 1.5)
                 attributes.double(5, 2)
                 attributes.varint(6, 1)
             } } }
+        }
+        add(80, 153) { chunk in
+            chunk.reference(1, 81)
+            chunk.double(4, 0.75)
+        }
+        add(81, 8) { build in
+            build.reference(1, 14)
+            build.string(2, "All at Once")
+            build.message(4) { $0.message(18) { $0.string(1, "In"); $0.string(2, "apple:dissolve") } }
+        }
+        add(82, 153) { $0.reference(1, 83) }
+        add(83, 8) { build in
+            build.reference(1, 14)
+            build.string(2, "All at Once")
+            build.message(4) { $0.message(18) { $0.string(1, "Action"); $0.string(2, "apple:action-motion-path") } }
         }
         // An equation, which Dazzle cannot convert.
         add(17, 2015) { equation in
@@ -296,6 +335,21 @@ enum KeynoteFixture {
             slide.reference(42, 23)
             slide.reference(42, 60)
             slide.reference(42, 70)
+            // The bulleted text builds in a paragraph at a time, by itself.
+            slide.reference(43, 84)
+            slide.reference(43, 85)
+        }
+        for chunk: UInt64 in [84, 85] {
+            add(chunk, 153) { chunk in
+                chunk.reference(1, 86)
+                chunk.varint(5, 1)
+                chunk.double(3, 0.5)
+            }
+        }
+        add(86, 8) { build in
+            build.reference(1, 22)
+            build.string(2, "By Paragraph")
+            build.message(4) { $0.message(18) { $0.string(1, "In"); $0.string(2, "apple:appear") } }
         }
         // A column chart of two series, one per column, the second in green.
         add(70, KeynoteType.chart) { chart in

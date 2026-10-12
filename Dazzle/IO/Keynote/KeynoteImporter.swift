@@ -49,6 +49,12 @@ enum KeynoteImporter {
             presentation.slides[index].notes = notes
             presentation.slides[index].areNotesModified = true
         }
+        for (index, animations) in converted.animations.enumerated()
+        where !animations.isEmpty && presentation.slides.indices.contains(index) {
+            presentation.slides[index].animations = animations
+            presentation.slides[index].areAnimationsModified = true
+            presentation.slides[index].isModified = true
+        }
         return presentation
     }
 
@@ -84,6 +90,8 @@ enum KeynoteImporter {
         var parts: [String: Data]
         /// Speaker notes by slide, which Dazzle writes when it saves.
         var notes: [String]
+        /// Builds by slide, as animations, which Dazzle writes when it saves.
+        var animations: [[ShapeAnimation]]
         /// What could not be brought across.
         var omissions: Set<UnsupportedFeatureReport.Omission>
     }
@@ -103,6 +111,7 @@ enum KeynoteImporter {
         var slides: [PresentationTemplate.SlidePart] = []
         var notes: [String] = []
         var omissions: Set<UnsupportedFeatureReport.Omission> = []
+        var animations: [[ShapeAnimation]] = []
         for node in nodes.compactMap({ archive[$0] }) {
             guard let slide = archive[node.message.reference(2)] else { continue }
             let partName = "ppt/slides/slide\(slides.count + 1).xml"
@@ -114,16 +123,16 @@ enum KeynoteImporter {
             let xml = slideXML(slide, hidden: node.message.bool(4) ?? false, writer: &writer)
             slides.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
             omissions.formUnion(writer.skipped.map(omission))
-            if !slide.message.references(2).isEmpty || !slide.message.references(43).isEmpty {
-                omissions.insert(.builds)
-            }
+            let builds = KeynoteBuilds(archive: archive).animations(slide, shapeIDs: writer.shapeIDs)
+            animations.append(builds.animations)
+            if builds.lost { omissions.insert(.builds) }
             let note = archive[slide.message.reference(27)]
             notes.append(text.plainText(archive[note?.message.reference(1)]).trimmingCharacters(in: .whitespacesAndNewlines))
         }
         guard !slides.isEmpty else { throw KeynoteReadError.notKeynote }
         return Conversion(
             parts: PresentationTemplate.parts(size: slideSize, slides: slides, media: media.parts, mediaTypes: media.contentTypes),
-            notes: notes, omissions: omissions
+            notes: notes, animations: animations, omissions: omissions
         )
     }
 
