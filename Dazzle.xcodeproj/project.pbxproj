@@ -174,6 +174,7 @@
 			buildConfigurationList = DA0000000000000000000083 /* Build configuration list for PBXNativeTarget "DazzleTests" */;
 			buildPhases = (
 				DA0000000000000000000045 /* Sources */,
+				DA0000000000000000000048 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -264,6 +265,13 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		DA0000000000000000000048 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		DA0000000000000000000041 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;

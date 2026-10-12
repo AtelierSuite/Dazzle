@@ -93,10 +93,11 @@ struct TextRenderer {
     /// Draws `body` into `rect`, in a context whose y axis points down.
     /// `colorOverride` replaces every colour, for placeholder prompts.
     /// `hidesText` lays the text out but draws only its bullets.
-    /// `paragraphOpacity` fades paragraphs a slideshow is building, by index.
+    /// `paragraphAppearances` moves, scales, rotates, and fades built paragraphs.
     func draw(
         _ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect, context: CGContext,
-        colorOverride: RGBAColor? = nil, hidesText: Bool = false, paragraphOpacity: [Int: Double] = [:]
+        colorOverride: RGBAColor? = nil, hidesText: Bool = false, paragraphOpacity: [Int: Double] = [:],
+        paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
         guard let layout = layout(
             body, shape: shape, sources: sources, in: rect, colorOverride: colorOverride, hidesText: hidesText,
@@ -110,11 +111,54 @@ struct TextRenderer {
             context.translateBy(x: turn.center.x, y: turn.center.y)
             context.rotate(by: turn.angle)
         }
+        if !paragraphAppearances.isEmpty {
+            drawParagraphs(layout, appearances: paragraphAppearances, context: context)
+            return
+        }
         context.translateBy(x: layout.origin.x, y: layout.origin.y + layout.height)
         context.scaleBy(x: 1, y: -1)
         context.textMatrix = .identity
         CTFrameDraw(layout.frame, context)
         drawStrikethroughs(in: layout.frame, context: context)
+    }
+
+    /// Draw whole paragraphs in their unchanged CoreText layout. Wrapped lines,
+    /// bullets, links, and decorations move together around the paragraph bounds.
+    private func drawParagraphs(_ layout: Layout, appearances: [Int: AnimatedAppearance], context: CGContext) {
+        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
+        var origins = [CGPoint](repeating: .zero, count: lines.count)
+        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
+        var paragraphs: [Int: [(line: CTLine, baseline: CGPoint, bounds: CGRect)]] = [:]
+        for (line, origin) in zip(lines, origins) {
+            let runs = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
+            let index = runs.first.flatMap { (CTRunGetAttributes($0) as NSDictionary)[Self.paragraphIndexKey.rawValue] as? Int } ?? 0
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            let width = CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+            let baseline = CGPoint(x: layout.origin.x + origin.x, y: layout.origin.y + layout.height - origin.y)
+            let bounds = CGRect(x: baseline.x, y: baseline.y - ascent, width: width, height: ascent + descent)
+            paragraphs[index, default: []].append((line, baseline, bounds))
+        }
+        for index in paragraphs.keys.sorted() {
+            guard let paragraph = paragraphs[index] else { continue }
+            let appearance = appearances[index] ?? AnimatedAppearance()
+            guard appearance.opacity > 0.001, appearance.axisScale.width != 0, appearance.axisScale.height != 0 else { continue }
+            let bounds = paragraph.reduce(CGRect.null) { $0.union($1.bounds) }
+            context.saveGState()
+            let faded = SlideRenderer.apply(appearance, to: bounds, context: context)
+            for entry in paragraph {
+                context.saveGState()
+                context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
+                context.scaleBy(x: 1, y: -1)
+                context.textMatrix = .identity
+                context.textPosition = .zero
+                CTLineDraw(entry.line, context)
+                drawStrikethroughs(in: entry.line, origin: .zero, context: context)
+                context.restoreGState()
+            }
+            if faded { context.endTransparencyLayer() }
+            context.restoreGState()
+        }
     }
 
     /// Where each linked run of `body` lies, in slide points, and where it
@@ -181,6 +225,7 @@ struct TextRenderer {
 
     private static let fontKey = NSAttributedString.Key(kCTFontAttributeName as String)
     private static let colorKey = NSAttributedString.Key(kCTForegroundColorAttributeName as String)
+    private static let paragraphIndexKey = NSAttributedString.Key("DazzleParagraphIndex")
     private static let paragraphKey = NSAttributedString.Key(kCTParagraphStyleAttributeName as String)
     private static let underlineKey = NSAttributedString.Key(kCTUnderlineStyleAttributeName as String)
     private static let superscriptKey = NSAttributedString.Key(kCTSuperscriptAttributeName as String)
@@ -282,6 +327,7 @@ struct TextRenderer {
                 }
             }
             if range.length > 0 {
+                result.addAttribute(Self.paragraphIndexKey, value: index, range: range)
                 result.addAttribute(
                     Self.paragraphKey,
                     value: paragraphStyle(properties, fontSize: baseSize, hasBullet: bulletText != nil, spacingReduction: spacingReduction),
@@ -392,21 +438,25 @@ struct TextRenderer {
         var origins = [CGPoint](repeating: .zero, count: lines.count)
         CTFrameGetLineOrigins(frame, CFRange(location: 0, length: 0), &origins)
         for (line, origin) in zip(lines, origins) {
-            for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
-                let attributes = CTRunGetAttributes(run) as NSDictionary
-                guard attributes[Self.strikeKey.rawValue] != nil else { continue }
-                let font = attributes[kCTFontAttributeName as String].map { $0 as! CTFont } // swiftlint:disable:this force_cast
-                let height = font.map { CTFontGetXHeight($0) / 2 } ?? 4
-                let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
-                let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), nil, nil, nil)
-                if let color = attributes[kCTForegroundColorAttributeName as String] {
-                    context.setStrokeColor(color as! CGColor) // swiftlint:disable:this force_cast
-                }
-                context.setLineWidth(max((font.map { CTFontGetSize($0) } ?? 12) / 16, 0.5))
-                context.move(to: CGPoint(x: origin.x + start, y: origin.y + height))
-                context.addLine(to: CGPoint(x: origin.x + start + width, y: origin.y + height))
-                context.strokePath()
+            drawStrikethroughs(in: line, origin: origin, context: context)
+        }
+    }
+
+    private func drawStrikethroughs(in line: CTLine, origin: CGPoint, context: CGContext) {
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard attributes[Self.strikeKey.rawValue] != nil else { continue }
+            let font = attributes[kCTFontAttributeName as String].map { $0 as! CTFont } // swiftlint:disable:this force_cast
+            let height = font.map { CTFontGetXHeight($0) / 2 } ?? 4
+            let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
+            let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), nil, nil, nil)
+            if let color = attributes[kCTForegroundColorAttributeName as String] {
+                context.setStrokeColor(color as! CGColor) // swiftlint:disable:this force_cast
             }
+            context.setLineWidth(max((font.map { CTFontGetSize($0) } ?? 12) / 16, 0.5))
+            context.move(to: CGPoint(x: origin.x + start, y: origin.y + height))
+            context.addLine(to: CGPoint(x: origin.x + start + width, y: origin.y + height))
+            context.strokePath()
         }
     }
 

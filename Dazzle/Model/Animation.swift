@@ -226,7 +226,6 @@ struct MotionPath: Equatable, Hashable, Sendable {
     var usesSlideOrigin = false
     var isAdditive = false
 
-
     /// The path flattened into points, in fractions of the slide.
     var points: [CGPoint] {
         var tokens = path.replacingOccurrences(of: ",", with: " ")
@@ -334,8 +333,8 @@ struct AnimatedAppearance: Equatable, Hashable, Sendable {
 struct AnimationFrame: Equatable, Hashable, Sendable {
     /// By `cNvPr id`.
     var shapes: [Int: AnimatedAppearance] = [:]
-    /// How visible each built paragraph is, by `cNvPr id` then paragraph.
-    var paragraphs: [Int: [Int: Double]] = [:]
+    /// Each built paragraph's appearance, by `cNvPr id` then paragraph.
+    var paragraphs: [Int: [Int: AnimatedAppearance]] = [:]
 }
 
 /// When a slide's animations run: grouped into steps a tap starts, each
@@ -390,14 +389,20 @@ struct AnimationTimeline: Sendable {
     /// last of them `elapsed` seconds ago. `shapes` places fly-ins off the slide.
     func frame(begun: Int, elapsed: Double, shapes: [SlideShape], slideSize: CGSize) -> AnimationFrame {
         var progress: [ShapeAnimation.ID: Double] = [:]
+        var ordered: [ShapeAnimation] = []
         for (index, step) in steps.enumerated() where index < begun {
-            for entry in step {
+            // XML order need not be chronological: effects sharing a trigger
+            // can have arbitrary delays. Ties retain the file's order.
+            for (_, entry) in step.enumerated().sorted(by: {
+                $0.element.start == $1.element.start ? $0.offset < $1.offset : $0.element.start < $1.element.start
+            }) {
                 if index < begun - 1 {
                     progress[entry.animation.id] = 1
                 } else if elapsed >= entry.start {
                     progress[entry.animation.id] = entry.animation.duration > 0
                         ? min((elapsed - entry.start) / entry.animation.duration, 1) : 1
                 }
+                if progress[entry.animation.id] != nil { ordered.append(entry.animation) }
             }
         }
 
@@ -407,7 +412,7 @@ struct AnimationTimeline: Sendable {
             guard let shapeFrame = frames[shapeID] else { continue }
             let whole = animations.filter { $0.shapeID == shapeID && $0.paragraphs == nil }
             var appearance = whole.first?.category == .entrance ? AnimatedAppearance.hidden : AnimatedAppearance()
-            for animation in whole {
+            for animation in ordered where animation.shapeID == shapeID && animation.paragraphs == nil {
                 guard let value = progress[animation.id] else { continue }
                 Self.apply(animation, at: value, to: &appearance, frame: shapeFrame, slideSize: slideSize)
             }
@@ -416,16 +421,12 @@ struct AnimationTimeline: Sendable {
             let built = animations.filter { $0.shapeID == shapeID && $0.paragraphs != nil }
             for paragraph in Set(built.flatMap { Array($0.paragraphs!) }) {
                 let covering = built.filter { $0.paragraphs!.contains(paragraph) }
-                var opacity = covering.first?.category == .entrance ? 0.0 : 1
-                for animation in covering {
+                var appearance = covering.first?.category == .entrance ? AnimatedAppearance.hidden : AnimatedAppearance()
+                for animation in ordered where animation.shapeID == shapeID && animation.paragraphs?.contains(paragraph) == true {
                     guard let value = progress[animation.id] else { continue }
-                    switch animation.category {
-                    case .entrance: opacity = animation.effect == .appear ? 1 : value
-                    case .exit: opacity = value >= 1 ? 0 : (animation.effect == .appear ? 1 : 1 - value)
-                    default: break
-                    }
+                    Self.apply(animation, at: value, to: &appearance, frame: shapeFrame, slideSize: slideSize)
                 }
-                if opacity < 1 { frame.paragraphs[shapeID, default: [:]][paragraph] = opacity }
+                if !appearance.isIdentity { frame.paragraphs[shapeID, default: [:]][paragraph] = appearance }
             }
         }
         return frame
@@ -483,7 +484,7 @@ struct AnimationTimeline: Sendable {
             }
         case .exit:
             if progress >= 1 {
-                appearance = .hidden
+                appearance.opacity = 0
                 return
             }
             switch animation.effect {

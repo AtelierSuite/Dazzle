@@ -68,7 +68,7 @@ struct SlideRenderer {
             draw(
                 shape, sources: style.sources(for: shape), style: style, context: context,
                 appearance: options.animation?.shapes[shape.shapeID],
-                paragraphOpacity: options.animation?.paragraphs[shape.shapeID] ?? [:]
+                paragraphAppearances: options.animation?.paragraphs[shape.shapeID] ?? [:]
             )
         }
         context.restoreGState()
@@ -101,7 +101,7 @@ struct SlideRenderer {
     private func draw(
         _ shape: SlideShape, sources: [SlideShape], style: SlideStyleContext, context: CGContext,
         groupFill: SlideStyleContext.ResolvedFill? = nil, appearance: AnimatedAppearance? = nil,
-        paragraphOpacity: [Int: Double] = [:]
+        paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
         let frame = shape.frame.points
         if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
@@ -161,7 +161,7 @@ struct SlideRenderer {
         case .shape, .connector:
             drawAutoShape(
                 shape, sources: sources, frame: frame, style: style, context: context, groupFill: groupFill,
-                paragraphOpacity: paragraphOpacity
+                paragraphAppearances: paragraphAppearances
             )
         }
     }
@@ -231,7 +231,7 @@ struct SlideRenderer {
 
     private func drawAutoShape(
         _ shape: SlideShape, sources: [SlideShape], frame: CGRect, style: SlideStyleContext, context: CGContext,
-        groupFill: SlideStyleContext.ResolvedFill?, paragraphOpacity: [Int: Double] = [:]
+        groupFill: SlideStyleContext.ResolvedFill?, paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
         let (fillPath, strokePath, isOpen) = outline(of: shape, in: frame)
         if !isOpen, var fill = style.fill(for: shape, sources: sources) {
@@ -250,7 +250,7 @@ struct SlideRenderer {
         if let text = shape.text, !text.isEmpty {
             renderer.draw(
                 text, shape: shape, sources: sources, in: textFrame, context: context, hidesText: bulletsOnly,
-                paragraphOpacity: paragraphOpacity
+                paragraphAppearances: paragraphAppearances
             )
         } else if bulletsOnly {
             return

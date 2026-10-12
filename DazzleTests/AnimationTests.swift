@@ -3,6 +3,8 @@ import Foundation
 import Testing
 @testable import Dazzle
 
+private final class AnimationTestBundle: NSObject {}
+
 @Suite("Animations")
 struct AnimationTests {
     private func reread(_ presentation: Presentation) throws -> Presentation {
@@ -166,22 +168,11 @@ struct AnimationTests {
         #expect(path.offset(at: 0.5) == CGPoint(x: 0.5, y: 0))
         #expect(path.offset(at: 1) == CGPoint(x: 0.5, y: 0.5))
     }
-    @Test("Custom scale axes survive copy and duration edits") @MainActor
-    func customScaleRoundTrip() throws {
-        var presentation = Presentation.blank
-        let shape = presentation.slides[0].shapes[0].shapeID
-        let animation = ShapeAnimation(shapeID: shape, category: .emphasis, effect: .growShrink,
-                                       scaling: AnimationScale(to: CGSize(width: 1, height: 0)))
-        #expect(ShapeAnimation(copying: animation).scaling == animation.scaling)
-        presentation.slides[0].animations = [animation]
-        presentation.slides[0].areAnimationsModified = true
-        presentation.slides[0].isModified = true
-        var read = try reread(presentation)
-        let state = EditorState()
-        state.updateAnimation(read.slides[0].animations[0].id, in: &read) { $0.duration = 1.25 }
-        let final = try reread(read).slides[0].animations[0]
-        #expect(final.scaling?.to == CGSize(width: 1, height: 0))
-        #expect(final.duration == 1.25)
+
+    // Timing-only fixtures from the supplied LCD sample; no slide artwork is needed.
+    private func lcdAnimations(slide: Int) throws -> [ShapeAnimation] {
+        let url = try #require(Bundle(for: AnimationTestBundle.self).url(forResource: "LCD-slide\(slide)-timing", withExtension: "xml"))
+        return AnimationXML.animations(in: try XMLLite.parse(Data(contentsOf: url)))
     }
 
     private func shapes(for animations: [ShapeAnimation]) -> [SlideShape] {
@@ -190,6 +181,40 @@ struct AnimationTests {
                        frame: EMURect(x: 127_000, y: 127_000, width: 1_270_000, height: 1_270_000))
         }
     }
+
+    @Test("LCD sample imports every effect and its custom scale axes")
+    func lcdSample() throws {
+        for (slide, count) in [(2, 47), (3, 74), (4, 36), (5, 52)] {
+            let animations = try lcdAnimations(slide: slide)
+            #expect(animations.count == count)
+            #expect(AnimationTimeline(animations: animations).startsAutomatically)
+            let scales = animations.filter { $0.effect == .growShrink }
+            #expect(scales.allSatisfy { $0.scaling != nil })
+            #expect(scales.contains { $0.scaling?.to == CGSize(width: 1, height: 0) })
+        }
+        #expect(try lcdAnimations(slide: 3).contains { $0.scaling?.to == .zero })
+    }
+
+    @Test("LCD paragraph fades, scaling, and movement play together")
+    func lcdParagraphTransforms() throws {
+        let animations = try lcdAnimations(slide: 2)
+        let timeline = AnimationTimeline(animations: animations)
+        let frame = timeline.frame(begun: 1, elapsed: 4.25, shapes: shapes(for: animations), slideSize: CGSize(width: 960, height: 540))
+        let paragraph = try #require(frame.paragraphs[111]?[0])
+        #expect(abs(paragraph.opacity - 0.5) < 0.001)
+        #expect(paragraph.axisScale == CGSize(width: 1, height: 0.5))
+        #expect(abs(paragraph.offset.height - 12.5636) < 0.01)
+        // At 13 seconds it returns from a different layout-relative path,
+        // replacing the held scale and motion from the earlier exit.
+        let returned = timeline.frame(begun: 1, elapsed: 13.5, shapes: shapes(for: animations), slideSize: CGSize(width: 960, height: 540))
+        let appearance = try #require(returned.paragraphs[111]?[0])
+        #expect(appearance.opacity == 1)
+        #expect(appearance.axisScale == CGSize(width: 1, height: 1))
+        #expect(abs(appearance.offset.height) < 0.01)
+    }
+
+
+
     @Test("Later layout paths replace held positions while additive paths sum")
     func successivePaths() {
         let first = ShapeAnimation(shapeID: 2, category: .motionPath, effect: .path(MotionPath(path: "M 0 0 L 0.2 0 E")), trigger: .withPrevious, duration: 1)
@@ -208,4 +233,78 @@ struct AnimationTests {
         #expect(absolute.shapes[2]?.offset == CGSize(width: 340, height: 190))
     }
 
+    @Test("Custom scale axes survive copy and duration edits") @MainActor
+    func customScaleRoundTrip() throws {
+        var presentation = Presentation.blank
+        let shape = presentation.slides[0].shapes[0].shapeID
+        let animation = ShapeAnimation(shapeID: shape, category: .emphasis, effect: .growShrink,
+                                       scaling: AnimationScale(to: CGSize(width: 1, height: 0)))
+        #expect(ShapeAnimation(copying: animation).scaling == animation.scaling)
+        presentation.slides[0].animations = [animation]
+        presentation.slides[0].areAnimationsModified = true
+        presentation.slides[0].isModified = true
+        var read = try reread(presentation)
+        let state = EditorState()
+        state.updateAnimation(read.slides[0].animations[0].id, in: &read) { $0.duration = 1.25 }
+        let final = try reread(read).slides[0].animations[0]
+        #expect(final.scaling?.to == CGSize(width: 1, height: 0))
+        #expect(final.duration == 1.25)
+    }
+
+    @Test("Paragraph rendering moves wrapped text and bullets without moving its neighbour")
+    func rendersParagraphTransforms() throws {
+        let presentation = Presentation.blank
+        let style = SlideStyleContext(presentation: presentation, slide: presentation.slides[0])
+        var shape = SlideShape(shapeID: 2, name: "", kind: .shape,
+                               frame: EMURect(x: 0, y: 0, width: 2_540_000, height: 2_540_000))
+        var red = RunProperties()
+        red.size = 2_000
+        red.color = .rgb(0xFF0000)
+        red.isStruckThrough = true
+        var blue = red
+        blue.color = .rgb(0x0000FF)
+        var bullet = ParagraphProperties()
+        bullet.bullet = .character("•")
+        bullet.bulletColor = .rgb(0xFF0000)
+        let body = TextBody(paragraphs: [
+            Paragraph(properties: bullet, runs: [TextRun(text: "Wrapped text on several lines", properties: red)]),
+            Paragraph(runs: [TextRun(text: "Neighbour", properties: blue)]),
+        ])
+        shape.text = body
+        func pixels(_ appearances: [Int: AnimatedAppearance]) throws -> [UInt8] {
+            let context = try #require(CGContext(data: nil, width: 400, height: 300, bitsPerComponent: 8,
+                                                bytesPerRow: 1_600, space: CGColorSpaceCreateDeviceRGB(),
+                                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.translateBy(x: 0, y: 300)
+            context.scaleBy(x: 1, y: -1)
+            TextRenderer(style: style, slideNumber: 1).draw(body, shape: shape, sources: [],
+                in: CGRect(x: 30, y: 30, width: 180, height: 230), context: context, paragraphAppearances: appearances)
+            let data = try #require(context.data)
+            return Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: 400 * 300 * 4))
+        }
+        func bounds(_ pixels: [UInt8], channel: Int) -> CGRect {
+            var bounds = CGRect.null
+            for y in 0..<300 {
+                for x in 0..<400 {
+                    let offset = (y * 400 + x) * 4
+                    if pixels[offset + channel] > 30 && pixels[offset + 3] > 30 {
+                        bounds = bounds.union(CGRect(x: x, y: y, width: 1, height: 1))
+                    }
+                }
+            }
+            return bounds
+        }
+        let normal = try pixels([:])
+        let moved = try pixels([0: AnimatedAppearance(offset: CGSize(width: 40, height: 0))])
+        let redBounds = bounds(normal, channel: 0)
+        #expect(!redBounds.isNull)
+        #expect(bounds(moved, channel: 0) == redBounds.offsetBy(dx: 40, dy: 0))
+        #expect(bounds(moved, channel: 2) == bounds(normal, channel: 2))
+        let hidden = try pixels([0: AnimatedAppearance(axisScale: CGSize(width: 1, height: 0))])
+        #expect(bounds(hidden, channel: 0).isNull)
+        #expect(bounds(hidden, channel: 2) == bounds(normal, channel: 2))
+        let shrunk = try pixels([0: AnimatedAppearance(axisScale: CGSize(width: 1, height: 0.5))])
+        #expect(abs(bounds(shrunk, channel: 0).height - redBounds.height / 2) <= 2)
+        #expect(bounds(shrunk, channel: 2) == bounds(normal, channel: 2))
+    }
 }
