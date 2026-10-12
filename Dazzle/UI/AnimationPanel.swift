@@ -115,7 +115,7 @@ private struct AnimationRow: View {
             Image(systemName: animation.category.symbol)
                 .foregroundStyle(animation.category.tint)
             VStack(alignment: .leading, spacing: 2) {
-                Text(animation.effect.label(in: animation.category))
+                Text(animation.label)
                 Text(animation.targetLabel(shape: shape))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -139,7 +139,7 @@ private struct AnimationDetail: View {
     var body: some View {
         if let animation {
             form(for: animation)
-                .navigationTitle(animation.effect.label(in: animation.category))
+                .navigationTitle(animation.label)
                 .onAppear {
                     // The shape it animates is picked out on the slide.
                     if let shape = slide?.shapes.first(where: { $0.shapeID == animation.shapeID }) {
@@ -167,7 +167,7 @@ private struct AnimationDetail: View {
                     }
                     .accessibilityIdentifier("animationEffect")
                 } else {
-                    LabeledContent("Animation.Effect", value: animation.effect.label(in: animation.category))
+                    LabeledContent("Animation.Effect", value: animation.label)
                 }
                 if let direction = animation.effect.direction, isChoosable {
                     Picker("Animation.Direction", selection: Binding(
@@ -280,6 +280,24 @@ extension ShapeAnimation.Category {
         case .motionPath: .blue
         case .other: .secondary
         }
+    }
+}
+
+private extension ShapeAnimation {
+    var label: String {
+        if let colorChange {
+            return switch colorChange.target {
+            case .fill: String(localized: "Animation.Effect.FillColor")
+            case .stroke: String(localized: "Animation.Effect.LineColor")
+            case .text: String(localized: "Animation.Effect.FontColor")
+            }
+        }
+        if opacity != nil { return String(localized: "Animation.Effect.Transparency") }
+        if case .preset = effect {
+            if rotationBehavior != nil { return String(localized: "Animation.Effect.Spin") }
+            if scaling != nil { return String(localized: "Animation.Effect.GrowShrink") }
+        }
+        return effect.label(in: category)
     }
 }
 

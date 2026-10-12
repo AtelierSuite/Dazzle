@@ -98,10 +98,49 @@ enum AnimationXML {
                                 autoReverses: ["1", "true"].contains($0.attribute("autoRev") ?? ""),
                                 repeatDuration: milliseconds($0.attribute("repeatDur")))
         }
+        func scalar(_ element: XMLElement) -> AnimationScalar? {
+            func number(_ name: String) -> Double? {
+                element.attribute(name).flatMap(Double.init) ?? element.firstChild(named: name)?.children.first?.attribute("val").flatMap(Double.init)
+            }
+            let keys = element.firstChild(named: "tavLst")?.children(named: "tav").compactMap { key -> AnimationScalar.Keyframe? in
+                guard let time = key.attribute("tm").flatMap(Double.init),
+                      let value = key.firstChild(named: "val")?.children.first?.attribute("val").flatMap(Double.init) else { return nil }
+                return .init(time: time / 100_000, value: value)
+            } ?? []
+            let value = AnimationScalar(from: number("from"), to: number("to"), by: number("by"), keyframes: keys,
+                                        isDiscrete: element.attribute("calcmode") == "discrete")
+            return value.from != nil || value.to != nil || value.by != nil || !keys.isEmpty ? value : nil
+        }
+        let opacityNode = firstElement(named: "anim", in: node) {
+            $0.firstDescendant(atPath: "cBhvr/attrNameLst/attrName")?.text == "style.opacity"
+        }
+        let opacity = opacityNode.flatMap(scalar)
+        var rotation: AnimationScalar?
+        if let rotate = firstElement(named: "animRot", in: node), var value = scalar(rotate) {
+            value.from = value.from.map { $0 / 60_000 }; value.to = value.to.map { $0 / 60_000 }; value.by = value.by.map { $0 / 60_000 }
+            rotation = value
+        }
+        var colorChange: AnimationColorChange?
+        if let color = firstElement(named: "animClr", in: node),
+           let to = color.firstChild(named: "to")?.children.first.flatMap(DrawingColor.init(element:)) {
+            let attribute = color.firstDescendant(atPath: "cBhvr/attrNameLst/attrName")?.text ?? ""
+            let target: AnimationColorChange.Target? = switch attribute {
+            case "fillcolor", "fill.color": .fill
+            case "stroke.color": .stroke
+            case "style.color": .text
+            default: nil
+            }
+            if let target {
+                colorChange = AnimationColorChange(target: target,
+                    from: color.firstChild(named: "from")?.children.first.flatMap(DrawingColor.init(element:)), to: to,
+                    usesHSL: color.attribute("clrSpc") == "hsl", clockwise: color.attribute("dir") != "ccw")
+            }
+        }
         return ShapeAnimation(
             shapeID: shapeID, paragraphs: paragraphs, category: category, effect: effect, trigger: trigger,
             duration: duration(of: node), delay: milliseconds(delay(of: node)) ?? 0,
-            source: XMLLite.serialize(par), scaling: scaling, timingCurve: timingCurve, repetition: repetition
+            source: XMLLite.serialize(par), scaling: scaling, timingCurve: timingCurve, repetition: repetition,
+            opacity: opacity, rotationBehavior: rotation, colorChange: colorChange
         )
     }
 
@@ -376,7 +415,14 @@ enum AnimationXML {
             return behaviour("animScale", dur: duration / 2, extra: " autoRev=\"1\" fill=\"hold\"",
                              content: "<p:by x=\"105000\" y=\"105000\"/>")
         case (.emphasis, .spin):
-            return behaviour("animRot", attributes: " by=\"21600000\"", dur: duration, extra: " fill=\"hold\"", attribute: ["r"])
+            let rotation = animation.rotationBehavior
+            let attributes = rotation.map { value in
+                let from = value.from.map { " from=\"\(Int(($0 * 60_000).rounded()))\"" } ?? ""
+                let to = value.to.map { " to=\"\(Int(($0 * 60_000).rounded()))\"" } ?? ""
+                let by = value.by.map { " by=\"\(Int(($0 * 60_000).rounded()))\"" } ?? ""
+                return from + to + by
+            } ?? " by=\"21600000\""
+            return behaviour("animRot", attributes: attributes, dur: duration, extra: " fill=\"hold\"", attribute: ["r"])
         case (.emphasis, .growShrink):
             let scale = animation.scaling ?? AnimationScale()
             let from = "<p:from x=\"\(Int((scale.from.width * 100_000).rounded()))\" y=\"\(Int((scale.from.height * 100_000).rounded()))\"/>"

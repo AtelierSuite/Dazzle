@@ -140,7 +140,8 @@ struct SlideRenderer {
             for member in group.children {
                 draw(
                     Self.placed(member, from: group.childFrame, into: shape.frame), sources: [], style: style,
-                    context: context, groupFill: fill ?? groupFill
+                    context: context, groupFill: fill ?? groupFill,
+                    appearance: appearance.map { AnimatedAppearance(colors: $0.colors) }
                 )
             }
         case .diagram(let shapes):
@@ -162,7 +163,7 @@ struct SlideRenderer {
         case .shape, .connector:
             drawAutoShape(
                 shape, sources: sources, frame: frame, style: style, context: context, groupFill: groupFill,
-                paragraphAppearances: paragraphAppearances
+                paragraphAppearances: paragraphAppearances, colorChanges: appearance?.colors ?? [:]
             )
         }
     }
@@ -236,14 +237,26 @@ struct SlideRenderer {
 
     private func drawAutoShape(
         _ shape: SlideShape, sources: [SlideShape], frame: CGRect, style: SlideStyleContext, context: CGContext,
-        groupFill: SlideStyleContext.ResolvedFill?, paragraphAppearances: [Int: AnimatedAppearance] = [:]
+        groupFill: SlideStyleContext.ResolvedFill?, paragraphAppearances: [Int: AnimatedAppearance] = [:],
+        colorChanges: [AnimationColorChange.Target: [AnimationColorChange.Value]] = [:]
     ) {
         let (fillPath, strokePath, isOpen) = outline(of: shape, in: frame)
         if !isOpen, var fill = style.fill(for: shape, sources: sources) {
             if fill.fill == .group, let groupFill { fill = groupFill }
+            if let changes = colorChanges[.fill], !changes.isEmpty {
+                let base: RGBAColor = if case .solid(let color) = fill.fill { style.color(color, placeholder: fill.placeholderColor) } else { .black }
+                let color = changes.reduce(base) { base, value in value.color(base: base) { style.color($0, placeholder: fill.placeholderColor) } }
+                fill.fill = .solid(DrawingColor(base: .rgb(color.hexValue), transforms: [.init(name: "alpha", value: Int(color.alpha*100_000))]))
+            }
             paint(fill.fill, in: fillPath, bounds: frame, placeholderColor: fill.placeholderColor, style: style, context: context)
         }
-        if let (line, placeholderColor) = style.line(for: shape, sources: sources) {
+        if let (original, placeholderColor) = style.line(for: shape, sources: sources) {
+            var line = original
+            if let changes = colorChanges[.stroke], !changes.isEmpty {
+                let base: RGBAColor = if case .solid(let color) = line.fill { style.color(color, placeholder: placeholderColor) } else { .black }
+                let color = changes.reduce(base) { base, value in value.color(base: base) { style.color($0, placeholder: placeholderColor) } }
+                line.fill = .solid(DrawingColor(base: .rgb(color.hexValue), transforms: [.init(name: "alpha", value: Int(color.alpha*100_000))]))
+            }
             stroke(strokePath, line: line, placeholderColor: placeholderColor, style: style, context: context)
         }
 
@@ -255,7 +268,7 @@ struct SlideRenderer {
         if let text = shape.text, !text.isEmpty {
             renderer.draw(
                 text, shape: shape, sources: sources, in: textFrame, context: context, hidesText: bulletsOnly,
-                paragraphAppearances: paragraphAppearances
+                paragraphAppearances: paragraphAppearances, colorChanges: colorChanges[.text] ?? []
             )
         } else if bulletsOnly {
             return

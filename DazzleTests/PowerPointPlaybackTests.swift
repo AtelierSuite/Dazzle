@@ -50,25 +50,7 @@ struct PowerPointPlaybackTests {
         #expect(forever.activeDuration.isInfinite)
         #expect(appearance(forever, time: 100.5).offset.width == 25)
     }
-    @Test("An indefinite animation keeps redrawing and does not auto-advance") @MainActor
-    func indefinitePlayback() async throws {
-        var presentation = Presentation.blank
-        var animation = try imported(behavior("animMotion", attributes: "origin=\"layout\" path=\"M 0 0 L 0.5 0 E\""), category: "path", attributes: "repeatCount=\"indefinite\"")
-        animation.shapeID = presentation.slides[0].shapes[0].shapeID
-        presentation.slides[0].animations = [animation]
-        presentation.slides[0].autoAdvanceAfter = 0.1
-        let state = EditorState()
-        state.previewAnimations(in: presentation)
-        #expect(state.animationPreviewStartedAt != nil)
-        state.stopPreviewingAnimations()
-        let session = PresentationSession()
-        session.start(presentation, title: "Repeat", fromSlide: 0, owner: UUID())
-        try await Task.sleep(for: .milliseconds(250))
-        #expect(session.isPresenting && session.isAnimating)
-        #expect(session.position == 0)
-        session.next()
-        #expect(!session.isPresenting)
-    }
+
     @Test("All supported named filters import and produce deterministic reveal masks")
     func transitionFilters() throws {
         let rect = CGRect(x: 0, y: 0, width: 100, height: 100)
@@ -88,6 +70,50 @@ struct PowerPointPlaybackTests {
         #expect(AnimationFilter("wheel(9999999)") == nil)
         let exit = try imported(behavior("animEffect", attributes: "transition=\"out\" filter=\"blinds(horizontal)\""), category: "exit")
         #expect(appearance(exit, time: 1).opacity == 0)
+    }
+
+    @Test("Transparency keyframes and custom spin angles are played")
+    func numericEmphasis() throws {
+        let opacity = try imported(behavior("anim", attributes: "calcmode=\"lin\" from=\"1\" to=\"0.2\"", property: "style.opacity"))
+        #expect(abs(appearance(opacity, time: 0.5).opacity - 0.6) < 0.001)
+        let keys = "<p:tavLst><p:tav tm=\"0\"><p:val><p:fltVal val=\"1\"/></p:val></p:tav><p:tav tm=\"50000\"><p:val><p:fltVal val=\"0\"/></p:val></p:tav><p:tav tm=\"100000\"><p:val><p:fltVal val=\"1\"/></p:val></p:tav></p:tavLst>"
+        let blink = try imported(behavior("anim", attributes: "calcmode=\"discrete\"", content: keys, property: "style.opacity"), attributes: "repeatCount=\"3000\"")
+        #expect(appearance(blink, time: 1.25).opacity == 1)
+        #expect(appearance(blink, time: 1.75).opacity == 0)
+        let spin = try imported(behavior("animRot", attributes: "by=\"5400000\"", property: "r"), preset: 8)
+        #expect(appearance(spin, time: 0.5).rotation == 45)
+        #expect(appearance(spin, time: 1).rotation == 90)
+    }
+
+    @Test("Colour emphasis resolves theme colours and can animate paragraph text")
+    func colorEmphasis() throws {
+        let animation = try imported(behavior("animClr", attributes: "clrSpc=\"rgb\"", content: "<p:from><a:srgbClr val=\"FF0000\"/></p:from><p:to><a:schemeClr val=\"accent1\"/></p:to>", property: "fillcolor"))
+        let value = try #require(appearance(animation, time: 0.5).colors[.fill]?.first)
+        let color = value.color(base: .black) { drawing in drawing == .scheme("accent1") ? RGBAColor(hex: 0x0000FF) : RGBAColor(hex: 0xFF0000) }
+        #expect(color.red == 0.5 && color.green == 0 && color.blue == 0.5)
+        let text = try imported(behavior("animClr", attributes: "clrSpc=\"rgb\"", content: "<p:to><a:srgbClr val=\"FF0000\"/></p:to>", property: "style.color"))
+        #expect(appearance(text, time: 1).colors[.text]?.count == 1)
+        let from = RGBAColor(hex: 0x0000FF)
+        let sequential = [AnimationColorChange.Value(change: .init(target: .text, to: .rgb(0xFF0000)), progress: 1),
+                          .init(change: .init(target: .text, to: .rgb(0x00FF00)), progress: 0.5)]
+        let result = sequential.reduce(from) { base, value in value.color(base: base) { RGBAColor(hex: { if case .rgb(let hex) = $0.base { return hex }; return 0 }($0)) } }
+        #expect(result.red == 0.5 && result.green == 0.5 && result.blue == 0)
+    }
+
+    @Test("Repeated custom spins survive duration edits and export") @MainActor
+    func repeatRoundTrip() throws {
+        let animation = try imported(behavior("animRot", attributes: "by=\"5400000\"", property: "r"), attributes: "repeatCount=\"2000\" autoRev=\"1\"", preset: 8)
+        var presentation = Presentation.blank
+        var added = animation
+        added.shapeID = presentation.slides[0].shapes[0].shapeID
+        added.source = nil
+        presentation.slides[0].animations = [added]
+        presentation.slides[0].areAnimationsModified = true
+        presentation.slides[0].isModified = true
+        let read = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation)).slides[0].animations[0]
+        #expect(read.rotationBehavior?.by == 90)
+        #expect(read.activeDuration == 4)
+        #expect(read.repetition?.autoReverses == true)
     }
     @Test("Filter masks and colour emphasis reach rendered pixels")
     func renderedEffects() throws {
@@ -110,6 +136,33 @@ struct PowerPointPlaybackTests {
         let clipped = try pixels(blinds)
         let visible = stride(from: 3, to: clipped.count, by: 4).filter { clipped[$0] > 127 }.count
         #expect(visible >= 4_500 && visible <= 5_500)
+        let color = try imported(behavior("animClr", attributes: "clrSpc=\"rgb\"", content: "<p:to><a:srgbClr val=\"0000FF\"/></p:to>", property: "fillcolor"))
+        let colored = try pixels(color)
+        let center = (50 * 100 + 50) * 4
+        #expect(abs(Int(colored[center]) - 128) <= 1)
+        #expect(colored[center+1] == 0)
+        #expect(abs(Int(colored[center+2]) - 128) <= 1)
+        #expect(colored[center+3] == 255)
+    }
+
+    @Test("An indefinite animation keeps redrawing and does not auto-advance") @MainActor
+    func indefinitePlayback() async throws {
+        var presentation = Presentation.blank
+        var animation = try imported(behavior("animMotion", attributes: "origin=\"layout\" path=\"M 0 0 L 0.5 0 E\""), category: "path", attributes: "repeatCount=\"indefinite\"")
+        animation.shapeID = presentation.slides[0].shapes[0].shapeID
+        presentation.slides[0].animations = [animation]
+        presentation.slides[0].autoAdvanceAfter = 0.1
+        let state = EditorState()
+        state.previewAnimations(in: presentation)
+        #expect(state.animationPreviewStartedAt != nil)
+        state.stopPreviewingAnimations()
+        let session = PresentationSession()
+        session.start(presentation, title: "Repeat", fromSlide: 0, owner: UUID())
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(session.isPresenting && session.isAnimating)
+        #expect(session.position == 0)
+        session.next()
+        #expect(!session.isPresenting)
     }
 
 }

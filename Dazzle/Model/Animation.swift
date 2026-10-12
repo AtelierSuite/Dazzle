@@ -174,6 +174,9 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
     var scaling: AnimationScale?
     var timingCurve: AnimationTimingCurve?
     var repetition: AnimationRepetition?
+    var opacity: AnimationScalar?
+    var rotationBehavior: AnimationScalar?
+    var colorChange: AnimationColorChange?
 
     var activeDuration: Double { repetition?.duration(base: duration) ?? duration }
 
@@ -185,7 +188,8 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
     init(
         id: UUID = UUID(), shapeID: Int, paragraphs: ClosedRange<Int>? = nil, category: Category, effect: Effect,
         trigger: Trigger = .onClick, duration: Double? = nil, delay: Double = 0, source: String? = nil,
-        scaling: AnimationScale? = nil, timingCurve: AnimationTimingCurve? = nil, repetition: AnimationRepetition? = nil
+        scaling: AnimationScale? = nil, timingCurve: AnimationTimingCurve? = nil, repetition: AnimationRepetition? = nil,
+        opacity: AnimationScalar? = nil, rotationBehavior: AnimationScalar? = nil, colorChange: AnimationColorChange? = nil
     ) {
         self.id = id
         self.shapeID = shapeID
@@ -199,6 +203,9 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         self.scaling = scaling
         self.timingCurve = timingCurve
         self.repetition = repetition
+        self.opacity = opacity
+        self.rotationBehavior = rotationBehavior
+        self.colorChange = colorChange
     }
 
     /// The same effect, as a new entry, for a copy of its slide.
@@ -206,7 +213,8 @@ struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         self.init(
             shapeID: animation.shapeID, paragraphs: animation.paragraphs, category: animation.category,
             effect: animation.effect, trigger: animation.trigger, duration: animation.duration,
-            delay: animation.delay, source: animation.source, scaling: animation.scaling, timingCurve: animation.timingCurve, repetition: animation.repetition
+            delay: animation.delay, source: animation.source, scaling: animation.scaling, timingCurve: animation.timingCurve, repetition: animation.repetition,
+            opacity: animation.opacity, rotationBehavior: animation.rotationBehavior, colorChange: animation.colorChange
         )
     }
 
@@ -349,6 +357,7 @@ struct AnimatedAppearance: Equatable, Hashable, Sendable {
         var progress: Double
     }
 
+    var colors: [AnimationColorChange.Target: [AnimationColorChange.Value]] = [:]
     var mask: Mask?
     var opacity = 1.0
     /// Points the shape has moved.
@@ -550,7 +559,7 @@ struct AnimationTimeline: Sendable {
                 appearance.axisScale = scaling.value(at: progress)
             } else { switch animation.effect {
             case .pulse: appearance.scale *= 1 + 0.05 * sin(.pi * progress)
-            case .spin: appearance.rotation += 360 * eased
+            case .spin: if animation.rotationBehavior == nil { appearance.rotation += 360 * eased }
             case .growShrink: appearance.axisScale = (animation.scaling ?? AnimationScale()).value(at: progress)
             case .teeter: appearance.rotation += Teeter.angle(at: progress)
             default: break
@@ -572,6 +581,9 @@ struct AnimationTimeline: Sendable {
         case .other:
             break
         }
+        if let opacity = animation.opacity { appearance.opacity = min(max(opacity.value(at: progress, base: appearance.opacity), 0), 1) }
+        if let rotation = animation.rotationBehavior { appearance.rotation = rotation.value(at: progress, base: appearance.rotation) }
+        if let color = animation.colorChange { appearance.colors[color.target, default: []].append(.init(change: color, progress: progress)) }
     }
 
     /// How far a shape moves to sit just off the slide past `edge`.

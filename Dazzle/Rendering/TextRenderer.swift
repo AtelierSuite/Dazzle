@@ -20,7 +20,8 @@ struct TextRenderer {
 
     private func layout(
         _ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect,
-        colorOverride: RGBAColor?, hidesText: Bool, paragraphOpacity: [Int: Double] = [:]
+        colorOverride: RGBAColor?, hidesText: Bool, paragraphOpacity: [Int: Double] = [:],
+        colorChanges: [AnimationColorChange.Value] = [], paragraphColorChanges: [Int: [AnimationColorChange.Value]] = [:]
     ) -> Layout? {
         let properties = style.bodyProperties(for: shape, sources: sources)
             .merged(over: body.properties)
@@ -50,7 +51,8 @@ struct TextRenderer {
 
         var string = attributedString(
             body, shape: shape, sources: sources, scale: fontScale, spacingReduction: spacingReduction,
-            colorOverride: colorOverride, hidesText: hidesText, paragraphOpacity: paragraphOpacity
+            colorOverride: colorOverride, hidesText: hidesText, paragraphOpacity: paragraphOpacity,
+            colorChanges: colorChanges, paragraphColorChanges: paragraphColorChanges
         )
         var framesetter = CTFramesetterCreateWithAttributedString(string)
         var size = suggestedSize(framesetter, string: string, width: layoutWidth)
@@ -60,7 +62,8 @@ struct TextRenderer {
             for scale in stride(from: 0.9, through: 0.3, by: -0.1) {
                 string = attributedString(
                     body, shape: shape, sources: sources, scale: scale, spacingReduction: 0.1, colorOverride: colorOverride,
-                    hidesText: hidesText, paragraphOpacity: paragraphOpacity
+                    hidesText: hidesText, paragraphOpacity: paragraphOpacity,
+                    colorChanges: colorChanges, paragraphColorChanges: paragraphColorChanges
                 )
                 framesetter = CTFramesetterCreateWithAttributedString(string)
                 size = suggestedSize(framesetter, string: string, width: layoutWidth)
@@ -97,11 +100,12 @@ struct TextRenderer {
     func draw(
         _ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect, context: CGContext,
         colorOverride: RGBAColor? = nil, hidesText: Bool = false, paragraphOpacity: [Int: Double] = [:],
-        paragraphAppearances: [Int: AnimatedAppearance] = [:]
+        paragraphAppearances: [Int: AnimatedAppearance] = [:], colorChanges: [AnimationColorChange.Value] = []
     ) {
         guard let layout = layout(
             body, shape: shape, sources: sources, in: rect, colorOverride: colorOverride, hidesText: hidesText,
-            paragraphOpacity: paragraphOpacity
+            paragraphOpacity: paragraphOpacity, colorChanges: colorChanges,
+            paragraphColorChanges: paragraphAppearances.mapValues { $0.colors[.text] ?? [] }
         ) else {
             return
         }
@@ -240,7 +244,8 @@ struct TextRenderer {
 
     func attributedString(
         _ body: TextBody, shape: SlideShape, sources: [SlideShape], scale: Double, spacingReduction: Double,
-        colorOverride: RGBAColor?, hidesText: Bool = false, paragraphOpacity: [Int: Double] = [:]
+        colorOverride: RGBAColor?, hidesText: Bool = false, paragraphOpacity: [Int: Double] = [:],
+        colorChanges: [AnimationColorChange.Value] = [], paragraphColorChanges: [Int: [AnimationColorChange.Value]] = [:]
     ) -> NSAttributedString {
         let textColor = hidesText ? RGBAColor(red: 0, green: 0, blue: 0, alpha: 0) : colorOverride
         let result = NSMutableAttributedString()
@@ -318,6 +323,17 @@ struct TextRenderer {
             }
 
             let range = NSRange(location: start, length: result.length - start)
+            let changes = colorChanges + (paragraphColorChanges[index] ?? [])
+            if !hidesText, !changes.isEmpty, range.length > 0 {
+                result.enumerateAttribute(Self.colorKey, in: range) { value, subrange, _ in
+                    guard let value, CFGetTypeID(value as CFTypeRef) == CGColor.typeID,
+                          let color = (value as! CGColor).converted(to: CGColorSpaceCreateDeviceRGB(), intent: .defaultIntent, options: nil),
+                          let components = color.components, components.count >= 4 else { return }
+                    let base = RGBAColor(red: components[0], green: components[1], blue: components[2], alpha: components[3])
+                    let animated = changes.reduce(base) { base, change in change.color(base: base) { style.color($0) } }
+                    result.addAttribute(Self.colorKey, value: animated.cgColor, range: subrange)
+                }
+            }
             // A paragraph not yet built in keeps its place, bullet and all, unseen.
             if let opacity = paragraphOpacity[index], opacity < 1, range.length > 0 {
                 result.enumerateAttribute(Self.colorKey, in: range) { value, subrange, _ in
