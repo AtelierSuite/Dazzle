@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import CoreText
 import Foundation
 
@@ -240,7 +241,41 @@ struct SlideRenderer {
             }
             target.endTransparencyLayer()
         }
-        paint(context)
+        let blur = EMU.points(reflection.blur)
+        guard blur > 0 else {
+            paint(context)
+            return
+        }
+        // Blurred, the reflection is drawn apart at the context's resolution,
+        // with room around it for the blur and for outlines and shadows to spread.
+        let region = bounds.insetBy(dx: -(blur * 2 + 20), dy: -(blur * 2 + 20))
+        let ctm = context.ctm
+        var scale = sqrt(abs(ctm.a * ctm.d - ctm.b * ctm.c))
+        scale = min(scale, 4_096 / max(region.width, region.height))
+        let width = Int((region.width * scale).rounded(.up)), height = Int((region.height * scale).rounded(.up))
+        guard width > 0, height > 0, let layer = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return }
+        layer.translateBy(x: 0, y: CGFloat(height))
+        layer.scaleBy(x: scale, y: -scale)
+        layer.translateBy(x: -region.minX, y: -region.minY)
+        paint(layer)
+        guard let image = layer.makeImage(), let blurred = Self.blurred(image, radius: blur * scale) else { return }
+        // Images are drawn bottom row first; the region's top is its smallest y.
+        context.translateBy(x: 0, y: region.minY + region.maxY)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(blurred, in: region)
+    }
+
+    private static let blurContext = CIContext()
+
+    /// `image` blurred by `radius` pixels, the same size.
+    private static func blurred(_ image: CGImage, radius: CGFloat) -> CGImage? {
+        let input = CIImage(cgImage: image)
+        let output = input.applyingGaussianBlur(sigma: Double(radius) / 2).cropped(to: input.extent)
+        return blurContext.createCGImage(output, from: input.extent)
     }
 
     /// Moves, sizes, turns, wipes and fades what is drawn next as an
