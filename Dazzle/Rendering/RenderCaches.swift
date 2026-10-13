@@ -1,6 +1,7 @@
 import CoreText
 import Foundation
 import ImageIO
+import UIKit
 
 /// Decoded pictures, kept so a slide is not decoded again on every redraw.
 final class ImageCache: @unchecked Sendable {
@@ -82,7 +83,8 @@ final class ImageCache: @unchecked Sendable {
 
 /// Fonts by family, size and style. A font the presentation carries comes
 /// first; families iOS does not have — Calibri, Aptos and the other Office
-/// faces — are drawn in the closest one it does.
+/// faces — are drawn in the closest one it does, and any other in the kind
+/// of face its name suggests.
 final class FontResolver: @unchecked Sendable {
     static let shared = FontResolver()
 
@@ -100,12 +102,12 @@ final class FontResolver: @unchecked Sendable {
         let key = "\(family ?? "")|\(size)|\(bold)|\(italic)" as NSString
         if let cached = cache.object(forKey: key) { return cached }
 
-        var font = base(family: family, size: size)
+        var (font, isWeighted) = base(family: family, size: size)
         var traits: CTFontSymbolicTraits = []
         // A heavy face iOS does not have is closest in the bold of the substitute.
         let lowered = family?.lowercased() ?? ""
         let isHeavyFamily = lowered.contains("black") || lowered.contains("heavy")
-        if bold || (isHeavyFamily && (CTFontCopyFamilyName(font) as String).lowercased() != lowered) {
+        if bold || (isHeavyFamily && !isWeighted && (CTFontCopyFamilyName(font) as String).lowercased() != lowered) {
             traits.insert(.traitBold)
         }
         if italic { traits.insert(.traitItalic) }
@@ -116,21 +118,80 @@ final class FontResolver: @unchecked Sendable {
         return font
     }
 
-    private func base(family: String?, size: CGFloat) -> CTFont {
+    /// The face for `family`, and whether it already has the weight the name asks for.
+    private func base(family: String?, size: CGFloat) -> (font: CTFont, isWeighted: Bool) {
         let system = CTFontCreateUIFontForLanguage(.system, size, nil) ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
-        guard let family = family?.trimmed, !family.isEmpty else { return system }
+        guard let family = family?.trimmed, !family.isEmpty else { return (system, false) }
         let lowered = family.lowercased()
         if let substitute = Self.substitutes.first(where: { lowered.hasPrefix($0.key) })?.value {
-            return substitute.isEmpty ? system : CTFontCreateWithName(substitute as CFString, size, nil)
+            return (substitute.isEmpty ? system : CTFontCreateWithName(substitute as CFString, size, nil), false)
         }
         let candidate = CTFontCreateWithName(family as CFString, size, nil)
         let found = (CTFontCopyFamilyName(candidate) as String).lowercased()
         // CoreText answers an unknown name with some other font rather than
         // nothing; only keep what came back if it is what was asked for.
         if found == lowered || (CTFontCopyFullName(candidate) as String).lowercased() == lowered {
-            return candidate
+            return (candidate, false)
         }
-        return system
+        return (Self.fallback(for: lowered, size: size), true)
+    }
+
+    /// A face for a family iOS doesn't have, going by its name: serifs in
+    /// Times, fixed widths in the system's monospaced face, Japanese in
+    /// Hiragino, and the rest in the system font, narrowed for a narrow
+    /// family, each at the weight the name gives.
+    static func fallback(for family: String, size: CGFloat) -> CTFont {
+        let weight = weight(in: family)
+        func named(_ name: String) -> CTFont {
+            let font = CTFontCreateWithName(name as CFString, size, nil)
+            guard weight >= .semibold else { return font }
+            return CTFontCreateCopyWithSymbolicTraits(font, size, nil, .traitBold, .traitBold) ?? font
+        }
+        switch category(of: family) {
+        case .monospaced: return UIFont.monospacedSystemFont(ofSize: size, weight: weight) as CTFont
+        case .serif: return named("Times New Roman")
+        case .mincho: return named("Hiragino Mincho ProN")
+        case .gothic: return named("Hiragino Sans")
+        case .sansSerif:
+            let narrow = ["narrow", "condensed", "compressed", "compact"].contains { family.contains($0) }
+            return UIFont.systemFont(ofSize: size, weight: weight, width: narrow ? .condensed : .standard) as CTFont
+        }
+    }
+
+    enum Category: Equatable {
+        case sansSerif, serif, monospaced, mincho, gothic
+    }
+
+    static func category(of family: String) -> Category {
+        let name = family.lowercased()
+        func mentions(_ words: [String]) -> Bool { words.contains { name.contains($0) } }
+        if mentions(["mono", "code", "courier", "consol", "typewriter", "terminal", "fixed", "monaco", "andale", "jetbrains"]) {
+            return .monospaced
+        }
+        if mentions(["mincho", "明朝", "みんちょう"]) { return .mincho }
+        if mentions(["ゴシック", "gothic"]) && name.unicodeScalars.contains(where: { $0.value > 0x2E80 }) { return .gothic }
+        if mentions(["sans", "grotesk", "grotesque", "gothic"]) { return .sansSerif }
+        if mentions(Self.serifWords) { return .serif }
+        return .sansSerif
+    }
+
+    /// Words naming serif families, or common ones by name.
+    private static let serifWords = [
+        "serif", "times", "georgia", "garamond", "baskerville", "caslon", "bodoni", "didot", "minion", "playfair",
+        "merriweather", "lora", "antiqua", "slab", "palatino", "charter", "crimson", "schoolbook", "goudy",
+        "perpetua", "rockwell", "bookman", "clarendon", "cochin", "hoefler", "iowan", "literata", "spectral",
+        "cormorant", "cardo", "sabon", "janson", "plantin", "utopia", "tiempos", "domine", "alegreya",
+    ]
+
+    /// The weight words in a family name such as `Open Sans Semibold` give.
+    static func weight(in family: String) -> UIFont.Weight {
+        let name = family.lowercased().replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "-", with: "")
+        let weights: [(String, UIFont.Weight)] = [
+            ("hairline", .ultraLight), ("ultralight", .ultraLight), ("extralight", .ultraLight), ("thin", .thin),
+            ("semibold", .semibold), ("demibold", .semibold), ("extrabold", .heavy), ("ultrabold", .heavy),
+            ("light", .light), ("medium", .medium), ("heavy", .heavy), ("black", .black), ("bold", .bold),
+        ]
+        return weights.first { name.contains($0.0) }?.1 ?? .regular
     }
 
     /// Office typefaces mapped to what iOS ships. Empty means the system font.
