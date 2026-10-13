@@ -41,3 +41,18 @@ struct KeynoteArchiveWritingTests {
         }
     }
 }
+
+@Suite("Stored ZIP archives")
+struct StoredArchiveTests {
+    @Test("Entries can be stored as they are, and read back in their order")
+    func stored() throws {
+        let text = Data(String(repeating: "Keynote ", count: 100).utf8)
+        let entries = [("b.txt", text), ("a/Ünïcode.txt", Data("x".utf8)), ("c.txt", text)]
+        let archive = try ZipArchive.archive(entries: entries, compresses: false)
+        // Stored, the text is in the archive as it is.
+        #expect(archive.range(of: text) != nil)
+        let read = try ZipArchive.orderedEntries(in: archive)
+        #expect(read.map(\.path) == entries.map(\.0))
+        #expect(read.map(\.data) == entries.map(\.1))
+    }
+}
