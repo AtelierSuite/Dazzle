@@ -186,6 +186,13 @@ struct KeynoteEditWritingTests {
         #expect(!KeynoteEditor.canSave(edited))
     }
 
+    @Test("Speaker notes are written to the notes' storage")
+    func notes() throws {
+        var edited = presentation
+        edited.slides[0].notes = "Say hello, then move on."
+        #expect(try reread(edited).slides[0].notes == "Say hello, then move on.")
+    }
+
     @Test("Changes Keynote's objects can't be given can't be saved")
     func unsupported() throws {
         #expect(KeynoteEditor.canSave(presentation))

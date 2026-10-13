@@ -92,6 +92,34 @@ enum KeynoteTextEdit {
         }
     }
 
+    // MARK: - Notes
+
+    /// Speaker notes, which Dazzle keeps as plain text with the storage's
+    /// leading and trailing space trimmed away.
+    static func editPlain(_ storage: ProtoFields, from old: String, to new: String) throws -> ProtoFields {
+        let text = units(storage)
+        let visible = visibleMap(
+            text,
+            isVisible: { unit in
+                !(unit == 0xFFFC || (0x7F...0x9F).contains(unit) || (unit < 0x20 && unit != 0x09 && unit != 0x0A))
+            },
+            display: { $0 == lineBreak ? paragraphBreak : $0 }
+        )
+        let full = String(decoding: visible.units, as: UTF16.self)
+        let trimmed = full.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed == old, let range = full.range(of: trimmed) ?? (trimmed.isEmpty ? full.startIndex..<full.startIndex : nil)
+        else { throw KeynoteSaveError.unsupportedChange }
+        let replaced = String(full[..<range.lowerBound]) + new + String(full[range.upperBound...])
+        var hunks: [Hunk] = []
+        for change in changes(from: visible.units, to: Array(replaced.utf16)) {
+            guard let span = change.range else { continue }
+            hunks.append(try hunk(
+                span.old, inserted: Array(Array(replaced.utf16)[span.new]), in: visible, count: text.count, takesFollowing: false
+            ))
+        }
+        return try apply(hunks, to: storage, text: text)
+    }
+
     // MARK: - Characters
 
     /// The text as Dazzle shows it, with the formatting of each character.

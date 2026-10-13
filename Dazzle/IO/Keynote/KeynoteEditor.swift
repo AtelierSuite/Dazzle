@@ -6,8 +6,9 @@ import Foundation
 ///
 /// Edits are measured against the presentation as it was opened. Those
 /// Keynote can be given field by field are: shapes moved, resized or
-/// turned; text typed or deleted in a shape. Anything else would need
-/// objects made or styles changed, so it can't be saved to Keynote at all.
+/// turned; text typed or deleted in a shape or in the speaker notes.
+/// Anything else would need objects made or styles changed, so it can't be
+/// saved to Keynote at all.
 struct KeynoteEditor {
     private let source: KeynoteSource
     private(set) var archive: KeynoteArchive
@@ -50,13 +51,19 @@ struct KeynoteEditor {
     // MARK: - Slides
 
     private mutating func apply(_ slide: Slide, before: Slide, origin: KeynoteSlideOrigin) throws {
-        // Everything but the shapes must be as it was.
+        // Everything but the shapes and notes must be as it was.
         var rest = slide
         rest.shapes = before.shapes
+        rest.notes = before.notes
         rest.isModified = before.isModified
+        rest.areNotesModified = before.areNotesModified
         guard rest == before else { throw KeynoteSaveError.unsupportedChange }
 
         try apply(slide.shapes, before: before.shapes, origin: origin)
+        if slide.notes != before.notes {
+            guard let storage = origin.notesStorage else { throw KeynoteSaveError.unsupportedChange }
+            try editNotes(storage, from: before.notes, to: slide.notes)
+        }
     }
 
     // MARK: - Shapes
@@ -163,6 +170,11 @@ struct KeynoteEditor {
     private mutating func editText(_ storage: UInt64, from old: TextBody, to new: TextBody) throws {
         guard let fields = archive.fields(storage) else { throw KeynoteSaveError.unsupportedChange }
         try archive.replace(storage, with: KeynoteTextEdit.edit(fields, from: old, to: new))
+    }
+
+    private mutating func editNotes(_ storage: UInt64, from old: String, to new: String) throws {
+        guard let fields = archive.fields(storage) else { throw KeynoteSaveError.unsupportedChange }
+        try archive.replace(storage, with: KeynoteTextEdit.editPlain(fields, from: old, to: new))
     }
 
     // MARK: - Objects
