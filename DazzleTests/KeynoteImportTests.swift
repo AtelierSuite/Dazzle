@@ -84,12 +84,13 @@ struct KeynoteContainerTests {
         }
     }
 
-    @Test("Keynote files open but are never written to")
+    @Test("Keynote files open and are saved as Keynote, while new documents are PowerPoint")
     func documentTypes() {
         #expect(DazzleDocument.readableContentTypes.contains(.keynote))
         #expect(DazzleDocument.readableContentTypes.contains(.keynotePackage))
-        #expect(!DazzleDocument.writableContentTypes.contains(.keynote))
-        #expect(!DazzleDocument.writableContentTypes.contains(.keynotePackage))
+        #expect(DazzleDocument.writableContentTypes.contains(.keynote))
+        #expect(DazzleDocument.writableContentTypes.contains(.keynotePackage))
+        #expect(DazzleDocument.writableContentTypes.first == .openXMLPresentation)
     }
 }
 

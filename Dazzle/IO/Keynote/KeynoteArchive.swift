@@ -180,12 +180,8 @@ enum KeynoteWriteError: Error {
 enum KeynoteReadError: LocalizedError {
     case notKeynote
     case corrupt
-    case notWritable
 
     var errorDescription: String? {
-        switch self {
-        case .notKeynote, .corrupt: String(localized: "Error.NotAKeynotePresentation")
-        case .notWritable: String(localized: "Error.KeynoteNotWritable")
-        }
+        String(localized: "Error.NotAKeynotePresentation")
     }
 }

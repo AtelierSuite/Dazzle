@@ -17,12 +17,14 @@ extension UTType {
 
 /// The app's document: one presentation.
 struct DazzleDocument: FileDocument {
-    /// Keynote presentations open, converted, but are never written back:
-    /// Dazzle saves only PowerPoint.
+    /// Keynote presentations open converted, and are saved by writing what
+    /// was changed back into the Keynote document itself.
     static let readableContentTypes: [UTType] = [
         .openXMLPresentation, .macroEnabledPresentation, .openXMLSlideShow, .keynote, .keynotePackage,
     ]
-    static let writableContentTypes: [UTType] = [.openXMLPresentation, .macroEnabledPresentation, .openXMLSlideShow]
+    static let writableContentTypes: [UTType] = [
+        .openXMLPresentation, .macroEnabledPresentation, .openXMLSlideShow, .keynote, .keynotePackage,
+    ]
 
     var presentation: Presentation
 
@@ -46,9 +48,9 @@ struct DazzleDocument: FileDocument {
     }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        // Never write a PowerPoint package over a Keynote file.
+        // A Keynote file is written back as Keynote, never as PowerPoint.
         if Self.isKeynote(configuration.contentType) {
-            throw KeynoteReadError.notWritable
+            return try KeynoteWriter.fileWrapper(for: presentation)
         }
         return FileWrapper(regularFileWithContents: try PPTXWriter.data(from: presentation))
     }
