@@ -152,6 +152,40 @@ struct KeynoteEditWritingTests {
         #expect(!KeynoteEditor.canSave(sized))
     }
 
+    @Test("Text typed in a shape is written to its storage, keeping its style")
+    func text() throws {
+        var edited = presentation
+        let title = try index(edited.slides[0], Self.isTitle)
+        var body = try #require(edited.slides[0].shapes[title].text)
+        body.paragraphs[0] = body.paragraphs[0].replacingText("Hello, Keynote!")
+        edited.slides[0].shapes[title].text = body
+        let reread = try reread(edited)
+        let shape = try #require(reread.slides[0].shapes.first { $0.text?.plainText == "Hello, Keynote!" })
+        #expect(shape.text?.paragraphs[0].runs.first?.properties == presentation.slides[0].shapes[title].text?.paragraphs[0].runs.first?.properties)
+    }
+
+    @Test("A paragraph added to a list takes the formatting of the one it was broken from")
+    func paragraph() throws {
+        var edited = presentation
+        let list = try index(edited.slides[1]) { $0.text?.plainText == "First\nSecond" }
+        var body = try #require(edited.slides[1].shapes[list].text)
+        body.paragraphs.append(body.paragraphs[1].replacingText("Third"))
+        body.paragraphs[0] = body.paragraphs[0].replacingText("Firsts")
+        edited.slides[1].shapes[list].text = body
+        let reread = try reread(edited)
+        let shape = try #require(reread.slides[1].shapes.first { $0.text?.plainText == "Firsts\nSecond\nThird" })
+        let paragraphs = try #require(shape.text?.paragraphs)
+        #expect(paragraphs[2].properties == paragraphs[1].properties)
+    }
+
+    @Test("Text in a style Keynote has nowhere can't be saved")
+    func restyledText() throws {
+        var edited = presentation
+        let title = try index(edited.slides[0], Self.isTitle)
+        edited.slides[0].shapes[title].text?.paragraphs[0].runs[0].properties.isItalic = true
+        #expect(!KeynoteEditor.canSave(edited))
+    }
+
     @Test("Changes Keynote's objects can't be given can't be saved")
     func unsupported() throws {
         #expect(KeynoteEditor.canSave(presentation))

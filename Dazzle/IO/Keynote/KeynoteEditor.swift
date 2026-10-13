@@ -5,9 +5,9 @@ import Foundation
 /// presentation was converted from.
 ///
 /// Edits are measured against the presentation as it was opened. Those
-/// Keynote can be given field by field are shapes moved, resized or
-/// turned. Anything else would need objects made or styles changed, so it
-/// can't be saved to Keynote at all.
+/// Keynote can be given field by field are: shapes moved, resized or
+/// turned; text typed or deleted in a shape. Anything else would need
+/// objects made or styles changed, so it can't be saved to Keynote at all.
 struct KeynoteEditor {
     private let source: KeynoteSource
     private(set) var archive: KeynoteArchive
@@ -64,10 +64,11 @@ struct KeynoteEditor {
     private mutating func apply(_ shapes: [SlideShape], before: [SlideShape], origin: KeynoteSlideOrigin) throws {
         guard shapes.map(\.shapeID) == before.map(\.shapeID) else { throw KeynoteSaveError.unsupportedChange }
         for (shape, old) in zip(shapes, before) where shape != old {
-            // Everything but where the shape is must be as it was.
+            // Everything but where the shape is and what it says must be as it was.
             var rest = shape
             rest.frame = old.frame
             rest.rotation = old.rotation
+            rest.text = old.text
             rest.textFrame = old.textFrame
             rest.hasOwnFrame = old.hasOwnFrame
             rest.edits = old.edits
@@ -81,6 +82,12 @@ struct KeynoteEditor {
             if shape.frame != old.frame || shape.rotation != old.rotation {
                 guard let drawable = origin.drawables[shape.shapeID] else { throw KeynoteSaveError.unsupportedChange }
                 try transform(drawable, from: old, to: shape)
+            }
+            if shape.text != old.text {
+                guard let storage = origin.textStorages[shape.shapeID], let from = old.text, let to = shape.text else {
+                    throw KeynoteSaveError.unsupportedChange
+                }
+                try editText(storage, from: from, to: to)
             }
         }
     }
@@ -149,6 +156,13 @@ struct KeynoteEditor {
         guard let first = path.first else { return try change(&fields) }
         guard fields.has(first) else { throw KeynoteSaveError.unsupportedChange }
         try fields.update(first) { try update(&$0, path: Array(path.dropFirst()), change) }
+    }
+
+    // MARK: - Text
+
+    private mutating func editText(_ storage: UInt64, from old: TextBody, to new: TextBody) throws {
+        guard let fields = archive.fields(storage) else { throw KeynoteSaveError.unsupportedChange }
+        try archive.replace(storage, with: KeynoteTextEdit.edit(fields, from: old, to: new))
     }
 
     // MARK: - Objects
