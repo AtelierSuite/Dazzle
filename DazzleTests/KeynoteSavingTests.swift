@@ -193,6 +193,18 @@ struct KeynoteEditWritingTests {
         #expect(try reread(edited).slides[0].notes == "Say hello, then move on.")
     }
 
+    @Test("Slides hidden, shown and reordered stay so")
+    func slides() throws {
+        var edited = presentation
+        edited.slides[1].isHidden = false
+        edited.slides[0].isHidden = true
+        edited.slides.swapAt(0, 1)
+        edited.isStructureModified = true
+        let reread = try reread(edited)
+        #expect(reread.slides.map(\.isHidden) == [false, true])
+        #expect(reread.slides.map(\.notes) == ["", "Speaker notes"])
+    }
+
     @Test("Changes Keynote's objects can't be given can't be saved")
     func unsupported() throws {
         #expect(KeynoteEditor.canSave(presentation))

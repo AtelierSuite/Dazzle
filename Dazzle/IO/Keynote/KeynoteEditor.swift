@@ -6,9 +6,9 @@ import Foundation
 ///
 /// Edits are measured against the presentation as it was opened. Those
 /// Keynote can be given field by field are: shapes moved, resized or
-/// turned; text typed or deleted in a shape or in the speaker notes.
-/// Anything else would need objects made or styles changed, so it can't be
-/// saved to Keynote at all.
+/// turned; text typed or deleted in a shape or in the speaker notes;
+/// slides hidden, shown or reordered. Anything else would need objects
+/// made or styles changed, so it can't be saved to Keynote at all.
 struct KeynoteEditor {
     private let source: KeynoteSource
     private(set) var archive: KeynoteArchive
@@ -35,10 +35,12 @@ struct KeynoteEditor {
         var outside = presentation
         outside.slides = original.slides
         outside.keynoteSource = original.keynoteSource
+        outside.isStructureModified = original.isStructureModified
         guard outside == original else { throw KeynoteSaveError.unsupportedChange }
 
         let originals = Dictionary(original.slides.map { ($0.id, $0) }) { first, _ in first }
-        guard presentation.slides.map(\.id) == original.slides.map(\.id) else { throw KeynoteSaveError.unsupportedChange }
+        guard presentation.slides.count == original.slides.count,
+              Set(presentation.slides.map(\.id)) == Set(originals.keys) else { throw KeynoteSaveError.unsupportedChange }
 
         for slide in presentation.slides {
             guard let before = originals[slide.id] else { throw KeynoteSaveError.unsupportedChange }
@@ -46,15 +48,19 @@ struct KeynoteEditor {
             guard let origin = source.slides[slide.id] else { throw KeynoteSaveError.unsupportedChange }
             try apply(slide, before: before, origin: origin)
         }
+        if presentation.slides.map(\.id) != original.slides.map(\.id) {
+            try reorder(presentation.slides.compactMap { source.slides[$0.id]?.node })
+        }
     }
 
     // MARK: - Slides
 
     private mutating func apply(_ slide: Slide, before: Slide, origin: KeynoteSlideOrigin) throws {
-        // Everything but the shapes and notes must be as it was.
+        // Everything but the shapes, notes and visibility must be as it was.
         var rest = slide
         rest.shapes = before.shapes
         rest.notes = before.notes
+        rest.isHidden = before.isHidden
         rest.isModified = before.isModified
         rest.areNotesModified = before.areNotesModified
         guard rest == before else { throw KeynoteSaveError.unsupportedChange }
@@ -63,6 +69,29 @@ struct KeynoteEditor {
         if slide.notes != before.notes {
             guard let storage = origin.notesStorage else { throw KeynoteSaveError.unsupportedChange }
             try editNotes(storage, from: before.notes, to: slide.notes)
+        }
+        if slide.isHidden != before.isHidden {
+            try edit(origin.node) { $0.setBool(4, slide.isHidden) }
+        }
+    }
+
+    /// The slide list in the order given. Only the list newer documents keep
+    /// can be reordered, and only when every slide in it is one Dazzle shows.
+    private mutating func reorder(_ nodes: [UInt64]) throws {
+        guard let document = archive.objects.values.first(where: { $0.type == KeynoteType.document }),
+              let show = document.message.reference(2) else { throw KeynoteSaveError.unsupportedChange }
+        try edit(show) { show in
+            guard var tree = show.nested(3) else { throw KeynoteSaveError.unsupportedChange }
+            var references: [UInt64: [UInt8]] = [:]
+            for value in tree.all(2) {
+                guard let identifier = try? ProtoMessage(value).uint(1) else { throw KeynoteSaveError.unsupportedChange }
+                references[identifier] = value
+            }
+            guard references.count == nodes.count, Set(references.keys) == Set(nodes) else {
+                throw KeynoteSaveError.unsupportedChange
+            }
+            tree.setRepeatedBytes(2, nodes.compactMap { references[$0] })
+            show.setBytes(3, tree.bytes)
         }
     }
 
