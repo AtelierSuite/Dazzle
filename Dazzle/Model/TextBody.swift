@@ -314,6 +314,8 @@ struct RunProperties: Equatable, Hashable, Sendable {
     var capitalization: String?
     /// A line drawn around each letter.
     var outline: TextOutline?
+    /// A shadow each letter casts.
+    var shadow: TextShadow?
     /// Where clicking the text goes. Never inherited.
     var link: Hyperlink?
 
@@ -342,6 +344,9 @@ struct RunProperties: Equatable, Hashable, Sendable {
         latinFont = element.firstChild(named: "latin")?.attribute("typeface")
         eastAsianFont = element.firstChild(named: "ea")?.attribute("typeface")
         outline = element.firstChild(named: "ln").map(TextOutline.init(element:))
+        shadow = element.firstChild(named: "effectLst").map {
+            Shadow(element: $0.firstChild(named: "outerShdw")).map(TextShadow.shadow) ?? TextShadow.none
+        }
     }
 
     /// Values left unsaid here are taken from `base`.
@@ -358,6 +363,7 @@ struct RunProperties: Equatable, Hashable, Sendable {
         result.baseline = baseline ?? base.baseline
         result.capitalization = capitalization ?? base.capitalization
         result.outline = outline ?? base.outline
+        result.shadow = shadow ?? base.shadow
         return result
     }
 }
@@ -382,6 +388,20 @@ enum TextOutline: Equatable, Hashable, Sendable {
         switch self {
         case .none: "<a:ln><a:noFill/></a:ln>"
         case .line(let width, let color): "<a:ln w=\"\(width)\"><a:solidFill>\(color.xml)</a:solidFill></a:ln>"
+        }
+    }
+}
+
+/// `a:effectLst` in run properties: a shadow, or none, which takes away
+/// one the text would inherit.
+enum TextShadow: Equatable, Hashable, Sendable {
+    case none
+    case shadow(Shadow)
+
+    var xml: String {
+        switch self {
+        case .none: "<a:effectLst/>"
+        case .shadow(let shadow): "<a:effectLst>\(shadow.xml)</a:effectLst>"
         }
     }
 }

@@ -131,14 +131,7 @@ struct SlideRenderer {
 
         // A shadow falls from everything the shape draws, taken as one.
         if let shadow = shape.shadow {
-            let radians = shadow.direction * .pi / 180
-            let distance = EMU.points(shadow.distance)
-            // Shadow offsets and blur are in device space, untouched by the
-            // context's scaling and flipping; carry them across by hand.
-            let offset = CGSize(width: cos(radians) * distance, height: sin(radians) * distance)
-                .applying(CGAffineTransform(a: context.ctm.a, b: context.ctm.b, c: context.ctm.c, d: context.ctm.d, tx: 0, ty: 0))
-            let scale = hypot(context.ctm.a, context.ctm.b)
-            context.setShadow(offset: offset, blur: EMU.points(shadow.blur) * scale, color: style.color(shadow.color).cgColor)
+            Self.setShadow(shadow, color: style.color(shadow.color).cgColor, space: context.ctm, context: context)
             context.beginTransparencyLayer(auxiliaryInfo: nil)
         }
         defer { if shape.shadow != nil { context.endTransparencyLayer() } }
@@ -178,6 +171,19 @@ struct SlideRenderer {
                 paragraphAppearances: paragraphAppearances, colorChanges: appearance?.colors ?? [:]
             )
         }
+    }
+
+    /// Casts `shadow` from what is drawn next, as it falls in `space`, the
+    /// slide's coordinates as the context had them.
+    static func setShadow(_ shadow: Shadow, color: CGColor, space: CGAffineTransform, context: CGContext) {
+        let radians = shadow.direction * .pi / 180
+        let distance = EMU.points(shadow.distance)
+        // Shadow offsets and blur are in device space, untouched by the
+        // context's scaling and flipping; carry them across by hand.
+        let offset = CGSize(width: cos(radians) * distance, height: sin(radians) * distance)
+            .applying(CGAffineTransform(a: space.a, b: space.b, c: space.c, d: space.d, tx: 0, ty: 0))
+        let scale = hypot(space.a, space.b)
+        context.setShadow(offset: offset, blur: EMU.points(shadow.blur) * scale, color: color)
     }
 
     /// The shape again, turned upside down below its bottom edge and faded

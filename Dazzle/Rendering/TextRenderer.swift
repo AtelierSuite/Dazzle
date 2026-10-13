@@ -119,11 +119,51 @@ struct TextRenderer {
             drawParagraphs(layout, appearances: paragraphAppearances, context: context)
             return
         }
+        let space = context.ctm
         context.translateBy(x: layout.origin.x, y: layout.origin.y + layout.height)
         context.scaleBy(x: 1, y: -1)
         context.textMatrix = .identity
-        CTFrameDraw(layout.frame, context)
+        if Self.castsShadows(layout.frame) {
+            let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
+            var origins = [CGPoint](repeating: .zero, count: lines.count)
+            CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
+            for (line, origin) in zip(lines, origins) {
+                draw(line, at: origin, space: space, context: context)
+            }
+        } else {
+            CTFrameDraw(layout.frame, context)
+        }
         drawStrikethroughs(in: layout.frame, context: context)
+    }
+
+    private static func castsShadows(_ frame: CTFrame) -> Bool {
+        (CTFrameGetLines(frame) as? [CTLine] ?? []).contains { line in
+            (CTLineGetGlyphRuns(line) as? [CTRun] ?? []).contains { (CTRunGetAttributes($0) as NSDictionary)[shadowKey.rawValue] != nil }
+        }
+    }
+
+    /// Draws a line from `origin`, a run at a time where its letters cast
+    /// shadows. `space` is the slide's coordinates, which shadows fall in.
+    private func draw(_ line: CTLine, at origin: CGPoint, space: CGAffineTransform, context: CGContext) {
+        let runs = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
+        guard runs.contains(where: { (CTRunGetAttributes($0) as NSDictionary)[Self.shadowKey.rawValue] != nil }) else {
+            context.textPosition = origin
+            CTLineDraw(line, context)
+            return
+        }
+        for run in runs {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            context.saveGState()
+            if let box = attributes[Self.shadowKey.rawValue] as? ShadowBox {
+                // Fading text fades its shadow with it.
+                let textAlpha = attributes[Self.colorKey.rawValue].map { ($0 as! CGColor).alpha } ?? 1 // swiftlint:disable:this force_cast
+                let color = box.color.copy(alpha: box.color.alpha * textAlpha) ?? box.color
+                SlideRenderer.setShadow(box.shadow, color: color, space: space, context: context)
+            }
+            context.textPosition = origin
+            CTRunDraw(run, context, CFRange(location: 0, length: 0))
+            context.restoreGState()
+        }
     }
 
     /// Draw whole paragraphs in their unchanged CoreText layout. Wrapped lines,
@@ -152,11 +192,11 @@ struct TextRenderer {
             let faded = SlideRenderer.apply(appearance, to: bounds, context: context)
             for entry in paragraph {
                 context.saveGState()
+                let space = context.ctm
                 context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
                 context.scaleBy(x: 1, y: -1)
                 context.textMatrix = .identity
-                context.textPosition = .zero
-                CTLineDraw(entry.line, context)
+                draw(entry.line, at: .zero, space: space, context: context)
                 drawStrikethroughs(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
             }
@@ -256,11 +296,22 @@ struct TextRenderer {
     private static let linkKey = NSAttributedString.Key("DazzleLink")
     private static let strokeWidthKey = NSAttributedString.Key(kCTStrokeWidthAttributeName as String)
     private static let strokeColorKey = NSAttributedString.Key(kCTStrokeColorAttributeName as String)
+    private static let shadowKey = NSAttributedString.Key("DazzleShadow")
 
     /// A link riding on the text it belongs to.
     private final class LinkBox: NSObject {
         let link: Hyperlink
         init(_ link: Hyperlink) { self.link = link }
+    }
+
+    /// A shadow riding on the text that casts it, its colour worked out.
+    private final class ShadowBox: NSObject {
+        let shadow: Shadow
+        let color: CGColor
+        init(_ shadow: Shadow, color: CGColor) {
+            self.shadow = shadow
+            self.color = color
+        }
     }
 
     func attributedString(
@@ -403,6 +454,10 @@ struct TextRenderer {
             // CoreText strokes by a percentage of the font size; negative fills the letters too.
             attributes[Self.strokeWidthKey] = NSNumber(value: -EMU.points(width) / Double(size) * 100)
             attributes[Self.strokeColorKey] = (colorOverride ?? style.color(outlineColor)).cgColor
+        }
+        // Prompts and text laid out unseen cast no shadow.
+        if case .shadow(let shadow) = run.shadow, colorOverride == nil {
+            attributes[Self.shadowKey] = ShadowBox(shadow, color: style.color(shadow.color).cgColor)
         }
         return attributes
     }

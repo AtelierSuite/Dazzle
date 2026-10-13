@@ -586,9 +586,14 @@ struct ShapeWriter {
             let after = element.children.firstIndex { $0.name == "ln" }
             element.insertChild(fill, at: after.map { $0 + 1 } ?? 0)
         }
-        // An outline the file had is kept as written, with whatever Dazzle doesn't model.
+        // Outlines and shadows the file had are kept as written, with whatever Dazzle doesn't model.
         if let outline = properties.outline, element.firstChild(named: "ln") == nil, let line = fragment(outline.xml) {
             element.insertChild(line, at: 0)
+        }
+        if let shadow = properties.shadow, element.firstChild(named: "effectLst") == nil,
+           element.firstChild(named: "effectDag") == nil, let effects = fragment(shadow.xml) {
+            let after = element.children.lastIndex { $0.name == "ln" || Fill.elementNames.contains($0.name) }
+            element.insertChild(effects, at: after.map { $0 + 1 } ?? 0)
         }
         if let font = properties.latinFont, let latin = fragment("<a:latin typeface=\"\(XMLLite.escape(font))\"/>") {
             if let existing = element.firstChild(named: "latin") {
