@@ -1,6 +1,7 @@
 import Foundation
 
-/// Decompresses the Snappy blocks Keynote stores its object archives in.
+/// Decompresses, and compresses, the Snappy blocks Keynote stores its
+/// object archives in.
 ///
 /// An `.iwa` file is a run of chunks, each a type byte of zero, a three-byte
 /// little-endian length and one raw Snappy block. Unlike the framed Snappy
@@ -85,6 +86,105 @@ enum Snappy {
         let start = output.count - distance
         for offset in 0..<length {
             output.append(output[start + offset])
+        }
+    }
+
+    // MARK: - Compressing
+
+    /// The most a chunk holds once expanded, as Keynote writes them.
+    static let chunkSize = 65_536
+
+    /// Splits a stream into chunks and compresses each, as an `.iwa` file.
+    static func iwaFile(_ stream: [UInt8]) -> Data {
+        var output = Data()
+        var start = 0
+        repeat {
+            let end = min(start + chunkSize, stream.count)
+            let block = compress(stream[start..<end])
+            output.append(0)
+            output.append(UInt8(block.count & 0xFF))
+            output.append(UInt8(block.count >> 8 & 0xFF))
+            output.append(UInt8(block.count >> 16 & 0xFF))
+            output.append(contentsOf: block)
+            start = end
+        } while start < stream.count
+        return output
+    }
+
+    /// One raw Snappy block. Repeats of four bytes or more found through a
+    /// small hash table become copies; everything else stays literal. Input
+    /// is never more than a chunk, so every copy reaches back under 64 KiB.
+    static func compress(_ input: ArraySlice<UInt8>) -> [UInt8] {
+        let bytes = Array(input)
+        var output: [UInt8] = []
+        output.reserveCapacity(bytes.count + bytes.count / 6 + 8)
+        var length = bytes.count
+        while length >= 0x80 {
+            output.append(UInt8(length & 0x7F) | 0x80)
+            length >>= 7
+        }
+        output.append(UInt8(length))
+
+        var table = [Int](repeating: -1, count: 1 << 14)
+        func load(_ index: Int) -> UInt32 {
+            UInt32(bytes[index]) | UInt32(bytes[index + 1]) << 8 | UInt32(bytes[index + 2]) << 16 | UInt32(bytes[index + 3]) << 24
+        }
+        func hash(_ value: UInt32) -> Int { Int((value &* 0x1E35_A7BD) >> 18) }
+
+        var literalStart = 0
+        var index = 0
+        while index + 4 <= bytes.count {
+            let value = load(index)
+            let slot = hash(value)
+            let candidate = table[slot]
+            table[slot] = index
+            guard candidate >= 0, index - candidate <= 0xFFFF, load(candidate) == value else {
+                index += 1
+                continue
+            }
+            var matched = 4
+            while index + matched < bytes.count, bytes[candidate + matched] == bytes[index + matched] { matched += 1 }
+            appendLiteral(bytes[literalStart..<index], to: &output)
+            appendCopy(distance: index - candidate, length: matched, to: &output)
+            index += matched
+            literalStart = index
+        }
+        appendLiteral(bytes[literalStart..<bytes.count], to: &output)
+        return output
+    }
+
+    private static func appendLiteral(_ literal: ArraySlice<UInt8>, to output: inout [UInt8]) {
+        guard !literal.isEmpty else { return }
+        let length = literal.count - 1
+        if length < 60 {
+            output.append(UInt8(length << 2))
+        } else if length < 0x100 {
+            output.append(60 << 2)
+            output.append(UInt8(length))
+        } else if length < 0x1_0000 {
+            output.append(61 << 2)
+            output.append(UInt8(length & 0xFF))
+            output.append(UInt8(length >> 8))
+        } else {
+            output.append(62 << 2)
+            output.append(UInt8(length & 0xFF))
+            output.append(UInt8(length >> 8 & 0xFF))
+            output.append(UInt8(length >> 16))
+        }
+        output.append(contentsOf: literal)
+    }
+
+    /// Copies with a two-byte distance, at most 64 bytes each.
+    private static func appendCopy(distance: Int, length: Int, to output: inout [UInt8]) {
+        var remaining = length
+        while remaining > 0 {
+            // Never leave a piece shorter than the four bytes a copy needs.
+            var piece = min(remaining, 64)
+            if (1..<4).contains(remaining - piece) { piece = remaining - 4 }
+            output.append(UInt8((piece - 1) << 2) | 2)
+            output.append(UInt8(distance & 0xFF))
+            output.append(UInt8(distance >> 8))
+            remaining -= piece
         }
     }
 }

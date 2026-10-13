@@ -13,6 +13,18 @@ struct KeynoteContainerTests {
         #expect(String(decoding: output, as: UTF8.self) == "abcdabcdabcd")
     }
 
+    @Test("Compressed streams expand back to themselves, over several chunks")
+    func snappyRoundTrip() throws {
+        var stream: [UInt8] = []
+        for index in 0..<200_000 { stream.append(UInt8(truncatingIfNeeded: index % 251 < 100 ? index / 7 : index * 31)) }
+        stream += Array(repeating: 0x41, count: 70_000)
+        let file = Snappy.iwaFile(stream)
+        #expect(file.count < stream.count)
+        #expect(try Snappy.iwaStream(file) == stream)
+        #expect(try Snappy.iwaStream(Snappy.iwaFile([])) == [])
+        #expect(try Snappy.iwaStream(Snappy.iwaFile(Array("abc".utf8))) == Array("abc".utf8))
+    }
+
     @Test("Chunks that claim more than they hold are rejected")
     func snappyTruncated() {
         #expect(throws: (any Error).self) {
