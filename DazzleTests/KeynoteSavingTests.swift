@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import Testing
 @testable import Dazzle
 
@@ -219,6 +220,28 @@ struct KeynoteEditWritingTests {
         filled.slides[0].shapes[shape].edits.insert(.fill)
         #expect(!KeynoteEditor.canSave(filled))
         #expect(throws: KeynoteSaveError.self) { try KeynoteWriter.fileWrapper(for: filled) }
+    }
+
+    @Test("A changed deck's previews are drawn again, at the size they were")
+    func previews() throws {
+        var entries = try ZipArchive.orderedEntries(in: KeynoteDocumentWritingTests.deck())
+        let preview = try #require(SlideExporter.image(of: presentation.slides[0], in: presentation, width: 64, format: .jpeg))
+        let index = try #require(entries.firstIndex { $0.path == "preview.jpg" })
+        entries[index].data = preview
+        var edited = try KeynoteImporter.presentation(from: ZipArchive.archive(entries: entries, compresses: false))
+        let unchanged = try #require(KeynoteWriter.fileWrapper(for: edited).regularFileContents)
+        #expect(try ZipArchive.entries(in: unchanged)["preview.jpg"] == preview)
+
+        // The second slide is shown first now.
+        edited.slides[0].isHidden = true
+        edited.slides[1].isHidden = false
+        let written = try #require(KeynoteWriter.fileWrapper(for: edited).regularFileContents)
+        let redrawn = try #require(ZipArchive.entries(in: written)["preview.jpg"])
+        #expect(redrawn != preview)
+        let image = try #require(CGImageSourceCreateWithData(redrawn as CFData, nil))
+        let properties = try #require(CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any])
+        #expect(properties[kCGImagePropertyPixelWidth] as? Int == 64)
+        #expect(properties[kCGImagePropertyPixelHeight] as? Int == 48)
     }
 
     /// The presentation written to Keynote and read back again.

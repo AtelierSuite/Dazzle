@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 
 /// A Keynote document as it was opened: every entry, and its objects, kept
 /// so that the presentation can be written back over it.
@@ -57,6 +58,9 @@ enum KeynoteWriter {
                 entries[index].data = data
             } else if path == propertiesPath, let data = newVersion(of: entries[index].data) {
                 entries[index].data = data
+            } else if !archive.changedFiles.isEmpty, isPreview(path),
+                      let data = preview(of: presentation, like: entries[index].data) {
+                entries[index].data = data
             }
         }
         return source.isPackage ? package(entries) : FileWrapper(regularFileWithContents: try ZipArchive.archive(entries: entries, compresses: false))
@@ -75,6 +79,27 @@ enum KeynoteWriter {
             properties["revision"] = String(revision[..<separator.upperBound]) + version
         }
         return try? PropertyListSerialization.data(fromPropertyList: properties, format: format, options: 0)
+    }
+
+    /// The pictures of the first slide that Finder and Keynote show for
+    /// the document, at the top of the package beside its index.
+    private static func isPreview(_ path: String) -> Bool {
+        !path.contains("/") && path.hasPrefix("preview") && path.hasSuffix(".jpg")
+    }
+
+    /// The first slide shown, drawn as it is now at the size the preview it
+    /// replaces was.
+    private static func preview(of presentation: Presentation, like data: Data) -> Data? {
+        guard let image = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              let index = presentation.visibleSlideIndices.first,
+              presentation.slideSize.height > 0 else { return nil }
+        let aspect = Double(presentation.slideSize.width) / Double(presentation.slideSize.height)
+        let fitted = min(width, Int((Double(height) * aspect).rounded()))
+        guard fitted > 0 else { return nil }
+        return SlideExporter.image(of: presentation.slides[index], in: presentation, width: fitted, format: .jpeg)
     }
 
     private static func package(_ entries: [(path: String, data: Data)]) -> FileWrapper {
