@@ -24,16 +24,22 @@ struct TextEffectsTests {
         """
     }
 
-    private func rectangle(effects: String) -> String {
+    private func rectangle(effects: String, rotation: Int = 0, width: Int = 1_270_000, height: Int = 1_270_000) -> String {
         """
         <p:sp><p:nvSpPr><p:cNvPr id="3" name="Box"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
-        <p:spPr><a:xfrm><a:off x="1270000" y="1270000"/><a:ext cx="1270000" cy="1270000"/></a:xfrm>
+        <p:spPr><a:xfrm rot="\(rotation)"><a:off x="1270000" y="1270000"/><a:ext cx="\(width)" cy="\(height)"/></a:xfrm>
         <a:prstGeom prst="rect"/><a:solidFill><a:srgbClr val="000000"/></a:solidFill>\(effects)</p:spPr></p:sp>
         """
     }
 
     /// The slide drawn without its background, a pixel to the point, top row first.
     private func render(_ shapes: [SlideShape]) throws -> (alpha: [UInt8], width: Int) {
+        let (pixels, width) = try renderColor(shapes)
+        return (stride(from: 3, to: pixels.count, by: 4).map { pixels[$0] }, width)
+    }
+
+    /// The slide's RGBA pixels, drawn without its background, top row first.
+    private func renderColor(_ shapes: [SlideShape]) throws -> (pixels: Data, width: Int) {
         var presentation = Presentation.blank
         presentation.slides[0].shapes = shapes
         let size = presentation.slideSize.points
@@ -45,8 +51,7 @@ struct TextEffectsTests {
         canvas.scaleBy(x: 1, y: -1)
         SlideRenderer(presentation: presentation, slide: presentation.slides[0], options: .init(drawsBackground: false))
             .draw(in: canvas, size: CGSize(width: width, height: height))
-        let pixels = try #require(canvas.makeImage()?.dataProvider?.data as Data?)
-        return (stride(from: 3, to: pixels.count, by: 4).map { pixels[$0] }, width)
+        return (try #require(canvas.makeImage()?.dataProvider?.data as Data?), width)
     }
 
     private func coverage(_ alpha: [UInt8]) -> Int { alpha.reduce(0) { $0 + Int($1) } }
@@ -131,5 +136,54 @@ struct TextEffectsTests {
         let read = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
         #expect(read.slides[0].shapes.first?.reflection == box.reflection)
         #expect(read.slides[0].shapes.first?.shadow == box.shadow)
+    }
+
+    @Test("A run's shadow never falls across the letters of the run beside it")
+    func shadowsUnderLetters() throws {
+        func red(_ shadowXML: String) throws -> Int {
+            let box = try #require(shapes("""
+                <p:sp><p:nvSpPr><p:cNvPr id="2" name="Text"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+                <p:spPr><a:xfrm><a:off x="1270000" y="1270000"/><a:ext cx="5080000" cy="1270000"/></a:xfrm>
+                <a:prstGeom prst="rect"/><a:noFill/></p:spPr>
+                <p:txBody><a:bodyPr wrap="none"/><a:p>\
+                <a:r><a:rPr lang="en-US" sz="7200"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:rPr><a:t>MM</a:t></a:r>\
+                <a:r><a:rPr lang="en-US" sz="7200"><a:solidFill><a:srgbClr val="000000"/></a:solidFill>\(shadowXML)</a:rPr>\
+                <a:t>MM</a:t></a:r></a:p></p:txBody></p:sp>
+                """).first)
+            let (pixels, _) = try renderColor([box])
+            return stride(from: 0, to: pixels.count, by: 4).filter { pixels[$0] > 200 && pixels[$0 + 1] < 60 }.count
+        }
+        // The black letters' shadow falls left, back over the red ones.
+        let shadowed = try red("<a:effectLst><a:outerShdw dist=\"381000\" dir=\"10800000\"><a:srgbClr val=\"000000\"/></a:outerShdw></a:effectLst>")
+        #expect(shadowed > 0)
+        #expect(shadowed == (try red("")))
+    }
+
+    @Test("A blurred reflection spreads past the shape's sides")
+    func blurredReflection() throws {
+        func spread(_ blur: Int) throws -> UInt8 {
+            let effects = "<a:effectLst><a:reflection blurRad=\"\(blur)\" stA=\"100000\" endPos=\"100000\" sy=\"-100000\"/></a:effectLst>"
+            let (alpha, width) = try render(shapes(rectangle(effects: effects)))
+            // Just outside the box's right edge, a little way into the reflection.
+            return alpha[220 * width + 203]
+        }
+        #expect(try spread(0) == 0)
+        #expect(try spread(127_000) > 0)
+    }
+
+    @Test("A turned shape's reflection stands below the space it covers, or turns with it")
+    func turnedReflection() throws {
+        // A square turned 45° covers 79 to 221 points down; upright, its reflection reaches about 362.
+        let upright = "<a:effectLst><a:reflection stA=\"80000\" endPos=\"100000\" sy=\"-100000\" rotWithShape=\"0\"/></a:effectLst>"
+        let square = try render(shapes(rectangle(effects: upright, rotation: 2_700_000)))
+        #expect(square.alpha[340 * square.width + 150] > 0)
+
+        // A bar turned a quarter turn has its bottom edge on its left, at 175 points across.
+        let turning = "<a:effectLst><a:reflection stA=\"80000\" endPos=\"100000\" sy=\"-100000\" rotWithShape=\"1\"/></a:effectLst>"
+        let bar = try render(shapes(rectangle(effects: turning, rotation: 5_400_000, width: 2_540_000, height: 635_000)))
+        #expect(bar.alpha[125 * bar.width + 160] > 0)
+        let standing = try render(shapes(rectangle(effects: upright, rotation: 5_400_000, width: 2_540_000, height: 635_000)))
+        #expect(standing.alpha[125 * standing.width + 160] == 0)
+        #expect(standing.alpha[235 * standing.width + 200] > 0)
     }
 }
