@@ -107,15 +107,30 @@ struct SlideRenderer {
         guard !shape.isHidden else { return }
         if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
         if let reflection = shape.reflection {
+            // The reflection goes wherever an animation moves, sizes or turns
+            // the shape, so that much is applied to both; fades and wipes
+            // apply to each, the reflection's mirrored.
+            context.saveGState()
+            defer { context.restoreGState() }
+            var rest = appearance
+            if let appearance {
+                let motion = AnimatedAppearance(
+                    offset: appearance.offset, scale: appearance.scale, axisScale: appearance.axisScale, rotation: appearance.rotation
+                )
+                _ = Self.apply(motion, to: shape.frame.points, context: context)
+                rest = AnimatedAppearance(
+                    colors: appearance.colors, mask: appearance.mask, opacity: appearance.opacity, reveal: appearance.reveal
+                )
+            }
             var plain = shape
             plain.reflection = nil
             draw(
                 plain, sources: sources, style: style, context: context, groupFill: groupFill,
-                appearance: appearance, paragraphAppearances: paragraphAppearances
+                appearance: rest, paragraphAppearances: paragraphAppearances
             )
             plain.shadow = nil
             drawReflection(reflection, of: plain, sources: sources, style: style, context: context, groupFill: groupFill,
-                           appearance: appearance, paragraphAppearances: paragraphAppearances)
+                           appearance: rest, paragraphAppearances: paragraphAppearances)
             return
         }
         let frame = shape.frame.points
