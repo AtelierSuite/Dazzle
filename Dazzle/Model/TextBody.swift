@@ -343,7 +343,7 @@ struct RunProperties: Equatable, Hashable, Sendable {
         }
         latinFont = element.firstChild(named: "latin")?.attribute("typeface")
         eastAsianFont = element.firstChild(named: "ea")?.attribute("typeface")
-        outline = element.firstChild(named: "ln").map(TextOutline.init(element:))
+        outline = element.firstChild(named: "ln").flatMap(TextOutline.init(element:))
         shadow = element.firstChild(named: "effectLst").map {
             Shadow(element: $0.firstChild(named: "outerShdw")).map(TextShadow.shadow) ?? TextShadow.none
         }
@@ -375,13 +375,26 @@ enum TextOutline: Equatable, Hashable, Sendable {
     /// Width in EMU, centred on the letter's edge.
     case line(width: Int, color: DrawingColor)
 
-    init(element: XMLElement) {
-        if let color = DrawingColor.first(in: element.firstChild(named: "solidFill")) {
-            // PowerPoint outlines text three quarters of a point wide unless told otherwise.
-            self = .line(width: element.attribute("w").flatMap(Int.init) ?? 9_525, color: color)
-        } else {
+    /// Nil when the line says nothing of its fill, leaving the inherited one.
+    init?(element: XMLElement) {
+        let color: DrawingColor?
+        if element.firstChild(named: "noFill") != nil {
             self = .none
+            return
+        } else if let fill = element.firstChild(named: "solidFill") {
+            color = DrawingColor.first(in: fill)
+        } else if let gradient = element.firstChild(named: "gradFill") {
+            // A gradient outline is drawn in its first colour.
+            color = DrawingColor.first(in: gradient.firstChild(named: "gsLst")?.firstChild(named: "gs"))
+        } else if let pattern = element.firstChild(named: "pattFill") {
+            // A patterned outline is drawn in its foreground colour.
+            color = DrawingColor.first(in: pattern.firstChild(named: "fgClr"))
+        } else {
+            return nil
         }
+        guard let color else { return nil }
+        // PowerPoint outlines text three quarters of a point wide unless told otherwise.
+        self = .line(width: element.attribute("w").flatMap(Int.init) ?? 9_525, color: color)
     }
 
     var xml: String {
