@@ -856,3 +856,134 @@ extension KeynoteFixture {
         return try ZipArchive.archive(entries: [("Index/Document.iwa", iwa(objects))])
     }
 }
+
+@Suite("Keynote text effects and font names")
+struct KeynoteTextEffectTests {
+    private let slide: Slide
+
+    init() throws {
+        slide = try #require(KeynoteImporter.presentation(from: KeynoteFixture.effectsDeck()).slides.first)
+    }
+
+    private func shape(_ text: String) throws -> SlideShape {
+        try #require(slide.shapes.first { $0.text?.plainText == text })
+    }
+
+    @Test("An outline colour with no width strokes the text 3% of its size wide")
+    func legacyOutline() throws {
+        let run = try #require(shape("Outlined").text?.paragraphs.first?.runs.first)
+        #expect(run.properties.outline == .line(width: 15_240, color: .rgb(0xFF0000)))
+    }
+
+    @Test("Newer documents' text strokes become outlines")
+    func strokeOutline() throws {
+        let run = try #require(shape("Stroked").text?.paragraphs.first?.runs.first)
+        #expect(run.properties.outline == .line(width: 25_400, color: .rgb(0x0000FF)))
+    }
+
+    @Test("Text shadows carry over")
+    func textShadow() throws {
+        let run = try #require(shape("Outlined").text?.paragraphs.first?.runs.first)
+        #expect(run.properties.shadow == .shadow(Shadow(blur: 25_400, distance: 50_800, direction: 45, color: Shadow.black(opacity: 0.5))))
+        #expect(try shape("Stroked").text?.paragraphs.first?.runs.first?.properties.shadow == nil)
+    }
+
+    @Test("A style's reflection fades out halfway down; an empty one is none")
+    func reflection() throws {
+        #expect(try shape("Outlined").reflection == Reflection(startOpacity: 0.4, endPosition: 0.5))
+        #expect(try shape("Stroked").reflection == nil)
+    }
+
+    @Test("A font this device lacks is named by the family its PostScript name gives")
+    func missingFontFamily() throws {
+        #expect(KeynoteText.family(of: "OpenSans-SemiboldItalic") == ("Open Sans Semibold", false, true))
+        #expect(KeynoteText.family(of: "SourceCodePro-Bold") == ("Source Code Pro", true, false))
+        #expect(KeynoteText.family(of: "Lato-Regular") == ("Lato", false, false))
+        let run = try #require(shape("Stroked").text?.paragraphs.first?.runs.first)
+        #expect(run.properties.latinFont == "Open Sans Light")
+    }
+}
+
+extension KeynoteFixture {
+    /// A slide of two text boxes: one outlined the older way, casting a
+    /// shadow and a reflection; one stroked the newer way, in a font the
+    /// device lacks, with a style that keeps an empty reflection.
+    static func effectsDeck() throws -> Data {
+        var objects: [(id: UInt64, type: UInt32, message: ProtoWriter)] = []
+        func add(_ id: UInt64, _ type: UInt32, _ build: (inout ProtoWriter) -> Void) {
+            var writer = ProtoWriter()
+            build(&writer)
+            objects.append((id, type, writer))
+        }
+
+        add(1, KeynoteType.document) { $0.reference(2, 2) }
+        add(2, KeynoteType.show) { show in
+            show.message(3) { $0.reference(1, 3) }
+            show.message(4) { $0.size(1_024, 768) }
+        }
+        add(3, KeynoteType.slideNode) { $0.reference(1, 10) }
+        add(10, KeynoteType.slideNode) { $0.reference(2, 11) }
+        add(11, KeynoteType.slide) { slide in
+            slide.reference(42, 12)
+            slide.reference(42, 13)
+        }
+
+        func textBox(_ id: UInt64, y: Float, style: UInt64, storage: UInt64) {
+            add(id, KeynoteType.shapeInfo) { info in
+                info.message(1) { shape in
+                    shape.message(1) { $0.message(1) { $0.geometry(x: 100, y: y, width: 600, height: 100) } }
+                    shape.reference(2, style)
+                }
+                info.reference(4, storage)
+            }
+        }
+        textBox(12, y: 100, style: 20, storage: 30)
+        textBox(13, y: 400, style: 21, storage: 31)
+
+        add(20, KeynoteType.textShapeStyle) { style in
+            style.message(1) { $0.message(11) { $0.message(5) { $0.float(1, 0.4) } } }
+        }
+        add(21, KeynoteType.textShapeStyle) { style in
+            style.message(1) { $0.message(11) { $0.message(5) { _ in } } }
+        }
+
+        func storage(_ id: UInt64, _ text: String, style: UInt64) {
+            add(id, KeynoteType.storage) { storage in
+                storage.string(3, text)
+                storage.message(5) { $0.message(1) { entry in
+                    entry.varint(1, 0)
+                    entry.reference(2, style)
+                } }
+            }
+        }
+        storage(30, "Outlined", style: 40)
+        storage(31, "Stroked", style: 41)
+
+        add(40, KeynoteType.paragraphStyle) { style in
+            style.message(11) { characters in
+                characters.float(3, 40)
+                characters.message(18) { $0.color(1, 0, 0) }
+                characters.message(21) { shadow in
+                    shadow.message(1) { $0.color(0, 0, 0) }
+                    shadow.float(2, 315)
+                    shadow.float(3, 4)
+                    shadow.varint(4, 2)
+                    shadow.float(5, 0.5)
+                    shadow.varint(6, 1)
+                }
+            }
+        }
+        add(41, KeynoteType.paragraphStyle) { style in
+            style.message(11) { characters in
+                characters.float(3, 20)
+                characters.string(5, "OpenSans-Light")
+                characters.message(44) { stroke in
+                    stroke.message(1) { $0.color(0, 0, 1) }
+                    stroke.float(2, 2)
+                }
+            }
+        }
+
+        return try ZipArchive.archive(entries: [("Index/Document.iwa", iwa(objects))])
+    }
+}
