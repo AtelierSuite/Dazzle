@@ -312,6 +312,8 @@ struct RunProperties: Equatable, Hashable, Sendable {
     var baseline: Int?
     /// `all` or `small` capitals.
     var capitalization: String?
+    /// A line drawn around each letter.
+    var outline: TextOutline?
     /// Where clicking the text goes. Never inherited.
     var link: Hyperlink?
 
@@ -339,6 +341,7 @@ struct RunProperties: Equatable, Hashable, Sendable {
         }
         latinFont = element.firstChild(named: "latin")?.attribute("typeface")
         eastAsianFont = element.firstChild(named: "ea")?.attribute("typeface")
+        outline = element.firstChild(named: "ln").map(TextOutline.init(element:))
     }
 
     /// Values left unsaid here are taken from `base`.
@@ -354,7 +357,32 @@ struct RunProperties: Equatable, Hashable, Sendable {
         result.eastAsianFont = eastAsianFont ?? base.eastAsianFont
         result.baseline = baseline ?? base.baseline
         result.capitalization = capitalization ?? base.capitalization
+        result.outline = outline ?? base.outline
         return result
+    }
+}
+
+/// `a:ln` in run properties: a line around each letter, or none, which
+/// takes away one the text would inherit.
+enum TextOutline: Equatable, Hashable, Sendable {
+    case none
+    /// Width in EMU, centred on the letter's edge.
+    case line(width: Int, color: DrawingColor)
+
+    init(element: XMLElement) {
+        if let color = DrawingColor.first(in: element.firstChild(named: "solidFill")) {
+            // PowerPoint outlines text three quarters of a point wide unless told otherwise.
+            self = .line(width: element.attribute("w").flatMap(Int.init) ?? 9_525, color: color)
+        } else {
+            self = .none
+        }
+    }
+
+    var xml: String {
+        switch self {
+        case .none: "<a:ln><a:noFill/></a:ln>"
+        case .line(let width, let color): "<a:ln w=\"\(width)\"><a:solidFill>\(color.xml)</a:solidFill></a:ln>"
+        }
     }
 }
 

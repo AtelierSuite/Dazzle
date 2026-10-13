@@ -254,6 +254,8 @@ struct TextRenderer {
     private static let superscriptKey = NSAttributedString.Key(kCTSuperscriptAttributeName as String)
     private static let strikeKey = NSAttributedString.Key("DazzleStrikethrough")
     private static let linkKey = NSAttributedString.Key("DazzleLink")
+    private static let strokeWidthKey = NSAttributedString.Key(kCTStrokeWidthAttributeName as String)
+    private static let strokeColorKey = NSAttributedString.Key(kCTStrokeColorAttributeName as String)
 
     /// A link riding on the text it belongs to.
     private final class LinkBox: NSObject {
@@ -355,10 +357,12 @@ struct TextRenderer {
             }
             // A paragraph not yet built in keeps its place, bullet and all, unseen.
             if let opacity = paragraphOpacity[index], opacity < 1, range.length > 0 {
-                result.enumerateAttribute(Self.colorKey, in: range) { value, subrange, _ in
-                    guard let value, CFGetTypeID(value as CFTypeRef) == CGColor.typeID else { return }
-                    let color = value as! CGColor // swiftlint:disable:this force_cast
-                    result.addAttribute(Self.colorKey, value: color.copy(alpha: color.alpha * opacity) ?? color, range: subrange)
+                for key in [Self.colorKey, Self.strokeColorKey] {
+                    result.enumerateAttribute(key, in: range) { value, subrange, _ in
+                        guard let value, CFGetTypeID(value as CFTypeRef) == CGColor.typeID else { return }
+                        let color = value as! CGColor // swiftlint:disable:this force_cast
+                        result.addAttribute(key, value: color.copy(alpha: color.alpha * opacity) ?? color, range: subrange)
+                    }
                 }
             }
             if range.length > 0 {
@@ -394,6 +398,11 @@ struct TextRenderer {
         }
         if let baseline = run.baseline, baseline != 0 {
             attributes[Self.superscriptKey] = NSNumber(value: baseline > 0 ? 1 : -1)
+        }
+        if case .line(let width, let outlineColor) = run.outline, width > 0 {
+            // CoreText strokes by a percentage of the font size; negative fills the letters too.
+            attributes[Self.strokeWidthKey] = NSNumber(value: -EMU.points(width) / Double(size) * 100)
+            attributes[Self.strokeColorKey] = (colorOverride ?? style.color(outlineColor)).cgColor
         }
         return attributes
     }
