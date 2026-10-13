@@ -173,13 +173,22 @@ struct TextRenderer {
             let bounds = CGRect(x: baseline.x, y: baseline.y - ascent, width: width, height: ascent + descent)
             paragraphs[index, default: []].append((line, baseline, bounds))
         }
-        for index in paragraphs.keys.sorted() {
-            guard let paragraph = paragraphs[index] else { continue }
-            let appearance = appearances[index] ?? AnimatedAppearance()
-            guard appearance.opacity > 0.001, appearance.axisScale.width != 0, appearance.axisScale.height != 0 else { continue }
-            let bounds = paragraph.reduce(CGRect.null) { $0.union($1.bounds) }
-            context.saveGState()
-            let faded = SlideRenderer.apply(appearance, to: bounds, context: context)
+        // Every paragraph's shadows go down before any paragraph's letters, so
+        // none falls across another's, each moved and faded as its paragraph is.
+        func each(_ draw: (_ paragraph: [(line: CTLine, baseline: CGPoint, bounds: CGRect)]) -> Void) {
+            for index in paragraphs.keys.sorted() {
+                guard let paragraph = paragraphs[index] else { continue }
+                let appearance = appearances[index] ?? AnimatedAppearance()
+                guard appearance.opacity > 0.001, appearance.axisScale.width != 0, appearance.axisScale.height != 0 else { continue }
+                let bounds = paragraph.reduce(CGRect.null) { $0.union($1.bounds) }
+                context.saveGState()
+                let faded = SlideRenderer.apply(appearance, to: bounds, context: context)
+                draw(paragraph)
+                if faded { context.endTransparencyLayer() }
+                context.restoreGState()
+            }
+        }
+        each { paragraph in
             let space = context.ctm
             for entry in paragraph {
                 context.saveGState()
@@ -189,6 +198,8 @@ struct TextRenderer {
                 drawShadows(of: entry.line, at: .zero, space: space, context: context)
                 context.restoreGState()
             }
+        }
+        each { paragraph in
             for entry in paragraph {
                 context.saveGState()
                 context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
@@ -199,8 +210,6 @@ struct TextRenderer {
                 drawStrikethroughs(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
             }
-            if faded { context.endTransparencyLayer() }
-            context.restoreGState()
         }
     }
 
