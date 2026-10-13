@@ -10,6 +10,8 @@ struct DeckView: View {
     @State private var state = EditorState()
     @State private var bottomToolbarInset: CGFloat = 0
     @State private var history = DeckHistory()
+    /// The presentation an edit Keynote can't keep was just taken back to.
+    @State private var undoneTo: Presentation?
     /// Tells this window's slideshow apart from another window's.
     @State private var editorID = UUID()
     @Environment(\.undoManager) private var undoManager
@@ -124,7 +126,19 @@ struct DeckView: View {
         .onDisappear { session.withdraw(editorID) }
         .onChange(of: undoManager) { _, _ in attachHistory() }
         .onChange(of: document.presentation) { old, new in
-            history.record(from: old, to: new)
+            if let undoneTo, undoneTo == new {
+                self.undoneTo = nil
+            } else if new.keynoteSource != nil, !KeynoteEditor.canSave(new) {
+                // A Keynote document is saved into itself, so an edit Keynote
+                // can't keep is taken back at once rather than left to fail
+                // every save after it.
+                undoneTo = old
+                document.presentation = old
+                state.errorMessage = String(localized: "Error.KeynoteChangeUndone")
+                return
+            } else {
+                history.record(from: old, to: new)
+            }
             state.reconcile(with: new)
         }
         .onChange(of: scenePhase) { _, phase in

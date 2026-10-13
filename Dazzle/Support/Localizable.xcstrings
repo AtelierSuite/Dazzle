@@ -6961,37 +6961,72 @@
         }
       }
     },
+    "Error.KeynoteChangeUndone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keynote can’t keep this change, so it was undone. To make changes like it, share a copy as PowerPoint and edit that."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "この変更はKeynoteに保存できないため、取り消しました。このような変更を加えるには、PowerPoint形式のコピーを共有して、そちらを編集してください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 변경 사항은 Keynote에 유지할 수 없어 실행 취소되었습니다. 이와 같은 변경을 하려면 PowerPoint 사본을 공유한 후 해당 사본을 편집하십시오."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keynote 无法保留此更改，因此已将其撤销。若要进行此类更改，请以 PowerPoint 格式共享副本并编辑该副本。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keynote 無法保留此變更，因此已將其還原。若要進行此類變更，請以 PowerPoint 格式分享副本並編輯該副本。"
+          }
+        }
+      }
+    },
     "Error.KeynoteNotWritable" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dazzle can’t save changes to a Keynote presentation. Share a copy as PowerPoint to keep them."
+            "value" : "Dazzle can’t save these changes into the Keynote presentation. Share a copy as PowerPoint to keep them."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "DazzleではKeynoteプレゼンテーションへの変更を保存できません。変更を残すには、PowerPoint形式のコピーを共有してください。"
+            "value" : "Dazzleではこれらの変更をKeynoteプレゼンテーションに保存できません。変更を残すには、PowerPoint形式のコピーを共有してください。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dazzle은 Keynote 프레젠테이션의 변경 사항을 저장할 수 없습니다. 변경 사항을 유지하려면 PowerPoint 사본을 공유하십시오."
+            "value" : "Dazzle은 이 변경 사항을 Keynote 프레젠테이션에 저장할 수 없습니다. 변경 사항을 유지하려면 PowerPoint 사본을 공유하십시오."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dazzle 无法存储对 Keynote 演示文稿的更改。若要保留更改，请以 PowerPoint 格式共享副本。"
+            "value" : "Dazzle 无法将这些更改存储到 Keynote 演示文稿中。若要保留更改，请以 PowerPoint 格式共享副本。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Dazzle 無法儲存對 Keynote 簡報的變更。若要保留變更，請以 PowerPoint 格式分享副本。"
+            "value" : "Dazzle 無法將這些變更儲存到 Keynote 簡報中。若要保留變更，請以 PowerPoint 格式分享副本。"
           }
         }
       }
