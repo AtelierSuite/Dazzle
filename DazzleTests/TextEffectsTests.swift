@@ -90,6 +90,23 @@ struct TextEffectsTests {
         #expect(properties.merged(over: inherited).outline == TextOutline.none)
     }
 
+    @Test("Gradient and patterned outlines draw in one colour, and an unfilled line inherits")
+    func outlineFills() throws {
+        func outline(_ line: String) throws -> TextOutline? {
+            let box = try #require(shapes(textBox(line)).first)
+            return try #require(box.text?.paragraphs.first?.runs.first?.properties).outline
+        }
+        #expect(try outline("""
+            <a:ln w="12700"><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="00FF00"/></a:gs>\
+            <a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst></a:gradFill></a:ln>
+            """) == .line(width: 12_700, color: .rgb(0x00FF00)))
+        #expect(try outline("""
+            <a:ln><a:pattFill prst="pct50"><a:fgClr><a:srgbClr val="FF0000"/></a:fgClr>\
+            <a:bgClr><a:srgbClr val="FFFFFF"/></a:bgClr></a:pattFill></a:ln>
+            """) == .line(width: 9_525, color: .rgb(0xFF0000)))
+        #expect(try outline("<a:ln w=\"12700\"/>") == nil)
+    }
+
     @Test("An outline thickens the letters it is drawn around")
     func outlineDrawn() throws {
         let plain = try render(shapes(textBox("<a:solidFill><a:srgbClr val=\"000000\"/></a:solidFill>")))
