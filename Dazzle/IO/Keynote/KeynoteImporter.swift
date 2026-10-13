@@ -59,7 +59,13 @@ enum KeynoteImporter {
             presentation.slides[index].areAnimationsModified = true
             presentation.slides[index].isModified = true
         }
-        presentation.keynoteSource = KeynoteSource(entries: entries, isPackage: isPackage, archive: archive, original: presentation)
+        var origins: [Slide.ID: KeynoteSlideOrigin] = [:]
+        for (index, origin) in converted.origins.enumerated() where presentation.slides.indices.contains(index) {
+            origins[presentation.slides[index].id] = origin
+        }
+        presentation.keynoteSource = KeynoteSource(
+            entries: entries, isPackage: isPackage, archive: archive, original: presentation, slides: origins
+        )
         return presentation
     }
 
@@ -111,6 +117,8 @@ enum KeynoteImporter {
         var animations: [[ShapeAnimation]]
         /// What could not be brought across.
         var omissions: Set<UnsupportedFeatureReport.Omission>
+        /// The objects each slide was converted from.
+        var origins: [KeynoteSlideOrigin] = []
     }
 
     static func convert(_ archive: KeynoteArchive, media: KeynoteMedia, fittedFrames: [[Int: EMURect]] = []) throws -> Conversion {
@@ -129,11 +137,13 @@ enum KeynoteImporter {
         var notes: [String] = []
         var omissions: Set<UnsupportedFeatureReport.Omission> = []
         var animations: [[ShapeAnimation]] = []
+        var origins: [KeynoteSlideOrigin] = []
         // A layout for each template slide in use, in order of first use.
         var layouts: [PresentationTemplate.SlidePart] = []
         var layoutPaths: [UInt64: String] = [:]
         for node in nodes.compactMap({ archive[$0] }) {
             guard let slide = archive[node.message.reference(2)] else { continue }
+            let notesStorage = archive[slide.message.reference(27)]?.message.reference(1)
             let template = archive[slide.message.reference(17)]
             var layoutPath: String?
             if let template {
@@ -176,15 +186,19 @@ enum KeynoteImporter {
             let builds = KeynoteBuilds(archive: archive).animations(slide, shapeIDs: writer.shapeIDs)
             animations.append(builds.animations)
             if builds.lost { omissions.insert(.builds) }
-            let note = archive[slide.message.reference(27)]
-            notes.append(text.plainText(archive[note?.message.reference(1)]).trimmingCharacters(in: .whitespacesAndNewlines))
+            notes.append(text.plainText(archive[notesStorage]).trimmingCharacters(in: .whitespacesAndNewlines))
+            origins.append(KeynoteSlideOrigin(
+                node: node.identifier, slide: slide.identifier,
+                drawables: Dictionary(writer.shapeIDs.map { ($1, $0) }) { first, _ in first },
+                textStorages: writer.textStorages, notesStorage: archive[notesStorage] == nil ? nil : notesStorage
+            ))
         }
         guard !slides.isEmpty else { throw KeynoteReadError.notKeynote }
         return Conversion(
             parts: PresentationTemplate.parts(
                 size: slideSize, slides: slides, layouts: layouts, media: media.parts, mediaTypes: media.contentTypes
             ),
-            notes: notes, animations: animations, omissions: omissions
+            notes: notes, animations: animations, omissions: omissions, origins: origins
         )
     }
 

@@ -10,17 +10,34 @@ final class KeynoteSource: Equatable, Sendable {
     let archive: KeynoteArchive
     /// The presentation as it was converted, which edits are measured against.
     let original: Presentation
+    /// The objects each slide was converted from.
+    let slides: [Slide.ID: KeynoteSlideOrigin]
 
     init(
-        entries: [(path: String, data: Data)], isPackage: Bool, archive: KeynoteArchive, original: Presentation
+        entries: [(path: String, data: Data)], isPackage: Bool, archive: KeynoteArchive,
+        original: Presentation, slides: [Slide.ID: KeynoteSlideOrigin]
     ) {
         self.entries = entries
         self.isPackage = isPackage
         self.archive = archive
         self.original = original
+        self.slides = slides
     }
 
     static func == (lhs: KeynoteSource, rhs: KeynoteSource) -> Bool { lhs === rhs }
+}
+
+/// The Keynote objects one slide was converted from.
+struct KeynoteSlideOrigin: Sendable {
+    /// The `KN.SlideNodeArchive` that places the slide in the show.
+    let node: UInt64
+    let slide: UInt64
+    /// Each shape's drawable, by shape id.
+    let drawables: [Int: UInt64]
+    /// The storage each shape's text came from, by shape id.
+    let textStorages: [Int: UInt64]
+    /// The storage the speaker notes came from, if the slide has one.
+    let notesStorage: UInt64?
 }
 
 /// Writes a presentation back into the Keynote document it was opened from.

@@ -70,6 +70,9 @@ struct KeynoteSlideWriter {
 
     /// The shape id each drawable was written with, for builds to name.
     private(set) var shapeIDs: [UInt64: Int] = [:]
+    /// The storage each shape's text was read from, by shape id, so that
+    /// text edited in Dazzle can be written back to it.
+    private(set) var textStorages: [Int: UInt64] = [:]
 
     mutating func drawable(_ identifier: UInt64) -> String? {
         // A drawable's first id is its own; a group's children follow it.
@@ -187,8 +190,10 @@ struct KeynoteSlideWriter {
         case "body"?: "Body"
         default: isTextBox ? "TextBox" : storage == nil ? "Shape" : "Text"
         }
+        let shapeID = nextShapeID
         let nonVisual = nonVisual(drawable, name: name)
         let textBody = textBody(storage, style: style, growsToFit: frame.growsToFit, wraps: wraps)
+        if let storage, !textBody.isEmpty { textStorages[shapeID] = storage.identifier }
         let properties = switch placeholder {
         case "body"?: "<p:cNvSpPr><a:spLocks noGrp=\"1\"/></p:cNvSpPr><p:nvPr><p:ph type=\"body\" idx=\"1\"/></p:nvPr>"
         case let type?: "<p:cNvSpPr><a:spLocks noGrp=\"1\"/></p:cNvSpPr><p:nvPr><p:ph type=\"\(type)\"/></p:nvPr>"
