@@ -269,12 +269,19 @@ struct Reflection: Equatable, Hashable, Sendable {
     var endPosition: Double
     /// EMU between the shape and its reflection.
     var distance: Int
+    /// Whether the reflection turns with the shape, along its bottom edge,
+    /// rather than lying upright below the space the turned shape covers.
+    var rotatesWithShape: Bool
 
-    init(startOpacity: Double, endOpacity: Double = 0, endPosition: Double, distance: Int = 0) {
+    init(
+        startOpacity: Double, endOpacity: Double = 0, endPosition: Double, distance: Int = 0,
+        rotatesWithShape: Bool = true
+    ) {
         self.startOpacity = startOpacity
         self.endOpacity = endOpacity
         self.endPosition = endPosition
         self.distance = distance
+        self.rotatesWithShape = rotatesWithShape
     }
 
     init?(element: XMLElement?) {
@@ -286,12 +293,14 @@ struct Reflection: Equatable, Hashable, Sendable {
         endOpacity = fraction("endA", 0)
         endPosition = fraction("endPos", 100_000)
         distance = element.attribute("dist").flatMap(Int.init) ?? 0
+        rotatesWithShape = element.attribute("rotWithShape").map { $0 == "1" || $0 == "true" } ?? true
     }
 
     var xml: String {
         func value(_ fraction: Double) -> Int { Int((min(max(fraction, 0), 1) * 100_000).rounded()) }
         return "<a:reflection blurRad=\"0\" stA=\"\(value(startOpacity))\" endA=\"\(value(endOpacity))\" "
-            + "endPos=\"\(value(endPosition))\" dist=\"\(distance)\" dir=\"5400000\" sy=\"-100000\" algn=\"bl\" rotWithShape=\"0\"/>"
+            + "endPos=\"\(value(endPosition))\" dist=\"\(distance)\" dir=\"5400000\" sy=\"-100000\" algn=\"bl\" "
+            + "rotWithShape=\"\(rotatesWithShape ? 1 : 0)\"/>"
     }
 }
 

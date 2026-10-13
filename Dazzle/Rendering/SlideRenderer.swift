@@ -193,7 +193,9 @@ struct SlideRenderer {
     }
 
     /// The shape again, turned upside down below its bottom edge and faded
-    /// out from where it meets the shape.
+    /// out from where it meets the shape. A turned shape's reflection turns
+    /// with it, along the shape's own bottom edge, or stands upright below
+    /// the space the turned shape covers.
     private func drawReflection(
         _ reflection: Reflection, of shape: SlideShape, sources: [SlideShape], style: SlideStyleContext, context: CGContext,
         groupFill: SlideStyleContext.ResolvedFill?, appearance: AnimatedAppearance?, paragraphAppearances: [Int: AnimatedAppearance]
@@ -202,26 +204,43 @@ struct SlideRenderer {
         guard frame.height > 0, reflection.startOpacity > 0 || reflection.endOpacity > 0 else { return }
         context.saveGState()
         defer { context.restoreGState() }
-        context.translateBy(x: 0, y: 2 * frame.maxY + EMU.points(reflection.distance))
-        context.scaleBy(x: 1, y: -1)
-        context.beginTransparencyLayer(auxiliaryInfo: nil)
-        draw(
-            shape, sources: sources, style: style, context: context, groupFill: groupFill,
-            appearance: appearance, paragraphAppearances: paragraphAppearances
-        )
-        // Upside down, the shape's bottom edge is the one nearest the reflection's start.
-        let colors = [
-            CGColor(gray: 0, alpha: reflection.startOpacity), CGColor(gray: 0, alpha: reflection.endOpacity),
-        ] as CFArray
-        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceGray(), colors: colors, locations: [0, 1]) {
-            context.setBlendMode(.destinationIn)
-            context.drawLinearGradient(
-                gradient, start: CGPoint(x: frame.midX, y: frame.maxY),
-                end: CGPoint(x: frame.midX, y: frame.maxY - frame.height * max(reflection.endPosition, 0.001)),
-                options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-            )
+        var reflected = shape
+        var bounds = frame
+        if shape.rotation != 0 {
+            let turn = CGAffineTransform(translationX: frame.midX, y: frame.midY)
+                .rotated(by: shape.rotation * .pi / 180)
+                .translatedBy(x: -frame.midX, y: -frame.midY)
+            if reflection.rotatesWithShape {
+                context.concatenate(turn)
+                reflected.rotation = 0
+            } else {
+                bounds = frame.applying(turn)
+            }
         }
-        context.endTransparencyLayer()
+        context.translateBy(x: 0, y: 2 * bounds.maxY + EMU.points(reflection.distance))
+        context.scaleBy(x: 1, y: -1)
+
+        func paint(_ target: CGContext) {
+            target.beginTransparencyLayer(auxiliaryInfo: nil)
+            draw(
+                reflected, sources: sources, style: style, context: target, groupFill: groupFill,
+                appearance: appearance, paragraphAppearances: paragraphAppearances
+            )
+            // Upside down, the shape's bottom edge is the one nearest the reflection's start.
+            let colors = [
+                CGColor(gray: 0, alpha: reflection.startOpacity), CGColor(gray: 0, alpha: reflection.endOpacity),
+            ] as CFArray
+            if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceGray(), colors: colors, locations: [0, 1]) {
+                target.setBlendMode(.destinationIn)
+                target.drawLinearGradient(
+                    gradient, start: CGPoint(x: bounds.midX, y: bounds.maxY),
+                    end: CGPoint(x: bounds.midX, y: bounds.maxY - bounds.height * max(reflection.endPosition, 0.001)),
+                    options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+                )
+            }
+            target.endTransparencyLayer()
+        }
+        paint(context)
     }
 
     /// Moves, sizes, turns, wipes and fades what is drawn next as an

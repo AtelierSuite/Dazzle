@@ -890,7 +890,7 @@ struct KeynoteTextEffectTests {
 
     @Test("A style's reflection fades out halfway down; an empty one is none")
     func reflection() throws {
-        #expect(try shape("Outlined").reflection == Reflection(startOpacity: 0.4, endPosition: 0.5))
+        #expect(try shape("Outlined").reflection == Reflection(startOpacity: 0.4, endPosition: 0.5, rotatesWithShape: false))
         #expect(try shape("Stroked").reflection == nil)
     }
 

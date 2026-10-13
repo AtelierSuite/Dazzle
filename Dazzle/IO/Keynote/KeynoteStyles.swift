@@ -223,12 +223,12 @@ struct KeynoteStyles {
     }
 
     /// A `TSD.ReflectionArchive`: Keynote fades its reflections out halfway
-    /// down from the opacity it gives them. The shape's own opacity is in
-    /// what is reflected already.
+    /// down from the opacity it gives them, and stands them upright below
+    /// turned shapes. The shape's own opacity is in what is reflected already.
     private static func reflection(_ reflection: ProtoMessage?) -> String? {
         // Styles with no reflection keep an empty one.
         guard let start = reflection?.float(1), start > 0 else { return nil }
-        return Reflection(startOpacity: start, endPosition: 0.5).xml
+        return Reflection(startOpacity: start, endPosition: 0.5, rotatesWithShape: false).xml
     }
 }
 
