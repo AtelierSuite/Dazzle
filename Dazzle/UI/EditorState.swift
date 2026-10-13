@@ -1252,6 +1252,15 @@ final class EditorState {
         }
     }
 
+    func setReflection(_ reflection: Reflection?, in presentation: inout Presentation) {
+        updateSelectedShapes(edits: [.effects], in: &presentation) { shape in
+            switch shape.kind {
+            case .shape, .connector, .picture: shape.reflection = reflection
+            default: break
+            }
+        }
+    }
+
     /// Fills the selected shapes with a picture, added to the package.
     func setFillPicture(_ media: PreparedMedia, tiled: Bool, in presentation: inout Presentation) {
         let path = addMedia(media, to: &presentation)

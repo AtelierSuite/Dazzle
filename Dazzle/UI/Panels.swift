@@ -243,7 +243,9 @@ struct FormatPanel: View {
             outlineSection(shape)
         }
         switch shape.kind {
-        case .shape, .connector, .picture: shadowSection(shape)
+        case .shape, .connector, .picture:
+            shadowSection(shape)
+            reflectionSection(shape)
         default: EmptyView()
         }
         Section("Format.Section.Arrange") {
@@ -439,6 +441,49 @@ struct FormatPanel: View {
             .accessibilityIdentifier("shadow")
         }
     }
+
+    private func reflectionSection(_ shape: SlideShape) -> some View {
+        Section("Format.Section.Reflection") {
+            Picker("Format.Reflection", selection: Binding(
+                get: {
+                    Self.reflections.first { $0.reflection == shape.reflection }?.id
+                        ?? (shape.reflection == nil ? "none" : "custom")
+                },
+                set: { id in
+                    guard let choice = Self.reflections.first(where: { $0.id == id }) else { return }
+                    state.setReflection(choice.reflection, in: &presentation)
+                }
+            )) {
+                ForEach(Self.reflections, id: \.id) { choice in
+                    Text(choice.label).tag(choice.id)
+                }
+                if shape.reflection != nil, !Self.reflections.contains(where: { $0.reflection == shape.reflection }) {
+                    Text("Reflection.Custom").tag("custom")
+                }
+            }
+            .accessibilityIdentifier("reflection")
+        }
+    }
+
+    private struct ReflectionChoice {
+        let id: String
+        let label: LocalizedStringKey
+        let reflection: Reflection?
+    }
+
+    /// PowerPoint's touching reflections.
+    private static let reflections = [
+        ReflectionChoice(id: "none", label: "Reflection.None", reflection: nil),
+        ReflectionChoice(id: "tight", label: "Reflection.Tight", reflection: Reflection(
+            startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.35, blur: 6_350, rotatesWithShape: false
+        )),
+        ReflectionChoice(id: "half", label: "Reflection.Half", reflection: Reflection(
+            startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.55, blur: 6_350, rotatesWithShape: false
+        )),
+        ReflectionChoice(id: "full", label: "Reflection.Full", reflection: Reflection(
+            startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.9, blur: 6_350, rotatesWithShape: false
+        )),
+    ]
 
     private struct ShadowChoice {
         let id: String
