@@ -372,6 +372,9 @@ struct KeynoteText {
         if let color = nullable(6, { $0.message(7) }) {
             children += KeynoteStyles.solidFill(color) ?? ""
         }
+        if let shadow = KeynoteStyles.shadow(nullable(20, { $0.message(21) }), opacity: 1) {
+            children += "<a:effectLst>\(shadow)</a:effectLst>"
+        }
         if let highlight = nullable(25, { $0.message(26) }),
            let color = KeynoteStyles.colorXML(highlight) {
             children += "<a:highlight>\(color)</a:highlight>"
