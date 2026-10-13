@@ -275,11 +275,34 @@ struct ShapeWriter {
     /// none at all, which outranks any its style would give it.
     private func writeEffects(of shape: SlideShape, into element: XMLElement) {
         guard let properties = properties(of: element) else { return }
-        for child in properties.children where ["effectLst", "effectDag"].contains(child.name) { properties.removeChild(child) }
-        let list = (shape.shadow?.xml ?? "") + (shape.reflection?.xml ?? "")
-        guard let effects = fragment("<a:effectLst>\(list)</a:effectLst>") else { return }
-        let before = properties.children.firstIndex { ["scene3d", "sp3d", "extLst"].contains($0.name) }
-        properties.insertChild(effects, at: before ?? properties.children.count)
+        for child in properties.children where child.name == "effectDag" { properties.removeChild(child) }
+        // Effects we do not model, such as a glow or soft edges, stay as they were.
+        guard let effects = properties.firstChild(named: "effectLst") ?? fragment("<a:effectLst/>") else { return }
+        if effects.parent !== properties {
+            let before = properties.children.firstIndex { ["scene3d", "sp3d", "extLst"].contains($0.name) }
+            properties.insertChild(effects, at: before ?? properties.children.count)
+        }
+        // A shadow or reflection that reads back as the model has it keeps its own spelling.
+        if let old = effects.firstChild(named: "outerShdw"), Shadow(element: old) != shape.shadow {
+            effects.removeChild(old)
+        }
+        if let shadow = shape.shadow {
+            for old in effects.children(named: "prstShdw") { effects.removeChild(old) }
+            if effects.firstChild(named: "outerShdw") == nil, let new = fragment(shadow.xml) {
+                effects.insertChild(new, at: effects.children.count)
+            }
+        }
+        if let old = effects.firstChild(named: "reflection"), Reflection(element: old) != shape.reflection {
+            effects.removeChild(old)
+        }
+        if let reflection = shape.reflection, effects.firstChild(named: "reflection") == nil,
+            let new = fragment(reflection.xml) {
+            effects.insertChild(new, at: effects.children.count)
+        }
+        let order = ["blur", "fillOverlay", "glow", "innerShdw", "outerShdw", "prstShdw", "reflection", "softEdge"]
+        effects.reorderChildren(effects.children.sorted {
+            (order.firstIndex(of: $0.name) ?? order.count) < (order.firstIndex(of: $1.name) ?? order.count)
+        })
     }
 
     /// Writes the outline's fill, width, dash and arrowheads over what the
