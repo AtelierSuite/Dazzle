@@ -359,6 +359,16 @@ struct KeynoteText {
         default: break
         }
 
+        if let stroke = nullable(43, { $0.message(44) }) {
+            // Newer documents stroke text as they do shapes, an empty pattern drawing nothing.
+            let line = KeynoteStyles.line(stroke, head: nil, tail: nil, opacity: 1)
+            if !line.contains("noFill") { children += line }
+        } else if let outline = nullable(17, { $0.message(18) }), let color = KeynoteStyles.solidFill(outline) {
+            // An outline given a colour but no width is drawn as the Mac's
+            // Outline style draws it, 3% of the text size wide.
+            let width = property { $0.float(19) }.flatMap { $0 > 0 ? $0 : nil } ?? size * 0.03
+            children += "<a:ln w=\"\(KeynoteUnits.emu(width))\">\(color)</a:ln>"
+        }
         if let color = nullable(6, { $0.message(7) }) {
             children += KeynoteStyles.solidFill(color) ?? ""
         }
