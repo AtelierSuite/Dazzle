@@ -105,6 +105,7 @@ struct SlideRenderer {
         paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
         guard !shape.isHidden else { return }
+        if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
         if let reflection = shape.reflection {
             var plain = shape
             plain.reflection = nil
@@ -118,7 +119,6 @@ struct SlideRenderer {
             return
         }
         let frame = shape.frame.points
-        if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
         context.saveGState()
         defer { context.restoreGState() }
         let isFaded = appearance.map { Self.apply($0, to: frame, context: context) } ?? false
