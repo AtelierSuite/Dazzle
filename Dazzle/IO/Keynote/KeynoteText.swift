@@ -408,8 +408,50 @@ struct KeynoteText {
             } else {
                 result = (CTFontCopyFullName(font) as String, false, false)
             }
+        } else {
+            result = Self.family(of: postScriptName)
         }
         fontCache[postScriptName] = result
+        return result
+    }
+
+    /// The family a PostScript name such as `OpenSans-SemiboldItalic` most
+    /// likely belongs to, for a font this device doesn't have: its words
+    /// spaced out, bold and italic taken as flags, other weights kept in the name.
+    static func family(of postScriptName: String) -> (typeface: String, bold: Bool, italic: Bool) {
+        let parts = postScriptName.split(separator: "-", maxSplits: 1).map(String.init)
+        var name = parts[0]
+        for suffix in ["PSMT", "MT", "PS"] where name.hasSuffix(suffix) && name.count > suffix.count + 2 {
+            name.removeLast(suffix.count)
+            break
+        }
+        var style = parts.count > 1 ? parts[1] : ""
+        let italic = ["Italic", "Oblique", "It"].contains { style.hasSuffix($0) }
+        for suffix in ["Italic", "Oblique", "It"] where style.hasSuffix(suffix) {
+            style.removeLast(suffix.count)
+            break
+        }
+        var bold = false
+        if style == "Bold" || style == "Bd" {
+            bold = true
+            style = ""
+        }
+        if ["Regular", "Roman", "Book", "Normal", "Plain"].contains(style) { style = "" }
+        let words = spaced(name) + (style.isEmpty ? "" : " " + spaced(style))
+        return (words, bold, italic)
+    }
+
+    /// `SourceCodePro` as `Source Code Pro`.
+    private static func spaced(_ name: String) -> String {
+        var result = ""
+        var previous: Character?
+        for character in name {
+            if let previous, character.isUppercase, previous.isLowercase || previous.isNumber {
+                result.append(" ")
+            }
+            result.append(character)
+            previous = character
+        }
         return result
     }
 }
