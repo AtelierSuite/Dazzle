@@ -1367,6 +1367,7 @@ extension SlideShape {
         copy.fill = shape.fill
         copy.line = shape.line
         copy.shadow = shape.shadow
+        copy.reflection = shape.reflection
         copy.style = shape.style
         copy.text = shape.text
         copy.textFrame = shape.textFrame

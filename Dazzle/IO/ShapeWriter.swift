@@ -36,8 +36,8 @@ struct ShapeWriter {
         if edits.contains(.table), case .table(let table) = shape.kind {
             writeTable(table, into: element)
         }
-        if edits.contains(.effects), shape.source != nil || shape.shadow != nil {
-            writeShadow(shape.shadow, into: element)
+        if edits.contains(.effects), shape.source != nil || shape.shadow != nil || shape.reflection != nil {
+            writeEffects(of: shape, into: element)
         }
         if edits.contains(.picture), case .picture(let picture) = shape.kind {
             writePicture(picture, into: element)
@@ -271,12 +271,13 @@ struct ShapeWriter {
         properties.insertChild(new, at: (after ?? -1) + 1)
     }
 
-    /// Replaces the shape's effects with its shadow, or with none at all,
-    /// which outranks any its style would give it.
-    private func writeShadow(_ shadow: Shadow?, into element: XMLElement) {
+    /// Replaces the shape's effects with its shadow and reflection, or with
+    /// none at all, which outranks any its style would give it.
+    private func writeEffects(of shape: SlideShape, into element: XMLElement) {
         guard let properties = properties(of: element) else { return }
         for child in properties.children where ["effectLst", "effectDag"].contains(child.name) { properties.removeChild(child) }
-        guard let effects = fragment("<a:effectLst>\(shadow?.xml ?? "")</a:effectLst>") else { return }
+        let list = (shape.shadow?.xml ?? "") + (shape.reflection?.xml ?? "")
+        guard let effects = fragment("<a:effectLst>\(list)</a:effectLst>") else { return }
         let before = properties.children.firstIndex { ["scene3d", "sp3d", "extLst"].contains($0.name) }
         properties.insertChild(effects, at: before ?? properties.children.count)
     }

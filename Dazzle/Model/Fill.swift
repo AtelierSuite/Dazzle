@@ -259,3 +259,39 @@ struct Shadow: Equatable, Hashable, Sendable {
     }
 }
 
+/// `a:reflection`: the shape mirrored below its bottom edge, fading as it goes.
+struct Reflection: Equatable, Hashable, Sendable {
+    /// Opacity where the reflection meets the shape.
+    var startOpacity: Double
+    /// Opacity where the fade ends, and beyond.
+    var endOpacity: Double
+    /// Where the fade ends, as a fraction of the shape's height.
+    var endPosition: Double
+    /// EMU between the shape and its reflection.
+    var distance: Int
+
+    init(startOpacity: Double, endOpacity: Double = 0, endPosition: Double, distance: Int = 0) {
+        self.startOpacity = startOpacity
+        self.endOpacity = endOpacity
+        self.endPosition = endPosition
+        self.distance = distance
+    }
+
+    init?(element: XMLElement?) {
+        guard let element else { return nil }
+        func fraction(_ key: String, _ fallback: Int) -> Double {
+            Double(element.attribute(key).flatMap(Int.init) ?? fallback) / 100_000
+        }
+        startOpacity = fraction("stA", 100_000)
+        endOpacity = fraction("endA", 0)
+        endPosition = fraction("endPos", 100_000)
+        distance = element.attribute("dist").flatMap(Int.init) ?? 0
+    }
+
+    var xml: String {
+        func value(_ fraction: Double) -> Int { Int((min(max(fraction, 0), 1) * 100_000).rounded()) }
+        return "<a:reflection blurRad=\"0\" stA=\"\(value(startOpacity))\" endA=\"\(value(endOpacity))\" "
+            + "endPos=\"\(value(endPosition))\" dist=\"\(distance)\" dir=\"5400000\" sy=\"-100000\" algn=\"bl\" rotWithShape=\"0\"/>"
+    }
+}
+

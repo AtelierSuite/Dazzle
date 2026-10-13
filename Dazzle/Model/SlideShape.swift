@@ -20,7 +20,7 @@ struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
         case picture
         /// The description read out in place of the shape.
         case altText
-        /// Its shadow.
+        /// Its shadow and reflection.
         case effects
         /// Where clicking it goes.
         case link
@@ -108,6 +108,8 @@ struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
     var line: LineStyle?
     /// A shadow the shape's own properties cast.
     var shadow: Shadow?
+    /// A reflection the shape's own properties cast.
+    var reflection: Reflection?
     var style: StyleReferences?
     var text: TextBody?
     /// For SmartArt shapes, where the text goes when it is not the whole shape.

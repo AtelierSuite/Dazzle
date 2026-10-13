@@ -104,6 +104,18 @@ struct SlideRenderer {
         paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
         guard !shape.isHidden else { return }
+        if let reflection = shape.reflection {
+            var plain = shape
+            plain.reflection = nil
+            draw(
+                plain, sources: sources, style: style, context: context, groupFill: groupFill,
+                appearance: appearance, paragraphAppearances: paragraphAppearances
+            )
+            plain.shadow = nil
+            drawReflection(reflection, of: plain, sources: sources, style: style, context: context, groupFill: groupFill,
+                           appearance: appearance, paragraphAppearances: paragraphAppearances)
+            return
+        }
         let frame = shape.frame.points
         if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
         context.saveGState()
@@ -166,6 +178,38 @@ struct SlideRenderer {
                 paragraphAppearances: paragraphAppearances, colorChanges: appearance?.colors ?? [:]
             )
         }
+    }
+
+    /// The shape again, turned upside down below its bottom edge and faded
+    /// out from where it meets the shape.
+    private func drawReflection(
+        _ reflection: Reflection, of shape: SlideShape, sources: [SlideShape], style: SlideStyleContext, context: CGContext,
+        groupFill: SlideStyleContext.ResolvedFill?, appearance: AnimatedAppearance?, paragraphAppearances: [Int: AnimatedAppearance]
+    ) {
+        let frame = shape.frame.points
+        guard frame.height > 0, reflection.startOpacity > 0 || reflection.endOpacity > 0 else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.translateBy(x: 0, y: 2 * frame.maxY + EMU.points(reflection.distance))
+        context.scaleBy(x: 1, y: -1)
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        draw(
+            shape, sources: sources, style: style, context: context, groupFill: groupFill,
+            appearance: appearance, paragraphAppearances: paragraphAppearances
+        )
+        // Upside down, the shape's bottom edge is the one nearest the reflection's start.
+        let colors = [
+            CGColor(gray: 0, alpha: reflection.startOpacity), CGColor(gray: 0, alpha: reflection.endOpacity),
+        ] as CFArray
+        if let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceGray(), colors: colors, locations: [0, 1]) {
+            context.setBlendMode(.destinationIn)
+            context.drawLinearGradient(
+                gradient, start: CGPoint(x: frame.midX, y: frame.maxY),
+                end: CGPoint(x: frame.midX, y: frame.maxY - frame.height * max(reflection.endPosition, 0.001)),
+                options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+            )
+        }
+        context.endTransparencyLayer()
     }
 
     /// Moves, sizes, turns, wipes and fades what is drawn next as an
