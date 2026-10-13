@@ -56,3 +56,60 @@ struct StoredArchiveTests {
         #expect(read.map(\.data) == entries.map(\.1))
     }
 }
+
+@Suite("Keynote documents written back")
+struct KeynoteDocumentWritingTests {
+    /// The fixture deck with the properties Keynote keeps beside the index.
+    static func deck() throws -> Data {
+        var entries = try ZipArchive.orderedEntries(in: KeynoteFixture.deck())
+        let properties: [String: Any] = [
+            "versionUUID": "AAAA", "revision": "0::AAAA", "documentUUID": "DOC", "fileFormatVersion": "14.0.1",
+        ]
+        entries.append(("Metadata/Properties.plist", try PropertyListSerialization.data(fromPropertyList: properties, format: .binary, options: 0)))
+        entries.append(("preview.jpg", Data([0xFF, 0xD8])))
+        return try ZipArchive.archive(entries: entries, compresses: false)
+    }
+
+    @Test("A deck nothing was changed in keeps every file, stored, with a new version")
+    func unchanged() throws {
+        let original = try Self.deck()
+        let presentation = try KeynoteImporter.presentation(from: original)
+        let wrapper = try KeynoteWriter.fileWrapper(for: presentation)
+        let written = try #require(wrapper.regularFileContents)
+        let before = try ZipArchive.orderedEntries(in: original)
+        let after = try ZipArchive.orderedEntries(in: written)
+        #expect(after.map(\.path) == before.map(\.path))
+        for (old, new) in zip(before, after) where old.path != "Metadata/Properties.plist" {
+            #expect(old.data == new.data, "\(old.path)")
+        }
+        let properties = try #require(
+            PropertyListSerialization.propertyList(from: after.first { $0.path == "Metadata/Properties.plist" }!.data, format: nil)
+                as? [String: Any]
+        )
+        let version = try #require(properties["versionUUID"] as? String)
+        #expect(version != "AAAA")
+        #expect(properties["revision"] as? String == "0::" + version)
+        #expect(properties["documentUUID"] as? String == "DOC")
+        #expect(try KeynoteImporter.presentation(from: written).slides.count == presentation.slides.count)
+    }
+
+    @Test("A package deck is written back as a package")
+    func package() throws {
+        let entries = try ZipArchive.orderedEntries(in: Self.deck())
+        var children: [String: FileWrapper] = [:]
+        var index: [String: FileWrapper] = [:]
+        for (path, data) in entries {
+            if path.hasPrefix("Index/") {
+                index[String(path.dropFirst(6))] = FileWrapper(regularFileWithContents: data)
+            } else if !path.contains("/") {
+                children[path] = FileWrapper(regularFileWithContents: data)
+            }
+        }
+        children["Index"] = FileWrapper(directoryWithFileWrappers: index)
+        let presentation = try KeynoteImporter.presentation(from: FileWrapper(directoryWithFileWrappers: children))
+        let written = try KeynoteWriter.fileWrapper(for: presentation)
+        #expect(written.isDirectory)
+        #expect(Set((written.fileWrappers?["Index"]?.fileWrappers ?? [:]).keys) == Set(index.keys))
+        #expect(try KeynoteImporter.presentation(from: written).slides.count == presentation.slides.count)
+    }
+}

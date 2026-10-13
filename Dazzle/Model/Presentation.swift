@@ -27,6 +27,8 @@ struct Presentation: Equatable, Sendable {
     /// last, until stopped.
     var loopsSlideshow = false
     var isShowSettingsModified = false
+    /// The Keynote document the presentation was converted from, if it was.
+    var keynoteSource: KeynoteSource?
 
     var unsupportedFeatures: UnsupportedFeatureReport { package.unsupportedFeatures }
 

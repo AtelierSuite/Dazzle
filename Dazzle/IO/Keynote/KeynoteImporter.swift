@@ -10,8 +10,8 @@ import Foundation
 enum KeynoteImporter {
     static func presentation(from data: Data) throws -> Presentation {
         // A file that isn't a ZIP archive isn't a Keynote document either.
-        guard let entries = try? ZipArchive.entries(in: data) else { throw KeynoteReadError.notKeynote }
-        return try presentation(fromEntries: entries)
+        guard let entries = try? ZipArchive.orderedEntries(in: data) else { throw KeynoteReadError.notKeynote }
+        return try presentation(fromEntries: entries, isPackage: false)
     }
 
     /// Reads a `.key` package directory.
@@ -19,25 +19,28 @@ enum KeynoteImporter {
         if wrapper.isRegularFile, let data = wrapper.regularFileContents {
             return try presentation(from: data)
         }
-        var entries: [String: Data] = [:]
+        var entries: [(path: String, data: Data)] = []
         func collect(_ wrapper: FileWrapper, prefix: String) {
-            for (name, child) in wrapper.fileWrappers ?? [:] {
+            for (name, child) in (wrapper.fileWrappers ?? [:]).sorted(by: { $0.key < $1.key }) {
                 if child.isDirectory {
                     collect(child, prefix: prefix + name + "/")
                 } else if let contents = child.regularFileContents {
-                    entries[prefix + name] = contents
+                    entries.append((prefix + name, contents))
                 }
             }
         }
         collect(wrapper, prefix: "")
-        return try presentation(fromEntries: entries)
+        return try presentation(fromEntries: entries, isPackage: true)
     }
 
     /// Keynote saves no height for text that sets its own, and only laying
     /// the text out can tell it. So the deck is converted once, read, its
     /// growing text measured, and converted again with those heights.
-    static func presentation(fromEntries entries: [String: Data]) throws -> Presentation {
-        let archive = try KeynoteArchive(entries: entries)
+    ///
+    /// The presentation keeps the document it came from, so that it can be
+    /// written back.
+    static func presentation(fromEntries entries: [(path: String, data: Data)], isPackage: Bool) throws -> Presentation {
+        let archive = try KeynoteArchive(entries: Dictionary(entries.map { ($0.path, $0.data) }) { _, last in last })
         let media = KeynoteMedia(archive: archive)
         var converted = try convert(archive, media: media)
         var presentation = try PPTXReader.presentation(fromParts: converted.parts)
@@ -56,6 +59,7 @@ enum KeynoteImporter {
             presentation.slides[index].areAnimationsModified = true
             presentation.slides[index].isModified = true
         }
+        presentation.keynoteSource = KeynoteSource(entries: entries, isPackage: isPackage, archive: archive, original: presentation)
         return presentation
     }
 
