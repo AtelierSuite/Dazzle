@@ -155,6 +155,28 @@ struct TextEffectsTests {
         #expect(read.slides[0].shapes.first?.shadow == box.shadow)
     }
 
+    @Test("Changing a shadow keeps the effects it does not touch, in the order the file format wants")
+    func unmodelledEffectsKept() throws {
+        let effects = """
+            <a:effectLst><a:glow rad="63500"><a:srgbClr val="FF0000"/></a:glow>\
+            <a:reflection stA="80000" endPos="100000" sy="-100000" kx="5"/>\
+            <a:softEdge rad="12700"/></a:effectLst>
+            """
+        var box = try #require(shapes(rectangle(effects: effects)).first)
+        box.shadow = Shadow(blur: 0, distance: 12_700, direction: 45, color: .rgb(0))
+        box.edits.insert(.effects)
+        var presentation = Presentation.blank
+        presentation.slides[0].shapes = [box]
+        presentation.slides[0].isModified = true
+        let parts = try ZipArchive.entries(in: PPTXWriter.data(from: presentation))
+        let xml = try String(decoding: #require(parts["ppt/slides/slide1.xml"]), as: UTF8.self)
+        let names = ["glow", "outerShdw", "reflection", "softEdge"].map { xml.range(of: "<a:\($0)")?.lowerBound }
+        #expect(names.allSatisfy { $0 != nil })
+        #expect(names.compactMap { $0 } == names.compactMap { $0 }.sorted())
+        // The untouched reflection keeps what the model has no room for.
+        #expect(xml.contains("kx=\"5\""))
+    }
+
     @Test("A run's shadow never falls across the letters of the run beside it")
     func shadowsUnderLetters() throws {
         func red(_ shadowXML: String) throws -> Int {
