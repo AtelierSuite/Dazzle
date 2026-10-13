@@ -174,8 +174,11 @@ struct SlideRenderer {
     }
 
     /// Casts `shadow` from what is drawn next, as it falls in `space`, the
-    /// slide's coordinates as the context had them.
-    static func setShadow(_ shadow: Shadow, color: CGColor, space: CGAffineTransform, context: CGContext) {
+    /// slide's coordinates as the context had them. `displacement`, in
+    /// device space, is taken off the offset, for drawing displaced that far.
+    static func setShadow(
+        _ shadow: Shadow, color: CGColor, space: CGAffineTransform, context: CGContext, displacement: CGSize = .zero
+    ) {
         let radians = shadow.direction * .pi / 180
         let distance = EMU.points(shadow.distance)
         // Shadow offsets and blur are in device space, untouched by the
@@ -183,7 +186,10 @@ struct SlideRenderer {
         let offset = CGSize(width: cos(radians) * distance, height: sin(radians) * distance)
             .applying(CGAffineTransform(a: space.a, b: space.b, c: space.c, d: space.d, tx: 0, ty: 0))
         let scale = hypot(space.a, space.b)
-        context.setShadow(offset: offset, blur: EMU.points(shadow.blur) * scale, color: color)
+        context.setShadow(
+            offset: CGSize(width: offset.width - displacement.width, height: offset.height - displacement.height),
+            blur: EMU.points(shadow.blur) * scale, color: color
+        )
     }
 
     /// The shape again, turned upside down below its bottom edge and faded

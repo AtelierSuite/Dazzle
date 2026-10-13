@@ -123,43 +123,33 @@ struct TextRenderer {
         context.translateBy(x: layout.origin.x, y: layout.origin.y + layout.height)
         context.scaleBy(x: 1, y: -1)
         context.textMatrix = .identity
-        if Self.castsShadows(layout.frame) {
-            let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
-            var origins = [CGPoint](repeating: .zero, count: lines.count)
-            CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
-            for (line, origin) in zip(lines, origins) {
-                draw(line, at: origin, space: space, context: context)
-            }
-        } else {
-            CTFrameDraw(layout.frame, context)
+        // Every shadow goes down before any letter, so none falls across another run's letters.
+        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
+        var origins = [CGPoint](repeating: .zero, count: lines.count)
+        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
+        for (line, origin) in zip(lines, origins) {
+            drawShadows(of: line, at: origin, space: space, context: context)
         }
+        CTFrameDraw(layout.frame, context)
         drawStrikethroughs(in: layout.frame, context: context)
     }
 
-    private static func castsShadows(_ frame: CTFrame) -> Bool {
-        (CTFrameGetLines(frame) as? [CTLine] ?? []).contains { line in
-            (CTLineGetGlyphRuns(line) as? [CTRun] ?? []).contains { (CTRunGetAttributes($0) as NSDictionary)[shadowKey.rawValue] != nil }
-        }
-    }
-
-    /// Draws a line from `origin`, a run at a time where its letters cast
-    /// shadows. `space` is the slide's coordinates, which shadows fall in.
-    private func draw(_ line: CTLine, at origin: CGPoint, space: CGAffineTransform, context: CGContext) {
-        let runs = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
-        guard runs.contains(where: { (CTRunGetAttributes($0) as NSDictionary)[Self.shadowKey.rawValue] != nil }) else {
-            context.textPosition = origin
-            CTLineDraw(line, context)
-            return
-        }
-        for run in runs {
+    /// Draws only the shadows a line's letters cast from `origin`. `space` is
+    /// the slide's coordinates, which shadows fall in.
+    private func drawShadows(of line: CTLine, at origin: CGPoint, space: CGAffineTransform, context: CGContext) {
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
             let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let box = attributes[Self.shadowKey.rawValue] as? ShadowBox else { continue }
             context.saveGState()
-            if let box = attributes[Self.shadowKey.rawValue] as? ShadowBox {
-                // Fading text fades its shadow with it.
-                let textAlpha = attributes[Self.colorKey.rawValue].map { ($0 as! CGColor).alpha } ?? 1 // swiftlint:disable:this force_cast
-                let color = box.color.copy(alpha: box.color.alpha * textAlpha) ?? box.color
-                SlideRenderer.setShadow(box.shadow, color: color, space: space, context: context)
-            }
+            // The letters are drawn far off to one side, and their shadow brought back by as much.
+            let away = CGSize(width: 100_000, height: 0)
+            let ctm = context.ctm
+            let displacement = away.applying(CGAffineTransform(a: ctm.a, b: ctm.b, c: ctm.c, d: ctm.d, tx: 0, ty: 0))
+            // Fading text fades its shadow with it.
+            let textAlpha = attributes[Self.colorKey.rawValue].map { ($0 as! CGColor).alpha } ?? 1 // swiftlint:disable:this force_cast
+            let color = box.color.copy(alpha: box.color.alpha * textAlpha) ?? box.color
+            SlideRenderer.setShadow(box.shadow, color: color, space: space, context: context, displacement: displacement)
+            context.translateBy(x: away.width, y: away.height)
             context.textPosition = origin
             CTRunDraw(run, context, CFRange(location: 0, length: 0))
             context.restoreGState()
@@ -190,13 +180,22 @@ struct TextRenderer {
             let bounds = paragraph.reduce(CGRect.null) { $0.union($1.bounds) }
             context.saveGState()
             let faded = SlideRenderer.apply(appearance, to: bounds, context: context)
+            let space = context.ctm
             for entry in paragraph {
                 context.saveGState()
-                let space = context.ctm
                 context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
                 context.scaleBy(x: 1, y: -1)
                 context.textMatrix = .identity
-                draw(entry.line, at: .zero, space: space, context: context)
+                drawShadows(of: entry.line, at: .zero, space: space, context: context)
+                context.restoreGState()
+            }
+            for entry in paragraph {
+                context.saveGState()
+                context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
+                context.scaleBy(x: 1, y: -1)
+                context.textMatrix = .identity
+                context.textPosition = .zero
+                CTLineDraw(entry.line, context)
                 drawStrikethroughs(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
             }
