@@ -792,6 +792,22 @@ struct OutlineTests {
 @Suite("Shadows")
 @MainActor
 struct ShadowTests {
+    @Test("A reflection set from the editor is written, read back, and can be taken away")
+    func reflectionSet() throws {
+        var presentation = Presentation.blank
+        let state = EditorState()
+        state.selectSlide(presentation.slides[0].id)
+        state.insertShape("rect", in: &presentation)
+        let reflection = Reflection(startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.55, blur: 6_350)
+        state.setReflection(reflection, in: &presentation)
+        let copy = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        #expect(copy.slides[0].shapes.last?.reflection == reflection)
+
+        state.setReflection(nil, in: &presentation)
+        let cleared = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        #expect(cleared.slides[0].shapes.last?.reflection == nil)
+    }
+
     @Test("Shadows are written, read back, and fall the way they point")
     func shadow() throws {
         var presentation = Presentation.blank
