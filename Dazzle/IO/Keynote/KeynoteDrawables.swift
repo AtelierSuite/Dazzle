@@ -168,7 +168,9 @@ struct KeynoteSlideWriter {
             head: styles.drawingProperty(style, .headLineEnd), tail: styles.drawingProperty(style, .tailLineEnd),
             opacity: opacity
         )
-        let effects = KeynoteStyles.effects(styles.drawingProperty(style, .shadow), opacity: opacity) ?? ""
+        let effects = KeynoteStyles.effects(
+            styles.drawingProperty(style, .shadow), reflection: styles.drawingProperty(style, .reflection), opacity: opacity
+        ) ?? ""
         // The shape takes the id its non-visual properties are about to claim.
         // Text that sets its own width saves no size, only the point it grows
         // from; measuring it gives it one.
@@ -254,7 +256,9 @@ struct KeynoteSlideWriter {
         let opacity = styles.opacity(style)
         let alpha = opacity < 0.999 ? "<a:alphaModFix amt=\"\(Int(opacity * 100_000))\"/>" : ""
         let line = KeynoteStyles.line(styles.drawingProperty(style, .stroke), head: nil, tail: nil, opacity: 1)
-        let effects = KeynoteStyles.effects(styles.drawingProperty(style, .shadow), opacity: opacity) ?? ""
+        let effects = KeynoteStyles.effects(
+            styles.drawingProperty(style, .shadow), reflection: styles.drawingProperty(style, .reflection), opacity: opacity
+        ) ?? ""
         let nonVisual = nonVisual(drawable, name: "Picture")
         return """
             <p:pic><p:nvPicPr>\(nonVisual)<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>\

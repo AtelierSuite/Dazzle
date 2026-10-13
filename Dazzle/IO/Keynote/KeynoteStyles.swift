@@ -27,7 +27,7 @@ struct KeynoteStyles {
     }
 
     /// What a shape or media style sets, and where: shapes number their
-    /// fill, stroke, opacity and shadow from 1, media from stroke at 1.
+    /// fill, stroke, opacity, shadow and reflection from 1, media from stroke at 1.
     private static func drawingProperties(_ object: KeynoteArchive.Object) -> (message: ProtoMessage, offset: Int)? {
         switch object.type {
         case KeynoteType.textShapeStyle: object.message.message(1)?.message(11).map { ($0, 0) }
@@ -38,7 +38,7 @@ struct KeynoteStyles {
     }
 
     enum DrawingProperty: Int {
-        case fill = 1, stroke, opacity, shadow
+        case fill = 1, stroke, opacity, shadow, reflection
         case headLineEnd = 6, tailLineEnd
     }
 
@@ -202,7 +202,14 @@ struct KeynoteStyles {
 
     // MARK: - Shadow
 
-    static func effects(_ shadow: ProtoMessage?, opacity: Double) -> String? {
+    /// A shape's shadow and reflection as `a:effectLst`, or `nil` for neither.
+    static func effects(_ shadow: ProtoMessage?, reflection: ProtoMessage? = nil, opacity: Double) -> String? {
+        let list = (self.shadow(shadow, opacity: opacity) ?? "") + (self.reflection(reflection) ?? "")
+        return list.isEmpty ? nil : "<a:effectLst>\(list)</a:effectLst>"
+    }
+
+    /// A `TSD.ShadowArchive` as `a:outerShdw`, for shapes and text alike.
+    static func shadow(_ shadow: ProtoMessage?, opacity: Double) -> String? {
         guard let shadow, shadow.bool(6) ?? true, shadow.int(7) ?? 0 == 0,
               let color = colorXML(shadow.message(1), opacity: (shadow.float(5) ?? 1) * opacity) else { return nil }
         var direction = (360 - (shadow.float(2) ?? 315)).truncatingRemainder(dividingBy: 360)
@@ -210,9 +217,18 @@ struct KeynoteStyles {
         let distance = KeynoteUnits.emu(shadow.float(3) ?? 5)
         let blur = KeynoteUnits.emu(Double(shadow.int(4) ?? 1))
         return """
-            <a:effectLst><a:outerShdw blurRad="\(blur)" dist="\(distance)" dir="\(Int(direction * 60_000))" \
-            algn="ctr" rotWithShape="0">\(color)</a:outerShdw></a:effectLst>
+            <a:outerShdw blurRad="\(blur)" dist="\(distance)" dir="\(Int(direction * 60_000))" \
+            algn="ctr" rotWithShape="0">\(color)</a:outerShdw>
             """
+    }
+
+    /// A `TSD.ReflectionArchive`: Keynote fades its reflections out halfway
+    /// down from the opacity it gives them. The shape's own opacity is in
+    /// what is reflected already.
+    private static func reflection(_ reflection: ProtoMessage?) -> String? {
+        // Styles with no reflection keep an empty one.
+        guard let start = reflection?.float(1), start > 0 else { return nil }
+        return Reflection(startOpacity: start, endPosition: 0.5).xml
     }
 }
 
