@@ -165,14 +165,39 @@ final class FontResolver: @unchecked Sendable {
     static func category(of family: String) -> Category {
         let name = family.lowercased()
         func mentions(_ words: [String]) -> Bool { words.contains { name.contains($0) } }
-        if mentions(["mono", "code", "courier", "consol", "typewriter", "terminal", "fixed", "monaco", "andale", "jetbrains"]) {
+        // Whole words, so Monotype Corsiva is not taken for a fixed-width face, nor Flora for Lora.
+        let words = Self.words(in: family)
+        func begins(_ prefixes: [String]) -> Bool { words.contains { word in prefixes.contains { word.hasPrefix($0) } } }
+        let fixed = ["courier", "consol", "typewriter", "terminal", "fixed", "monaco", "menlo", "andale", "jetbrains"]
+        if begins(fixed) || words.contains(where: { $0 == "code" || $0.hasPrefix("monospace") || $0.hasSuffix("mono") }) {
             return .monospaced
         }
         if mentions(["mincho", "明朝", "みんちょう"]) { return .mincho }
         if mentions(["ゴシック", "gothic"]) && name.unicodeScalars.contains(where: { $0.value > 0x2E80 }) { return .gothic }
-        if mentions(["sans", "grotesk", "grotesque", "gothic"]) { return .sansSerif }
-        if mentions(Self.serifWords) { return .serif }
+        if begins(["sans", "grotesk", "grotesque", "gothic"]) { return .sansSerif }
+        if begins(Self.serifWords) || words.contains(where: { $0.hasSuffix("serif") }) { return .serif }
         return .sansSerif
+    }
+
+    /// A family name's words, lowercased, split at spaces and punctuation and
+    /// where the capitals start one, so `IBMPlexMono` gives ibm, plex and mono.
+    private static func words(in family: String) -> [String] {
+        var words: [String] = [], word = ""
+        let letters = Array(family)
+        for (index, letter) in letters.enumerated() {
+            guard letter.isLetter || letter.isNumber else {
+                if !word.isEmpty { words.append(word); word = "" }
+                continue
+            }
+            let previous = index > 0 ? letters[index - 1] : nil
+            let next = index + 1 < letters.count ? letters[index + 1] : nil
+            let startsWord = letter.isUppercase && !word.isEmpty
+                && (previous?.isLowercase == true || next?.isLowercase == true && previous?.isUppercase == true)
+            if startsWord { words.append(word); word = "" }
+            word.append(letter)
+        }
+        if !word.isEmpty { words.append(word) }
+        return words.map { $0.lowercased() }
     }
 
     /// Words naming serif families, or common ones by name.
