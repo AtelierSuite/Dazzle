@@ -43,6 +43,39 @@ struct KeynoteContainerTests {
         #expect(message.uints(2) == [1, 2, 150])
     }
 
+    @Test("Fields read and written again come out byte for byte")
+    func fieldsRoundTrip() throws {
+        var writer = ProtoWriter()
+        writer.varint(3, 1)
+        writer.string(9, "kept")
+        writer.float(2, 1.5)
+        writer.varint(3, 2)
+        writer.message(7) { $0.varint(1, 300) }
+        let fields = try ProtoFields(writer.bytes)
+        #expect(fields.bytes == writer.bytes)
+    }
+
+    @Test("Changed fields stay where they were, among fields left alone")
+    func fieldsChange() throws {
+        var writer = ProtoWriter()
+        writer.varint(1, 5)
+        writer.message(2) { $0.float(1, 10) }
+        writer.string(3, "x")
+        var fields = try ProtoFields(writer.bytes)
+        fields.update(2) { $0.setFloat(1, 20) }
+        fields.update(4) { $0.setVarint(1, 9) }
+        fields.setVarint(1, 6)
+        let message = fields.message
+        #expect(message.uint(1) == 6)
+        #expect(message.message(2)?.float(1) == 20)
+        #expect(message.string(3) == "x")
+        #expect(message.message(4)?.uint(1) == 9)
+        #expect(fields.fields.map(\.number) == [1, 2, 3, 4])
+        fields.setRepeatedBytes(3, [Array("a".utf8), Array("b".utf8)])
+        #expect(fields.message.strings(3) == ["a", "b"])
+        #expect(fields.fields.map(\.number) == [1, 2, 3, 3, 4])
+    }
+
     @Test("A ZIP without an index is not a Keynote file")
     func rejectsOtherArchives() throws {
         let archive = try ZipArchive.archive(entries: [("readme.txt", Data("hello".utf8))])
