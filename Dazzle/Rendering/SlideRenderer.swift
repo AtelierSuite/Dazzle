@@ -261,12 +261,14 @@ struct SlideRenderer {
             paint(context)
             return
         }
-        // Blurred, the reflection is drawn apart at the context's resolution,
-        // with room around it for the blur and for outlines and shadows to spread.
+        // Blurred, the reflection is drawn apart, with room around it for the
+        // blur and for outlines and shadows to spread. Only as fine as the
+        // blur leaves detail to see: never more than the context's resolution,
+        // nor so fine that the blur spans more than a few pixels.
         let region = bounds.insetBy(dx: -(blur * 2 + 20), dy: -(blur * 2 + 20))
         let ctm = context.ctm
         var scale = sqrt(abs(ctm.a * ctm.d - ctm.b * ctm.c))
-        scale = min(scale, 4_096 / max(region.width, region.height))
+        scale = min(scale, 8 / blur, 4_096 / max(region.width, region.height))
         let width = Int((region.width * scale).rounded(.up)), height = Int((region.height * scale).rounded(.up))
         guard width > 0, height > 0, let layer = CGContext(
             data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -281,6 +283,7 @@ struct SlideRenderer {
         // Images are drawn bottom row first; the region's top is its smallest y.
         context.translateBy(x: 0, y: region.minY + region.maxY)
         context.scaleBy(x: 1, y: -1)
+        context.interpolationQuality = .high
         context.draw(blurred, in: region)
     }
 
