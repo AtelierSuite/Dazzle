@@ -33,13 +33,13 @@ struct TextEffectsTests {
     }
 
     /// The slide drawn without its background, a pixel to the point, top row first.
-    private func render(_ shapes: [SlideShape]) throws -> (alpha: [UInt8], width: Int) {
-        let (pixels, width) = try renderColor(shapes)
+    private func render(_ shapes: [SlideShape], animation: AnimationFrame? = nil) throws -> (alpha: [UInt8], width: Int) {
+        let (pixels, width) = try renderColor(shapes, animation: animation)
         return (stride(from: 3, to: pixels.count, by: 4).map { pixels[$0] }, width)
     }
 
     /// The slide's RGBA pixels, drawn without its background, top row first.
-    private func renderColor(_ shapes: [SlideShape]) throws -> (pixels: Data, width: Int) {
+    private func renderColor(_ shapes: [SlideShape], animation: AnimationFrame? = nil) throws -> (pixels: Data, width: Int) {
         var presentation = Presentation.blank
         presentation.slides[0].shapes = shapes
         let size = presentation.slideSize.points
@@ -49,7 +49,7 @@ struct TextEffectsTests {
                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         canvas.translateBy(x: 0, y: CGFloat(height))
         canvas.scaleBy(x: 1, y: -1)
-        SlideRenderer(presentation: presentation, slide: presentation.slides[0], options: .init(drawsBackground: false))
+        SlideRenderer(presentation: presentation, slide: presentation.slides[0], options: .init(drawsBackground: false, animation: animation))
             .draw(in: canvas, size: CGSize(width: width, height: height))
         return (try #require(canvas.makeImage()?.dataProvider?.data as Data?), width)
     }
@@ -185,5 +185,18 @@ struct TextEffectsTests {
         let standing = try render(shapes(rectangle(effects: upright, rotation: 5_400_000, width: 2_540_000, height: 635_000)))
         #expect(standing.alpha[125 * standing.width + 160] == 0)
         #expect(standing.alpha[235 * standing.width + 200] > 0)
+    }
+
+    @Test("A reflection travels with its shape as an animation moves it")
+    func reflectionFollowsMotion() throws {
+        let effects = "<a:effectLst><a:reflection stA=\"80000\" endPos=\"100000\" sy=\"-100000\"/></a:effectLst>"
+        let box = try #require(shapes(rectangle(effects: effects)).first)
+        // Moved 150 points down, the box spans 250 to 350 points and its reflection 350 to 450.
+        let moved = AnimationFrame(shapes: [box.shapeID: AnimatedAppearance(offset: CGSize(width: 0, height: 150))])
+        let (alpha, width) = try render([box], animation: moved)
+        #expect(alpha[300 * width + 150] == 255)
+        #expect(alpha[360 * width + 150] > 0)
+        #expect(alpha[120 * width + 150] == 0)
+        #expect(alpha[220 * width + 150] == 0)
     }
 }
