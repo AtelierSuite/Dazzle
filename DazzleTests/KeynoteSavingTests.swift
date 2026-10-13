@@ -113,3 +113,72 @@ struct KeynoteDocumentWritingTests {
         #expect(try KeynoteImporter.presentation(from: written).slides.count == presentation.slides.count)
     }
 }
+
+@Suite("Keynote edits written back")
+struct KeynoteEditWritingTests {
+    private let presentation: Presentation
+
+    init() throws {
+        presentation = try KeynoteImporter.presentation(from: KeynoteDocumentWritingTests.deck())
+    }
+
+    @Test("A shape moved, sized and turned is moved, sized and turned in Keynote")
+    func transform() throws {
+        var edited = presentation
+        let shape = try index(edited.slides[0], Self.isTurned)
+        let old = edited.slides[0].shapes[shape].frame
+        edited.slides[0].shapes[shape].frame = EMURect(
+            x: old.x + 12_700 * 10, y: old.y - 12_700 * 5, width: old.width + 12_700 * 100, height: old.height
+        )
+        edited.slides[0].shapes[shape].rotation = 45
+        edited.slides[0].shapes[shape].edits.insert(.transform)
+        edited.slides[0].isModified = true
+        let reread = try reread(edited)
+        let turned = try #require(reread.slides[0].shapes.first(where: Self.isTurned))
+        #expect(turned.frame == edited.slides[0].shapes[shape].frame)
+        #expect(abs(turned.rotation - 45) < 0.001)
+    }
+
+    @Test("A picture can be moved, but not a group sized")
+    func transformLimits() throws {
+        var moved = presentation
+        let picture = try index(moved.slides[0], \.isPicture)
+        moved.slides[0].shapes[picture].frame.x += 12_700 * 20
+        #expect(try reread(moved).slides[0].shapes.first(where: \.isPicture)?.frame == moved.slides[0].shapes[picture].frame)
+
+        var sized = presentation
+        let group = try index(sized.slides[1]) { if case .group = $0.kind { true } else { false } }
+        sized.slides[1].shapes[group].frame.width += 12_700
+        #expect(!KeynoteEditor.canSave(sized))
+    }
+
+    @Test("Changes Keynote's objects can't be given can't be saved")
+    func unsupported() throws {
+        #expect(KeynoteEditor.canSave(presentation))
+        var removed = presentation
+        removed.slides.remove(at: 1)
+        removed.isStructureModified = true
+        #expect(!KeynoteEditor.canSave(removed))
+
+        var filled = presentation
+        let shape = try index(filled.slides[0], Self.isTurned)
+        filled.slides[0].shapes[shape].fill = nil
+        filled.slides[0].shapes[shape].edits.insert(.fill)
+        #expect(!KeynoteEditor.canSave(filled))
+        #expect(throws: KeynoteSaveError.self) { try KeynoteWriter.fileWrapper(for: filled) }
+    }
+
+    /// The presentation written to Keynote and read back again.
+    private func reread(_ edited: Presentation) throws -> Presentation {
+        let written = try #require(KeynoteWriter.fileWrapper(for: edited).regularFileContents)
+        return try KeynoteImporter.presentation(from: written)
+    }
+
+    private func index(_ slide: Slide, _ matches: (SlideShape) -> Bool) throws -> Int {
+        let found = slide.shapes.firstIndex(where: matches)
+        return try #require(found)
+    }
+
+    private static func isTurned(_ shape: SlideShape) -> Bool { shape.rotation != 0 }
+    private static func isTitle(_ shape: SlideShape) -> Bool { shape.text?.plainText == "Hello Keynote" }
+}

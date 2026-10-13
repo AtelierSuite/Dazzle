@@ -48,8 +48,7 @@ struct KeynoteSlideOrigin: Sendable {
 enum KeynoteWriter {
     static func fileWrapper(for presentation: Presentation) throws -> FileWrapper {
         guard let source = presentation.keynoteSource else { throw KeynoteSaveError.notFromKeynote }
-        let archive = source.archive
-        guard !archive.hasZippedIndex else { throw KeynoteSaveError.olderFormat }
+        let archive = try KeynoteEditor.archive(for: presentation)
 
         var entries = source.entries
         for index in entries.indices {
@@ -113,6 +112,8 @@ enum KeynoteSaveError: LocalizedError {
     case notFromKeynote
     /// The document keeps its index the way versions before Keynote 6 did.
     case olderFormat
+    /// Something was changed that Keynote's objects can't be given.
+    case unsupportedChange
 
     var errorDescription: String? {
         String(localized: "Error.KeynoteNotWritable")
