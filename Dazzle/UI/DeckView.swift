@@ -386,7 +386,7 @@ struct DeckView: View {
             }
             .accessibilityIdentifier("headerFooter")
             Section {
-                Link(destination: URL(string: "https://github.com/katagaki/Dazzle")!) {
+                Link(destination: URL(string: "https://github.com/AtelierSuite/Dazzle")!) {
                     Label("Toolbar.SourceCode", systemImage: "chevron.left.forwardslash.chevron.right")
                 }
             }
