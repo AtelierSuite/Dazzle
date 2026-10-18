@@ -276,29 +276,3 @@ extension Chart {
         }
     }
 }
-
-extension Chart.Kind {
-    var label: LocalizedStringKey {
-        switch self {
-        case .column: "Chart.Kind.Column"
-        case .bar: "Chart.Kind.Bar"
-        case .line: "Chart.Kind.Line"
-        case .area: "Chart.Kind.Area"
-        case .pie: "Chart.Kind.Pie"
-        case .doughnut: "Chart.Kind.Doughnut"
-        case .scatter: "Chart.Kind.Scatter"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .column: "chart.bar"
-        case .bar: "chart.bar.horizontal"
-        case .line: "chart.xyaxis.line"
-        case .area: "chart.line.uptrend.xyaxis"
-        case .pie: "chart.pie"
-        case .doughnut: "circle.circle"
-        case .scatter: "chart.dots.scatter"
-        }
-    }
-}

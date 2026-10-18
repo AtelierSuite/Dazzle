@@ -479,24 +479,3 @@ private struct ActionSymbol: View {
             .contentShape(.circle)
     }
 }
-
-/// The shapes the Shape menu offers, by DrawingML preset.
-struct ShapeChoice: Identifiable {
-    let preset: String
-    let label: LocalizedStringKey
-    let symbol: String
-
-    var id: String { preset }
-
-    @MainActor static let all = [
-        ShapeChoice(preset: "rect", label: "Shape.Rectangle", symbol: "rectangle"),
-        ShapeChoice(preset: "roundRect", label: "Shape.RoundedRectangle", symbol: "rectangle.roundedtop"),
-        ShapeChoice(preset: "ellipse", label: "Shape.Oval", symbol: "circle"),
-        ShapeChoice(preset: "triangle", label: "Shape.Triangle", symbol: "triangle"),
-        ShapeChoice(preset: "diamond", label: "Shape.Diamond", symbol: "diamond"),
-        ShapeChoice(preset: "star5", label: "Shape.Star", symbol: "star"),
-        ShapeChoice(preset: "rightArrow", label: "Shape.Arrow", symbol: "arrow.right"),
-        ShapeChoice(preset: "wedgeRoundRectCallout", label: "Shape.Callout", symbol: "bubble.left"),
-        ShapeChoice(preset: "line", label: "Shape.Line", symbol: "line.diagonal"),
-    ]
-}
