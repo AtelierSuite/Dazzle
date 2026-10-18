@@ -20,8 +20,6 @@ final class MacAppStoreScreenshots: XCTestCase {
         /// Counted from 1, as the slide navigator numbers them.
         let slide: Int
         var shape: Point?
-        /// Opens the chart's data once the chart is selected.
-        var opensChartData = false
     }
 
     // Where the sample deck's shapes sit; see samples.py.
@@ -31,11 +29,8 @@ final class MacAppStoreScreenshots: XCTestCase {
     private static let shots = [
         Shot(name: "01-deck", slide: 1),
         Shot(name: "02-format", slide: 2, shape: card),
-        Shot(name: "03-chart", slide: 3, shape: chart, opensChartData: true),
+        Shot(name: "03-chart", slide: 3, shape: chart),
     ]
-
-    /// The inspector button that opens a chart's data.
-    private static let chartDataButton = ["en": "Edit Chart", "ja": "グラフを編集"]
 
     /// The window, in points: 16:10, so a capture at 2x is the store's 2880 × 1800.
     private static let windowFrame = "80 80 1440 900"
@@ -66,12 +61,7 @@ final class MacAppStoreScreenshots: XCTestCase {
             open(deck)
             select(slide: shot.slide)
             if let shape = shot.shape { click(shape) }
-            if shot.opensChartData {
-                let button = app.buttons[Self.chartDataButton[language] ?? "Edit Chart"].firstMatch
-                XCTAssertTrue(button.waitForExistence(timeout: 5), "missing the chart data button")
-                button.click()
-            }
-            // Let the selection, the inspector and any sheet settle.
+            // Let the selection and the inspector settle.
             Thread.sleep(forTimeInterval: 2)
             let file = directory.appendingPathComponent("\(shot.name).png")
             try window.screenshot().pngRepresentation.write(to: file)
@@ -110,11 +100,14 @@ final class MacAppStoreScreenshots: XCTestCase {
     /// Opens a presentation through File ▸ Open, going straight to its path.
     @MainActor
     private func open(_ path: String) {
+        // The app starts with an untitled presentation; File ▸ Open needs it up first.
+        XCTAssertTrue(canvas.waitForExistence(timeout: 20), "the app never opened a window")
         app.typeKey("o", modifierFlags: .command)
-        XCTAssertTrue(app.dialogs.firstMatch.waitForExistence(timeout: 10) || app.sheets.firstMatch.exists,
-                      "the open panel never came up")
+        // A sandboxed app's open panel is drawn by another process, which UI tests
+        // can't see, so it is given time to come up rather than waited for.
+        Thread.sleep(forTimeInterval: 3)
         app.typeKey("g", modifierFlags: [.command, .shift])
-        Thread.sleep(forTimeInterval: 1)
+        Thread.sleep(forTimeInterval: 1.5)
         app.typeText(path)
         app.typeKey(.return, modifierFlags: [])
         Thread.sleep(forTimeInterval: 1)
