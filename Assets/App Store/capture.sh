@@ -15,7 +15,8 @@
 #
 # The Mac app runs on this Mac: the MacAppStoreScreenshots UI test opens the
 # presentation and captures its window. The Mac has to be unlocked, with a
-# Retina display, and macOS asks once to allow UI testing.
+# Retina display; macOS asks once to allow UI testing, and the test runner
+# needs Screen Recording in System Settings ▸ Privacy & Security.
 set -e
 
 SCRIPT_DIR=${0:A:h}
