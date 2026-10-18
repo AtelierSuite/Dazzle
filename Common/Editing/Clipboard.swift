@@ -1,7 +1,11 @@
 import DazzleEngine
-import SwiftUI
-import UIKit
+import Foundation
 import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#else
+import AppKit
+#endif
 
 /// What Dazzle last copied, shared by every open presentation so shapes
 /// and slides can be pasted from one into another.
@@ -23,16 +27,57 @@ final class DeckClipboard {
 
     /// Dazzle's own content, if nothing has been copied since.
     var current: Content? {
-        UIPasteboard.general.changeCount == changeCount ? content : nil
+        Self.systemChangeCount == changeCount ? content : nil
     }
 
     func copy(_ content: Content, image: Data?, text: String?) {
+        #if canImport(UIKit)
         var item: [String: Any] = [:]
         if let image { item[UTType.png.identifier] = image }
         if let text, !text.isEmpty { item[UTType.utf8PlainText.identifier] = text }
         UIPasteboard.general.setItems(item.isEmpty ? [] : [item])
+        #else
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        if let image { item.setData(image, forType: .png) }
+        if let text, !text.isEmpty { item.setString(text, forType: .string) }
+        pasteboard.writeObjects([item])
+        #endif
         self.content = content
-        changeCount = UIPasteboard.general.changeCount
+        changeCount = Self.systemChangeCount
+    }
+
+    private static var systemChangeCount: Int {
+        #if canImport(UIKit)
+        UIPasteboard.general.changeCount
+        #else
+        NSPasteboard.general.changeCount
+        #endif
+    }
+
+    /// A picture another app put on the system pasteboard.
+    static var systemImage: Data? {
+        #if canImport(UIKit)
+        let pasteboard = UIPasteboard.general
+        return pasteboard.data(forPasteboardType: UTType.png.identifier)
+            ?? pasteboard.data(forPasteboardType: UTType.jpeg.identifier)
+            ?? pasteboard.image?.pngData()
+        #else
+        // TIFF is what most Mac apps copy; the picture is re-encoded as it is prepared.
+        let pasteboard = NSPasteboard.general
+        return pasteboard.data(forType: .png) ?? pasteboard.data(forType: NSPasteboard.PasteboardType(UTType.jpeg.identifier))
+            ?? pasteboard.data(forType: .tiff)
+        #endif
+    }
+
+    /// Text another app put on the system pasteboard.
+    static var systemText: String? {
+        #if canImport(UIKit)
+        UIPasteboard.general.string
+        #else
+        NSPasteboard.general.string(forType: .string)
+        #endif
     }
 }
 
@@ -92,13 +137,9 @@ extension EditorState {
     }
 
     private func pasteFromSystem(into presentation: inout Presentation) {
-        let pasteboard = UIPasteboard.general
-        if let data = pasteboard.data(forPasteboardType: UTType.png.identifier)
-            ?? pasteboard.data(forPasteboardType: UTType.jpeg.identifier)
-            ?? pasteboard.image?.pngData(),
-           let media = PreparedMedia(data: data) {
+        if let data = DeckClipboard.systemImage, let media = PreparedMedia(data: data) {
             insertPicture(media, in: &presentation)
-        } else if let text = pasteboard.string, !text.isEmpty {
+        } else if let text = DeckClipboard.systemText, !text.isEmpty {
             insertTextBox(in: &presentation)
             setText(text, in: &presentation)
             endEditingText()

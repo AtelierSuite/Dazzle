@@ -1,5 +1,6 @@
 import DazzleEngine
-import SwiftUI
+import Foundation
+import Observation
 
 /// Undo and redo for a document's presentation.
 ///

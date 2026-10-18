@@ -147,6 +147,11 @@
 			path = DazzleEngine;
 			sourceTree = "<group>";
 		};
+		DA0000000000000000000017 /* Common */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Common;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXGroup section */
@@ -155,6 +160,7 @@
 			children = (
 				DA0000000000000000000010 /* Dazzle */,
 				DA0000000000000000000016 /* DazzleEngine */,
+				DA0000000000000000000017 /* Common */,
 				DA0000000000000000000011 /* DazzleWatch */,
 				DA0000000000000000000012 /* Shared */,
 				DA0000000000000000000013 /* DazzleTests */,
@@ -196,6 +202,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				DA0000000000000000000010 /* Dazzle */,
+				DA0000000000000000000017 /* Common */,
 				DA0000000000000000000012 /* Shared */,
 			);
 			name = Dazzle;

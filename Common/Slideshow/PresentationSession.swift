@@ -1,5 +1,6 @@
 import DazzleEngine
-import SwiftUI
+import Foundation
+import Observation
 
 /// The slideshow in progress, if any.
 ///
@@ -324,6 +325,8 @@ final class PresentationSession {
     private func publish() {
         media.show(isPresenting ? currentSlide : nil, in: presentation)
         scheduleAdvance()
+        // The watch remote pairs with an iPhone only.
+        #if os(iOS)
         var state = RemoteState()
         state.canStart = !candidates.isEmpty
         state.title = isPresenting ? title : candidates.last?.title ?? ""
@@ -337,5 +340,6 @@ final class PresentationSession {
             state.thumbnail = SlideExporter.image(of: slide, in: presentation, width: 312, format: .jpeg, quality: 0.6)
         }
         RemoteControlServer.shared.publish(state)
+        #endif
     }
 }

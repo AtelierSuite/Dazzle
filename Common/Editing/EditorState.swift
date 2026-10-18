@@ -1,5 +1,6 @@
 import DazzleEngine
-import SwiftUI
+import Foundation
+import Observation
 
 /// The bottom-sheet panels the editor can raise.
 enum EditorPanel: String, Identifiable, Hashable {
