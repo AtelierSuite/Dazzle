@@ -79,7 +79,7 @@ final class PresentationDocument: NSDocument {
         return types.filter { !Self.isKeynote(UTType($0) ?? .data) }
     }
 
-    static func isKeynote(_ type: UTType) -> Bool {
+    nonisolated static func isKeynote(_ type: UTType) -> Bool {
         type.conforms(to: .keynote) || type.conforms(to: .keynotePackage)
     }
 
