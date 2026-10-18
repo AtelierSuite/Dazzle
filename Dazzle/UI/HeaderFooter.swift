@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// What PowerPoint's Header & Footer puts on slides: the date, the slide

@@ -1,6 +1,7 @@
+@testable import Dazzle
+@testable import DazzleEngine
 import Foundation
 import Testing
-@testable import Dazzle
 
 @Suite("Keynote containers")
 struct KeynoteContainerTests {

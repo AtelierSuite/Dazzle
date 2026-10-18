@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// The document's root view: the slides down the side or along the bottom,

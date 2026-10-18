@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// The slide's animations in the order a slideshow plays them, and what

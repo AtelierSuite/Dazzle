@@ -1,7 +1,8 @@
 import CoreGraphics
+@testable import Dazzle
+@testable import DazzleEngine
 import Foundation
 import Testing
-@testable import Dazzle
 
 private final class AnimationTestBundle: NSObject {}
 

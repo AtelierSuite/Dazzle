@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// The slides in order: a sidebar of thumbnails where there is room, a

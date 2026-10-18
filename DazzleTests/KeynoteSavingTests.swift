@@ -1,7 +1,7 @@
+@testable import DazzleEngine
 import Foundation
 import ImageIO
 import Testing
-@testable import Dazzle
 
 @Suite("Keynote archives written back")
 struct KeynoteArchiveWritingTests {

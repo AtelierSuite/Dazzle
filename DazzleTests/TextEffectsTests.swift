@@ -1,7 +1,7 @@
 import CoreGraphics
+@testable import DazzleEngine
 import Foundation
 import Testing
-@testable import Dazzle
 
 @Suite("Text outlines, shadows and reflections")
 struct TextEffectsTests {

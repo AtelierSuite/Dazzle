@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// The top of the document browser: a quiet backdrop with a wall of slides

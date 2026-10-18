@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// Undo and redo for a document's presentation.

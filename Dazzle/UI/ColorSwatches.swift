@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// A colour on offer in the format panels: one of the presentation's theme

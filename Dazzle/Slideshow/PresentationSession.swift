@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// The slideshow in progress, if any.

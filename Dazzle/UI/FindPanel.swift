@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// Finding text on every slide, in tables and in the speaker notes, and

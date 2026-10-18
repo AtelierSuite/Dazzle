@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// The selected chart's type, data, title and legend.

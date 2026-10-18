@@ -1,6 +1,7 @@
+@testable import Dazzle
+@testable import DazzleEngine
 import Foundation
 import Testing
-@testable import Dazzle
 
 /// Writes the remote states the Apple Watch App Store screenshots show.
 ///

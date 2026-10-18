@@ -1,4 +1,5 @@
 import CoreGraphics
+import DazzleEngine
 
 /// Where a shape being moved or resized settles: onto the slide's edges and
 /// centre lines, and onto the edges and centres of the other shapes, when

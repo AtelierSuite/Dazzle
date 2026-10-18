@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// The slide's comment threads: read, replied to, resolved, deleted, and
