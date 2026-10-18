@@ -72,6 +72,7 @@ final class SlideCanvasView: NSView {
         self.deck = deck
         super.init(frame: .zero)
         registerForDraggedTypes([.fileURL, .png, .tiff])
+        setAccessibilityElement(true)
         setAccessibilityRole(.layoutArea)
         setAccessibilityLabel(String(localized: "Mac.Canvas.Accessibility"))
         setAccessibilityIdentifier("slideCanvas")
