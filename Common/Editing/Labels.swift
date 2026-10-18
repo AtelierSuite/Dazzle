@@ -172,3 +172,70 @@ struct ShapeChoice: Identifiable {
         ShapeChoice(preset: "line", label: String(localized: "Shape.Line"), symbol: "line.diagonal"),
     ]
 }
+
+/// The shadows, reflections and lines the format controls offer.
+enum FormatChoices {
+    struct ReflectionChoice {
+        let id: String
+        let label: String
+        let reflection: Reflection?
+    }
+
+    /// PowerPoint's touching reflections.
+    static let reflections = [
+        ReflectionChoice(id: "none", label: String(localized: "Reflection.None"), reflection: nil),
+        ReflectionChoice(id: "tight", label: String(localized: "Reflection.Tight"), reflection: Reflection(
+            startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.35, blur: 6_350, rotatesWithShape: false
+        )),
+        ReflectionChoice(id: "half", label: String(localized: "Reflection.Half"), reflection: Reflection(
+            startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.55, blur: 6_350, rotatesWithShape: false
+        )),
+        ReflectionChoice(id: "full", label: String(localized: "Reflection.Full"), reflection: Reflection(
+            startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.9, blur: 6_350, rotatesWithShape: false
+        )),
+    ]
+
+    struct ShadowChoice {
+        let id: String
+        let label: String
+        let shadow: Shadow?
+    }
+
+    /// PowerPoint's most used outer shadows.
+    static let shadows = [
+        ShadowChoice(id: "none", label: String(localized: "Shadow.None"), shadow: nil),
+        ShadowChoice(id: "drop", label: String(localized: "Shadow.Drop"), shadow: Shadow(
+            blur: 50_800, distance: 38_100, direction: 45, color: Shadow.black(opacity: 0.4)
+        )),
+        ShadowChoice(id: "soft", label: String(localized: "Shadow.Soft"), shadow: Shadow(
+            blur: 152_400, distance: 50_800, direction: 90, color: Shadow.black(opacity: 0.35)
+        )),
+        ShadowChoice(id: "close", label: String(localized: "Shadow.Close"), shadow: Shadow(
+            blur: 25_400, distance: 19_050, direction: 45, color: Shadow.black(opacity: 0.6)
+        )),
+        ShadowChoice(id: "below", label: String(localized: "Shadow.Below"), shadow: Shadow(
+            blur: 76_200, distance: 76_200, direction: 90, color: Shadow.black(opacity: 0.3)
+        )),
+    ]
+
+    static let dashes: [(String, String)] = [
+        ("solid", String(localized: "Line.Solid")), ("sysDash", String(localized: "Line.Dash")), ("sysDot", String(localized: "Line.Dot")),
+        ("dashDot", String(localized: "Line.DashDot")), ("lgDash", String(localized: "Line.LongDash")),
+    ]
+
+    static let lineEnds: [(String, String)] = [
+        ("none", String(localized: "Line.End.None")), ("triangle", String(localized: "Line.End.Triangle")), ("arrow", String(localized: "Line.End.Arrow")),
+        ("stealth", String(localized: "Line.End.Stealth")), ("oval", String(localized: "Line.End.Oval")), ("diamond", String(localized: "Line.End.Diamond")),
+    ]
+}
+
+extension SlideSizeConverter.Preset {
+    var label: String {
+        switch self {
+        case .widescreen: String(localized: "SlideSize.Widescreen")
+        case .standard: String(localized: "SlideSize.Standard")
+        case .widescreen16x10: String(localized: "SlideSize.Widescreen16x10")
+        case .a4: String(localized: "SlideSize.A4")
+        }
+    }
+}

@@ -398,7 +398,7 @@ struct FormatPanel: View {
                 get: { shape.line?.dash ?? "solid" },
                 set: { dash in state.setLine({ $0.dash = dash }, in: &presentation) }
             )) {
-                ForEach(Self.dashes, id: \.0) { value, label in
+                ForEach(FormatChoices.dashes, id: \.0) { value, label in
                     Text(label).tag(value)
                 }
             }
@@ -409,14 +409,14 @@ struct FormatPanel: View {
                     get: { shape.line?.head ?? "none" },
                     set: { head in state.setLine({ $0.head = head == "none" ? nil : head }, in: &presentation) }
                 )) {
-                    ForEach(Self.lineEnds, id: \.0) { value, label in Text(label).tag(value) }
+                    ForEach(FormatChoices.lineEnds, id: \.0) { value, label in Text(label).tag(value) }
                 }
                 .accessibilityIdentifier("lineStart")
                 Picker("Format.Outline.End", selection: Binding(
                     get: { shape.line?.tail ?? "none" },
                     set: { tail in state.setLine({ $0.tail = tail == "none" ? nil : tail }, in: &presentation) }
                 )) {
-                    ForEach(Self.lineEnds, id: \.0) { value, label in Text(label).tag(value) }
+                    ForEach(FormatChoices.lineEnds, id: \.0) { value, label in Text(label).tag(value) }
                 }
                 .accessibilityIdentifier("lineEnd")
             }
@@ -426,16 +426,16 @@ struct FormatPanel: View {
     private func shadowSection(_ shape: SlideShape) -> some View {
         Section("Format.Section.Shadow") {
             Picker("Format.Shadow", selection: Binding(
-                get: { Self.shadows.first { $0.shadow == shape.shadow }?.id ?? (shape.shadow == nil ? "none" : "custom") },
+                get: { FormatChoices.shadows.first { $0.shadow == shape.shadow }?.id ?? (shape.shadow == nil ? "none" : "custom") },
                 set: { id in
-                    guard let choice = Self.shadows.first(where: { $0.id == id }) else { return }
+                    guard let choice = FormatChoices.shadows.first(where: { $0.id == id }) else { return }
                     state.setShadow(choice.shadow, in: &presentation)
                 }
             )) {
-                ForEach(Self.shadows, id: \.id) { choice in
+                ForEach(FormatChoices.shadows, id: \.id) { choice in
                     Text(choice.label).tag(choice.id)
                 }
-                if shape.shadow != nil, !Self.shadows.contains(where: { $0.shadow == shape.shadow }) {
+                if shape.shadow != nil, !FormatChoices.shadows.contains(where: { $0.shadow == shape.shadow }) {
                     Text("Shadow.Custom").tag("custom")
                 }
             }
@@ -447,77 +447,24 @@ struct FormatPanel: View {
         Section("Format.Section.Reflection") {
             Picker("Format.Reflection", selection: Binding(
                 get: {
-                    Self.reflections.first { $0.reflection == shape.reflection }?.id
+                    FormatChoices.reflections.first { $0.reflection == shape.reflection }?.id
                         ?? (shape.reflection == nil ? "none" : "custom")
                 },
                 set: { id in
-                    guard let choice = Self.reflections.first(where: { $0.id == id }) else { return }
+                    guard let choice = FormatChoices.reflections.first(where: { $0.id == id }) else { return }
                     state.setReflection(choice.reflection, in: &presentation)
                 }
             )) {
-                ForEach(Self.reflections, id: \.id) { choice in
+                ForEach(FormatChoices.reflections, id: \.id) { choice in
                     Text(choice.label).tag(choice.id)
                 }
-                if shape.reflection != nil, !Self.reflections.contains(where: { $0.reflection == shape.reflection }) {
+                if shape.reflection != nil, !FormatChoices.reflections.contains(where: { $0.reflection == shape.reflection }) {
                     Text("Reflection.Custom").tag("custom")
                 }
             }
             .accessibilityIdentifier("reflection")
         }
     }
-
-    private struct ReflectionChoice {
-        let id: String
-        let label: LocalizedStringKey
-        let reflection: Reflection?
-    }
-
-    /// PowerPoint's touching reflections.
-    private static let reflections = [
-        ReflectionChoice(id: "none", label: "Reflection.None", reflection: nil),
-        ReflectionChoice(id: "tight", label: "Reflection.Tight", reflection: Reflection(
-            startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.35, blur: 6_350, rotatesWithShape: false
-        )),
-        ReflectionChoice(id: "half", label: "Reflection.Half", reflection: Reflection(
-            startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.55, blur: 6_350, rotatesWithShape: false
-        )),
-        ReflectionChoice(id: "full", label: "Reflection.Full", reflection: Reflection(
-            startOpacity: 0.52, endOpacity: 0.003, endPosition: 0.9, blur: 6_350, rotatesWithShape: false
-        )),
-    ]
-
-    private struct ShadowChoice {
-        let id: String
-        let label: LocalizedStringKey
-        let shadow: Shadow?
-    }
-
-    /// PowerPoint's most used outer shadows.
-    private static let shadows = [
-        ShadowChoice(id: "none", label: "Shadow.None", shadow: nil),
-        ShadowChoice(id: "drop", label: "Shadow.Drop", shadow: Shadow(
-            blur: 50_800, distance: 38_100, direction: 45, color: Shadow.black(opacity: 0.4)
-        )),
-        ShadowChoice(id: "soft", label: "Shadow.Soft", shadow: Shadow(
-            blur: 152_400, distance: 50_800, direction: 90, color: Shadow.black(opacity: 0.35)
-        )),
-        ShadowChoice(id: "close", label: "Shadow.Close", shadow: Shadow(
-            blur: 25_400, distance: 19_050, direction: 45, color: Shadow.black(opacity: 0.6)
-        )),
-        ShadowChoice(id: "below", label: "Shadow.Below", shadow: Shadow(
-            blur: 76_200, distance: 76_200, direction: 90, color: Shadow.black(opacity: 0.3)
-        )),
-    ]
-
-    private static let dashes: [(String, LocalizedStringKey)] = [
-        ("solid", "Line.Solid"), ("sysDash", "Line.Dash"), ("sysDot", "Line.Dot"),
-        ("dashDot", "Line.DashDot"), ("lgDash", "Line.LongDash"),
-    ]
-
-    private static let lineEnds: [(String, LocalizedStringKey)] = [
-        ("none", "Line.End.None"), ("triangle", "Line.End.Triangle"), ("arrow", "Line.End.Arrow"),
-        ("stealth", "Line.End.Stealth"), ("oval", "Line.End.Oval"), ("diamond", "Line.End.Diamond"),
-    ]
 
     @ViewBuilder
     private var slideSections: some View {
@@ -925,16 +872,5 @@ struct StyleToggle: View {
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
-    }
-}
-
-extension SlideSizeConverter.Preset {
-    var label: LocalizedStringKey {
-        switch self {
-        case .widescreen: "SlideSize.Widescreen"
-        case .standard: "SlideSize.Standard"
-        case .widescreen16x10: "SlideSize.Widescreen16x10"
-        case .a4: "SlideSize.A4"
-        }
     }
 }
