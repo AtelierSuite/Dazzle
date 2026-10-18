@@ -74,6 +74,7 @@ final class SlideCanvasView: NSView {
         registerForDraggedTypes([.fileURL, .png, .tiff])
         setAccessibilityRole(.layoutArea)
         setAccessibilityLabel(String(localized: "Mac.Canvas.Accessibility"))
+        setAccessibilityIdentifier("slideCanvas")
     }
 
     @available(*, unavailable)
