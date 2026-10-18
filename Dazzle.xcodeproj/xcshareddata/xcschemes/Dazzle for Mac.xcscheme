@@ -38,6 +38,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "DA0000000000000000000036"
+               BuildableName = "DazzleMacUITests.xctest"
+               BlueprintName = "DazzleMacUITests"
+               ReferencedContainer = "container:Dazzle.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction
