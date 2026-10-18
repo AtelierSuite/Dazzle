@@ -128,6 +128,8 @@ enum MainMenu {
         menu.addItem(item(String(localized: "Slide.Menu.Delete"), #selector(Commands.deleteSlide(_:))))
         menu.addItem(item(String(localized: "Slide.Menu.Hide"), #selector(Commands.toggleSlideHidden(_:))))
         menu.addItem(.separator())
+        menu.addItem(item(String(localized: "Mac.Menu.Slide.HeaderFooter"), #selector(Commands.showHeaderFooter(_:))))
+        menu.addItem(.separator())
         menu.addItem(item(String(localized: "Slide.Menu.MoveUp"), #selector(Commands.moveSlideEarlier(_:))))
         menu.addItem(item(String(localized: "Slide.Menu.MoveDown"), #selector(Commands.moveSlideLater(_:))))
         menu.addItem(.separator())

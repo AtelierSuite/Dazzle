@@ -12,6 +12,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     /// The alert on screen for the editor's error message, if any.
     private var isShowingError = false
     lazy var finder = FindController(deck: deck)
+    /// The Header & Footer sheet, while it is open.
+    var headerFooter: HeaderFooterSheet?
 
     var canvas: CanvasViewController { split.editor.canvas }
     var presentationDocument: PresentationDocument? { document as? PresentationDocument }

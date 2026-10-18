@@ -12975,6 +12975,41 @@
         }
       }
     },
+    "Mac.Menu.Slide.HeaderFooter" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Header & Footer…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ヘッダーとフッター…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "머리글/바닥글…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "页眉和页脚…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "頁首及頁尾⋯"
+          }
+        }
+      }
+    },
     "Mac.Menu.View.HideNotes" : {
       "extractionState" : "manual",
       "localizations" : {
