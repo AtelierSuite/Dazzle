@@ -49,7 +49,7 @@ struct LinkEditor: View {
         .accessibilityIdentifier("linkKind")
         if case .url(let address)? = link {
             CommitTextField("Link.URL.Placeholder", text: address) { text in
-                onChange(.url(Self.normalized(text)))
+                onChange(.url(Hyperlink.normalizedAddress(text)))
             }
             .keyboardType(.URL)
             .textInputAutocapitalization(.never)
@@ -77,12 +77,5 @@ struct LinkEditor: View {
         case .end: onChange(.endShow)
         case .other: break
         }
-    }
-
-    /// An address typed without a scheme is taken to be on the web.
-    static func normalized(_ text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !trimmed.contains("://"), !trimmed.hasPrefix("mailto:") else { return trimmed }
-        return trimmed.contains("@") && !trimmed.contains("/") ? "mailto:" + trimmed : "https://" + trimmed
     }
 }
