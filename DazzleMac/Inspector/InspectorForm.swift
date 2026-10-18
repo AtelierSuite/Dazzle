@@ -32,6 +32,11 @@ final class InspectorForm {
         updates.forEach { $0() }
     }
 
+    /// Runs `update` whenever the controls are brought up to date.
+    func onUpdate(_ update: @escaping () -> Void) {
+        updates.append(update)
+    }
+
     // MARK: - Layout
 
     func section(_ title: String) {

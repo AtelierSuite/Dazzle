@@ -104,7 +104,9 @@ final class InspectorViewController: NSViewController {
     private func structure() -> [AnyHashable] {
         let presentation = deck.presentation
         let slide = deck.selectedSlide
-        var key: [AnyHashable] = [tab.rawValue, slide?.id, state.selectedShapeIDs, state.isEditingCell, state.selectedCell]
+        var key: [AnyHashable] = [
+            tab.rawValue, slide?.id, state.selectedShapeIDs, state.isEditingCell, state.selectedCell, state.editingTextShapeID,
+        ]
         if let shape = deck.selectedShape {
             key += [Self.kindName(of: shape), shape.isEditable, shape.canHoldText, shape.canRotate, shape.geometry.presetName]
         }

@@ -27,7 +27,88 @@ extension InspectorViewController {
             break
         }
         buildArrange(shape)
-        if !state.hasMultipleSelection { buildDescription() }
+        if !state.hasMultipleSelection {
+            if state.editingTextShapeID == shape.id || state.isEditingCell {
+                buildLink(
+                    footer: String(localized: (state.textSelection?.length ?? 0) > 0 ? "Format.Link.Selection" : "Format.Link.AllText"),
+                    get: { [unowned self] in run.link },
+                    set: { [unowned self] link in edit { state.setTextLink(link, in: &$0) } }
+                )
+            } else {
+                buildLink(
+                    footer: String(localized: "Format.Link.Footer"),
+                    get: { [unowned self] in deck.selectedShape?.link },
+                    set: { [unowned self] link in edit { state.setShapeLink(link, in: &$0) } }
+                )
+            }
+            buildDescription()
+        }
+    }
+
+    // MARK: - Links
+
+    /// Where a link goes: a web address, a slide, or a step through the show.
+    private func buildLink(footer: String, get: @escaping () -> Hyperlink?, set: @escaping (Hyperlink?) -> Void) {
+        form.section(String(localized: "Format.Section.Link"))
+        let kinds: [(String.LocalizationValue, (Presentation) -> Hyperlink?)] = [
+            ("Link.None", { _ in nil }), ("Link.URL", { _ in .url("https://") }),
+            ("Link.Slide", { $0.slides.first.map { .slide($0.id) } }), ("Link.Next", { _ in .nextSlide }),
+            ("Link.Previous", { _ in .previousSlide }), ("Link.First", { _ in .firstSlide }),
+            ("Link.Last", { _ in .lastSlide }), ("Link.End", { _ in .endShow }),
+        ]
+        func index(of link: Hyperlink?) -> Int? {
+            switch link {
+            case nil: 0
+            case .url?: 1
+            case .slide?, .slidePart?: 2
+            case .nextSlide?: 3
+            case .previousSlide?: 4
+            case .firstSlide?: 5
+            case .lastSlide?: 6
+            case .endShow?: 7
+            case .other?: nil
+            }
+        }
+        form.row(String(localized: "Link.Kind"), form.popup(kinds.map { String(localized: $0.0) }, get: {
+            index(of: get())
+        }, set: { [unowned self] chosen in
+            set(kinds[chosen].1(deck.presentation))
+        }))
+
+        let address = form.text(placeholder: String(localized: "Link.URL.Placeholder"), get: {
+            if case .url(let address)? = get() { return address }
+            return ""
+        }, set: { text in
+            set(.url(Hyperlink.normalizedAddress(text)))
+        })
+        form.row(nil, address)
+
+        let slides = NSPopUpButton()
+        let slideTarget = ActionTarget { [unowned self] in
+            let index = slides.indexOfSelectedItem
+            guard deck.presentation.slides.indices.contains(index) else { return }
+            set(.slide(deck.presentation.slides[index].id))
+        }
+        slides.target = slideTarget
+        slides.action = #selector(ActionTarget.run(_:))
+        form.row(nil, slides)
+        form.note(footer)
+        form.onUpdate { [unowned self] in
+            _ = slideTarget
+            let link = get()
+            if case .url? = link { address.superview?.isHidden = false } else { address.superview?.isHidden = true }
+            guard case .slide(let id)? = link else {
+                slides.superview?.isHidden = true
+                return
+            }
+            slides.superview?.isHidden = false
+            let presentation = deck.presentation
+            slides.removeAllItems()
+            slides.addItems(withTitles: presentation.slides.enumerated().map { index, slide in
+                "\(index + 1). \(slide.title ?? String(localized: "Slide.Untitled"))"
+            })
+            if let index = presentation.index(of: id) { slides.selectItem(at: index) }
+        }
     }
 
     // MARK: - Text
