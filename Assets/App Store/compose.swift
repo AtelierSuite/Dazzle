@@ -103,7 +103,13 @@ let macScreenshots = [
         ]
     ),
     Screenshot(name: "02-format", copy: formatCopy),
-    Screenshot(name: "03-chart", copy: chartCopy),
+    Screenshot(
+        name: "03-chart",
+        copy: [
+            "en": Copy(header: "Charts you can edit", caption: "Change the type, legend, and data"),
+            "ja": Copy(header: "グラフもそのまま編集", caption: "種類も凡例もデータも、その場で変更"),
+        ]
+    ),
 ]
 
 let iPadScreenshots = [
