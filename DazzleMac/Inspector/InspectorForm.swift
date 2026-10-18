@@ -101,6 +101,16 @@ final class InspectorForm {
         return button
     }
 
+    /// A borderless button showing a symbol.
+    func iconButton(_ symbol: String, label: String, action: @escaping () -> Void) -> NSButton {
+        let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: label) ?? NSImage(),
+                              target: nil, action: nil)
+        button.isBordered = false
+        button.toolTip = label
+        bind(button, action)
+        return button
+    }
+
     /// A pop-up of titles; `get` gives the index shown, or `nil` for none of them.
     func popup(_ titles: [String], get: @escaping () -> Int?, set: @escaping (Int) -> Void) -> NSPopUpButton {
         let popup = NSPopUpButton()

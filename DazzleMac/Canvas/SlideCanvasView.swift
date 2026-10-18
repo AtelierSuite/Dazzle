@@ -27,6 +27,8 @@ final class SlideCanvasView: NSView {
     private var guides: [Snapping.Guide] = []
     /// The rectangle being dragged out to select what it crosses.
     private var marquee: CGRect?
+    /// A comment's pin being dragged to another place.
+    private var commentDrag: (id: String, position: CGPoint)?
     /// Typing into a shape or a table cell, over the slide.
     private var textEditor: InPlaceTextEditor?
     private var displayLink: CADisplayLink?
@@ -138,6 +140,7 @@ final class SlideCanvasView: NSView {
             .draw(in: context, size: slideSize)
         drawGuides(in: context)
         drawSelection(of: displayed, in: context)
+        drawCommentPins(on: displayed, in: context)
         if let marquee {
             context.setFillColor(NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor)
             context.fill(marquee)
@@ -165,6 +168,9 @@ final class SlideCanvasView: NSView {
     /// The slide with the move, resize, turn or crop in progress applied.
     private func preview(of slide: Slide) -> Slide {
         var slide = slide
+        if let commentDrag, let index = slide.comments.firstIndex(where: { $0.id == commentDrag.id }) {
+            slide.comments[index].position = commentDrag.position
+        }
         if let cropDraft, let index = slide.shapes.firstIndex(where: { $0.id == cropDraft.shapeID }) {
             slide.shapes[index].frame = EMURect(points: cropDraft.frame)
             slide.shapes[index].kind = .picture(cropDraft.picture)
@@ -244,6 +250,63 @@ final class SlideCanvasView: NSView {
                     context.setLineDash(phase: 0, lengths: [])
                 }
             }
+        }
+    }
+
+    // MARK: - Comments
+
+    /// Comment threads left at a place on the slide, still open.
+    private func pinnedComments(on slide: Slide) -> [SlideComment] {
+        slide.comments.filter { $0.position != nil && !$0.isResolved }
+    }
+
+    /// Where a thread's pin sits, in slide points.
+    private func pinRect(of comment: SlideComment) -> CGRect {
+        let size = onScreen(24)
+        let position = comment.position ?? .zero
+        return CGRect(x: position.x, y: position.y, width: size, height: size)
+    }
+
+    /// The author's initials in a circle of a colour of their own.
+    private func drawCommentPins(on slide: Slide, in context: CGContext) {
+        let colors: [NSColor] = [.systemBlue, .systemOrange, .systemGreen, .systemPurple, .systemPink, .systemTeal, .systemIndigo,
+                                 .systemBrown]
+        for comment in pinnedComments(on: slide) {
+            let rect = pinRect(of: comment)
+            let hash = comment.author.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+            context.saveGState()
+            context.setShadow(offset: CGSize(width: 0, height: onScreen(1)), blur: onScreen(3),
+                              color: NSColor.black.withAlphaComponent(0.3).cgColor)
+            context.setFillColor(colors[hash % colors.count].cgColor)
+            context.fillEllipse(in: rect)
+            context.restoreGState()
+            let initials = NSAttributedString(string: comment.initials.nilIfEmpty ?? "?", attributes: [
+                .font: NSFont.systemFont(ofSize: onScreen(10), weight: .bold), .foregroundColor: NSColor.white,
+            ])
+            let size = initials.size()
+            NSGraphicsContext.saveGraphicsState()
+            initials.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
+            NSGraphicsContext.restoreGraphicsState()
+        }
+    }
+
+    /// Opens the comments on a click, or moves the pin on a drag.
+    private func trackCommentPin(_ comment: SlideComment, from event: NSEvent) {
+        let start = slidePoint(event)
+        let origin = comment.position ?? .zero
+        var moved: CGPoint?
+        let dragged = track(from: event, threshold: Self.dragThreshold) { point, _ in
+            moved = CGPoint(
+                x: min(max(origin.x + point.x - start.x, 0), slideSize.width),
+                y: min(max(origin.y + point.y - start.y, 0), slideSize.height)
+            )
+            commentDrag = (comment.id, moved ?? origin)
+        }
+        commentDrag = nil
+        if dragged, let moved {
+            deck.edit { state.moveComment(comment.id, to: moved, in: &$0) }
+        } else {
+            state.presentedPanel = .comments
         }
     }
 
@@ -415,6 +478,11 @@ final class SlideCanvasView: NSView {
         guard let slide = deck.selectedSlide else { return }
         window?.makeFirstResponder(self)
         let point = slidePoint(event)
+
+        if let comment = pinnedComments(on: slide).last(where: { pinRect(of: $0).contains(point) }) {
+            trackCommentPin(comment, from: event)
+            return
+        }
 
         if let (hit, shape) = handle(at: point) {
             switch hit {

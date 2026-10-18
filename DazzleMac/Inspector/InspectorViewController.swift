@@ -22,6 +22,7 @@ final class InspectorViewController: NSViewController {
     enum Tab: Int {
         case format
         case animate
+        case comments
     }
 
     var tab: Tab { Tab(rawValue: tabs.selectedSegment) ?? .format }
@@ -37,9 +38,10 @@ final class InspectorViewController: NSViewController {
     override func loadView() {
         tabs.segmentStyle = .automatic
         tabs.trackingMode = .selectOne
-        tabs.segmentCount = 2
+        tabs.segmentCount = 3
         tabs.setLabel(String(localized: "ActionBar.Format"), forSegment: 0)
         tabs.setLabel(String(localized: "ActionBar.Animations"), forSegment: 1)
+        tabs.setLabel(String(localized: "ActionBar.Comments"), forSegment: 2)
         tabs.selectedSegment = 0
         tabs.target = self
         tabs.action = #selector(tabChanged(_:))
@@ -89,6 +91,19 @@ final class InspectorViewController: NSViewController {
     // MARK: - Keeping current
 
     func refresh() {
+        // Something asked for a panel the inspector shows as a tab.
+        switch state.presentedPanel {
+        case .comments?: tabs.selectedSegment = Tab.comments.rawValue
+        case .animations?: tabs.selectedSegment = Tab.animate.rawValue
+        case .format?, .text?: tabs.selectedSegment = Tab.format.rawValue
+        default: break
+        }
+        if state.presentedPanel != nil {
+            state.presentedPanel = nil
+            if let item = (parent as? NSSplitViewController)?.splitViewItem(for: self), item.isCollapsed {
+                item.animator().isCollapsed = false
+            }
+        }
         let key = structure()
         if key != builtFor {
             builtFor = key
@@ -96,6 +111,7 @@ final class InspectorViewController: NSViewController {
             switch tab {
             case .format: buildFormat()
             case .animate: buildAnimate()
+            case .comments: buildComments()
             }
         }
         form.update()
@@ -116,6 +132,8 @@ final class InspectorViewController: NSViewController {
         switch tab {
         case .format:
             key += [slide?.autoAdvanceAfter != nil, SlideSizeConverter.Preset.matching(presentation.slideSize)]
+        case .comments:
+            key += [slide?.comments.map { [$0.id, $0.isResolved, $0.replies.map(\.id)] as [AnyHashable] }]
         case .animate:
             let animation = slide?.animations.first { $0.id == selectedAnimationID }
             key += [selectedAnimationID, animation?.category, animation?.effect.direction != nil, animation?.effect.isMadeByDazzle]
