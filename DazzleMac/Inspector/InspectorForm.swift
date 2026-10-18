@@ -13,7 +13,7 @@ final class InspectorForm {
     private var updates: [() -> Void] = []
     private var targets: [ActionTarget] = []
 
-    static let labelWidth: CGFloat = 96
+    static let labelWidth: CGFloat = 112
 
     init() {
         stack.orientation = .vertical
