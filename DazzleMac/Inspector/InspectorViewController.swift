@@ -16,6 +16,8 @@ final class InspectorViewController: NSViewController {
     /// The animation picked in the Animate tab's list.
     var selectedAnimationID: ShapeAnimation.ID?
     let animationList = NSTableView()
+    /// The sheet editing the selected chart's data, while it is open.
+    var chartSheet: ChartDataSheet?
 
     enum Tab: Int {
         case format
@@ -109,6 +111,7 @@ final class InspectorViewController: NSViewController {
         ]
         if let shape = deck.selectedShape {
             key += [Self.kindName(of: shape), shape.isEditable, shape.canHoldText, shape.canRotate, shape.geometry.presetName]
+            if case .chart(let chart?) = shape.kind { key += [chart.kind, chart.title != nil] }
         }
         switch tab {
         case .format:

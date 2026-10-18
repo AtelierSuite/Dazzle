@@ -18,6 +18,7 @@ extension InspectorViewController {
             buildFill(of: shape)
         }
         if case .table(let table) = shape.kind { buildTable(table) }
+        if case .chart(let chart?) = shape.kind, !state.hasMultipleSelection { buildChart(chart) }
         if case .picture = shape.kind, !state.hasMultipleSelection { buildPicture() }
         switch shape.kind {
         case .shape, .connector, .picture:
@@ -339,6 +340,82 @@ extension InspectorViewController {
             },
             set: { [unowned self] color in edit { state.setCellFill(color.map(Fill.solid) ?? Fill.none, in: &$0) } }
         ))
+    }
+
+    private var chart: Chart? { state.selectedChart(in: deck.presentation) }
+
+    private func changeChart(_ change: @escaping (inout Chart) -> Void) {
+        edit { state.updateChart(in: &$0, change) }
+    }
+
+    private func buildChart(_ chart: Chart) {
+        form.section(String(localized: "Panel.Chart.Title"))
+        let kinds = Chart.Kind.allCases
+        let type = form.popup(kinds.map(\.label), get: { [unowned self] in
+            self.chart.flatMap { kinds.firstIndex(of: $0.kind) }
+        }, set: { [unowned self] index in
+            edit { state.setChartKind(kinds[index], in: &$0) }
+        })
+        for (index, kind) in kinds.enumerated() {
+            type.item(at: index)?.image = NSImage(systemSymbolName: kind.symbol, accessibilityDescription: nil)
+        }
+        form.row(String(localized: "Chart.Type"), type)
+        if chart.kind.hasAxes, chart.kind != .scatter {
+            let groupings = Chart.Grouping.allCases
+            let first: String.LocalizationValue = chart.kind == .line || chart.kind == .area
+                ? "Chart.Grouping.Standard" : "Chart.Grouping.Clustered"
+            form.row(String(localized: "Chart.Grouping"), form.popup(
+                [String(localized: first), String(localized: "Chart.Grouping.Stacked"), String(localized: "Chart.Grouping.Percent")],
+                get: { [unowned self] in groupings.firstIndex(of: self.chart?.plots.first?.grouping ?? .standard) },
+                set: { [unowned self] index in
+                    changeChart { chart in
+                        for plot in chart.plots.indices { chart.plots[plot].grouping = groupings[index] }
+                    }
+                }
+            ))
+        }
+        form.row(nil, form.button(String(localized: "ActionBar.ChartData"), symbol: "tablecells") { [unowned self] in
+            guard let window = view.window else { return }
+            let sheet = ChartDataSheet(deck: deck)
+            chartSheet = sheet
+            sheet.present(over: window)
+        })
+        form.row(nil, form.checkbox(String(localized: "Chart.ShowTitle"), get: { [unowned self] in
+            self.chart?.title != nil
+        }, set: { [unowned self] isOn in
+            changeChart {
+                $0.title = isOn ? ($0.allSeries.count == 1 ? $0.allSeries[0].name : String(localized: "Chart.DefaultTitle")) : nil
+            }
+        }))
+        if chart.title != nil {
+            form.row(String(localized: "Chart.Title"), form.text(placeholder: String(localized: "Chart.Title"), get: { [unowned self] in
+                self.chart?.title ?? ""
+            }, set: { [unowned self] text in changeChart { $0.title = text } }))
+        }
+        let positions = ["none", "r", "b", "t", "l"]
+        form.row(String(localized: "Chart.Legend"), form.popup(
+            ["Chart.Legend.None", "Chart.Legend.Right", "Chart.Legend.Bottom", "Chart.Legend.Top", "Chart.Legend.Left"]
+                .map { String(localized: String.LocalizationValue($0)) },
+            get: { [unowned self] in
+                guard let chart = self.chart else { return nil }
+                return positions.firstIndex(of: chart.hasLegend ? chart.legendPosition : "none")
+            },
+            set: { [unowned self] index in
+                let position = positions[index]
+                changeChart { chart in
+                    chart.hasLegend = position != "none"
+                    if position != "none" { chart.legendPosition = position }
+                }
+            }
+        ))
+        if chart.kind.hasAxes {
+            form.row(nil, form.checkbox(String(localized: "Chart.Gridlines"), get: { [unowned self] in
+                self.chart?.showsGridlines ?? false
+            }, set: { [unowned self] isOn in changeChart { $0.showsGridlines = isOn } }))
+        }
+        form.row(nil, form.checkbox(String(localized: "Chart.ValueLabels"), get: { [unowned self] in
+            self.chart?.showsValueLabels ?? false
+        }, set: { [unowned self] isOn in changeChart { $0.showsValueLabels = isOn } }))
     }
 
     private func buildPicture() {
