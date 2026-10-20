@@ -1,9 +1,10 @@
 import AVFoundation
 import CoreGraphics
+@testable import Dazzle
+@testable import DazzleEngine
 import Foundation
 import SwiftUI
 import Testing
-@testable import Dazzle
 
 @Suite("ZIP container")
 struct ZipArchiveTests {

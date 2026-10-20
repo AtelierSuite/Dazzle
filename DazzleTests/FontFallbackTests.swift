@@ -1,7 +1,7 @@
 import CoreText
+@testable import DazzleEngine
 import Foundation
 import Testing
-@testable import Dazzle
 
 @Suite("Font fallback")
 struct FontFallbackTests {

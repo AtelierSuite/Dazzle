@@ -6,20 +6,28 @@ let scriptDir = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathC
 let languages = ["en", "ja"]
 
 /// Captures live in `Raw/<device>/<lang>/` and are written to `<device>/<lang>/`.
-enum Device: String {
+enum Device: String, CaseIterable {
     case iPhone
     case iPad
+    case Mac
 
-    /// 6.5" iPhone and 13" iPad.
+    /// 6.5" iPhone, 13" iPad, and the Mac's 16:10 at its largest.
     var canvasSize: NSSize {
         switch self {
         case .iPhone: NSSize(width: 1242, height: 2688)
         case .iPad: NSSize(width: 2064, height: 2752)
+        case .Mac: NSSize(width: 2880, height: 1800)
         }
     }
 
-    /// Text and margins are laid out for the iPhone canvas and scaled up by width.
-    var scale: CGFloat { canvasSize.width / Device.iPhone.canvasSize.width }
+    /// Text and margins are laid out for the iPhone canvas and scaled up by
+    /// width; the Mac's landscape canvas would make that far too big.
+    var scale: CGFloat {
+        switch self {
+        case .iPhone, .iPad: canvasSize.width / Device.iPhone.canvasSize.width
+        case .Mac: 1.3
+        }
+    }
 
     func rawDir(_ language: String) -> URL {
         scriptDir.appendingPathComponent("Raw").appendingPathComponent(rawValue)
@@ -84,6 +92,24 @@ let iPhoneScreenshots = [
     Screenshot(name: "03-chart", copy: chartCopy),
     Screenshot(name: "04-animations", copy: animationsCopy),
     Screenshot(name: "05-dark", copy: darkCopy),
+]
+
+let macScreenshots = [
+    Screenshot(
+        name: "01-deck",
+        copy: [
+            "en": Copy(header: "Presentations, now on the Mac", caption: "Open and edit PowerPoint and Keynote files"),
+            "ja": Copy(header: "プレゼンを、Macでも", caption: "PowerPointもKeynoteも、そのまま開いて編集"),
+        ]
+    ),
+    Screenshot(name: "02-format", copy: formatCopy),
+    Screenshot(
+        name: "03-chart",
+        copy: [
+            "en": Copy(header: "Charts you can edit", caption: "Change the type, legend, and data"),
+            "ja": Copy(header: "グラフもそのまま編集", caption: "種類も凡例もデータも、その場で変更"),
+        ]
+    ),
 ]
 
 let iPadScreenshots = [
@@ -241,6 +267,8 @@ func deviceAspect(_ device: Device) -> CGFloat {
     switch device {
     case .iPhone:
         return hardwarePixel.width / hardwarePixel.height
+    case .Mac:
+        return Device.Mac.canvasSize.width / Device.Mac.canvasSize.height
     case .iPad:
         let screenHeight = (1 - 2 * iPadBezel) / iPadScreenAspect
         return 1 / (screenHeight + 2 * iPadBezel)
@@ -277,6 +305,18 @@ func drawiPad(raw: NSImage, in rect: NSRect) {
     NSBezierPath(roundedRect: screenRect, xRadius: screenRadius, yRadius: screenRadius).addClip()
     drawFilled(cgImage(of: raw), in: screenRect, context: ctx)
     ctx.restoreGState()
+}
+
+/// A Mac window as captured, its own corners and all, with a shadow beneath.
+func drawWindow(raw: NSImage, in rect: NSRect) {
+    NSGraphicsContext.current?.saveGraphicsState()
+    let shadow = NSShadow()
+    shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+    shadow.shadowBlurRadius = 80
+    shadow.shadowOffset = NSSize(width: 0, height: -30)
+    shadow.set()
+    raw.draw(in: rect)
+    NSGraphicsContext.current?.restoreGraphicsState()
 }
 
 // MARK: - Composition
@@ -331,6 +371,12 @@ func compose(_ shot: Screenshot, language: String, device: Device) -> Bool {
         deviceSize = NSSize(width: canvasSize.width - 140 * s, height: (canvasSize.width - 140 * s) / aspect)
         deviceTop = canvasSize.height - 300 * s
         deviceBottom = deviceTop - deviceSize.height
+    case .Mac:
+        // The window sits whole below a band that holds the text.
+        let bottomMargin = 80 * s
+        deviceTop = canvasSize.height - inkHeight - 2 * 64 * s
+        deviceSize = NSSize(width: (deviceTop - bottomMargin) * aspect, height: deviceTop - bottomMargin)
+        deviceBottom = bottomMargin
     }
 
     // The text's ink is centered in the band between the top of the canvas and the device.
@@ -359,6 +405,8 @@ func compose(_ shot: Screenshot, language: String, device: Device) -> Bool {
         maskedScreen(raw: raw).draw(in: deviceRect)
     case .iPad:
         drawiPad(raw: raw, in: deviceRect)
+    case .Mac:
+        drawWindow(raw: raw, in: deviceRect)
     }
 
     image.unlockFocus()
@@ -390,13 +438,17 @@ func compose(_ shot: Screenshot, language: String, device: Device) -> Bool {
     }
 }
 
+// Every device, or with arguments, only those named: `./compose.swift Mac`.
+let requested = CommandLine.arguments.dropFirst().compactMap(Device.init(rawValue:))
+let devices = requested.isEmpty ? Device.allCases : requested
+let screenshots: [Device: [Screenshot]] = [.iPhone: iPhoneScreenshots, .iPad: iPadScreenshots, .Mac: macScreenshots]
+
 var allOK = true
 for language in languages {
-    for shot in iPhoneScreenshots {
-        allOK = compose(shot, language: language, device: .iPhone) && allOK
-    }
-    for shot in iPadScreenshots {
-        allOK = compose(shot, language: language, device: .iPad) && allOK
+    for device in devices {
+        for shot in screenshots[device] ?? [] {
+            allOK = compose(shot, language: language, device: device) && allOK
+        }
     }
 }
 exit(allOK ? 0 : 1)

@@ -1,3 +1,4 @@
+import DazzleEngine
 import PencilKit
 import SwiftUI
 

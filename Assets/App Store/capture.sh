@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Captures raw App Store screenshots into Raw/<device>/<language>/.
 # Usage: ./capture.sh [languages...]   (defaults to en ja)
-#        DEVICES=iPad ./capture.sh    (defaults to iPhone, iPad and Watch)
+#        DEVICES=iPad ./capture.sh    (defaults to iPhone, iPad, Watch and Mac)
 #        SHOTS=02-format,03-chart ./capture.sh   (defaults to every shot)
 #
 # Each run seeds the app with the presentation from samples.py, then the
@@ -12,6 +12,11 @@
 # what an iPhone would send it from the same presentation, and the watch app
 # is launched with each state. Its captures go straight to Watch/<language>/,
 # since the store takes them as they are.
+#
+# The Mac app runs on this Mac: the MacAppStoreScreenshots UI test opens the
+# presentation and captures its window. The Mac has to be unlocked, with a
+# Retina display; macOS asks once to allow UI testing, and the test runner
+# needs Screen Recording in System Settings ▸ Privacy & Security.
 set -e
 
 SCRIPT_DIR=${0:A:h}
@@ -21,6 +26,7 @@ WATCH_BUNDLE_ID=com.tsubuzaki.Dazzle.watchkitapp
 DERIVED_DATA=/tmp/dazzle-screenshots-dd
 LANGUAGES=($@)
 (( $# )) || LANGUAGES=(en ja)
+devices=(${=DEVICES:-iPhone iPad Watch Mac})
 typeset -A DEVICE_TYPES=(
   iPhone com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro-Max
   iPad com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB
@@ -74,11 +80,14 @@ boot() {
 
 # MARK: - Build
 
-xcodebuild build-for-testing -project "$PROJECT_DIR/Dazzle.xcodeproj" -scheme Dazzle \
-  -destination "generic/platform=iOS Simulator" -derivedDataPath $DERIVED_DATA -quiet
-APP=$DERIVED_DATA/Build/Products/Debug-iphonesimulator/Dazzle.app
-WATCH_APP=$(ls -d $APP/Watch/*.app | head -1)
-XCTESTRUN=$(ls $DERIVED_DATA/Build/Products/*.xctestrun | head -1)
+# The Mac app is built on its own, as it is captured.
+if (( ${devices[(Ie)iPhone]} || ${devices[(Ie)iPad]} || ${devices[(Ie)Watch]} )); then
+  xcodebuild build-for-testing -project "$PROJECT_DIR/Dazzle.xcodeproj" -scheme Dazzle \
+    -destination "generic/platform=iOS Simulator" -derivedDataPath $DERIVED_DATA -quiet
+  APP=$DERIVED_DATA/Build/Products/Debug-iphonesimulator/Dazzle.app
+  WATCH_APP=$(ls -d $APP/Watch/*.app | head -1)
+  XCTESTRUN=$(ls $DERIVED_DATA/Build/Products/*.xctestrun | head -1)
+fi
 
 # UI tests on a freshly booted simulator now and then miss a tap, so a failed run
 # is given one more go. The test sets light and dark itself.
@@ -157,6 +166,32 @@ capture_watch() {
   done
 }
 
+# MARK: - Mac
+
+MAC_DERIVED_DATA=/tmp/dazzle-mac-screenshots-dd
+
+# One language after another, each from a fresh launch of the app.
+capture_mac() {
+  local decks=$(mktemp -d) language deck raw_dir log
+  xcodebuild build-for-testing -project "$PROJECT_DIR/Dazzle.xcodeproj" -scheme "Dazzle for Mac" \
+    -destination "platform=macOS" -derivedDataPath $MAC_DERIVED_DATA -allowProvisioningUpdates -quiet
+  local xctestrun=$(ls $MAC_DERIVED_DATA/Build/Products/*.xctestrun | head -1)
+  for language in $LANGUAGES; do
+    raw_dir="$SCRIPT_DIR/Raw/Mac/$language"
+    mkdir -p "$raw_dir"
+    seed $language "$decks/$language"
+    deck=$(ls "$decks/$language/"*.pptx | head -1)
+    log=$(mktemp)
+    TEST_RUNNER_SCREENSHOT_DIR="$raw_dir" TEST_RUNNER_SCREENSHOT_LANGUAGE=$language TEST_RUNNER_SCREENSHOT_DECK="$deck" \
+      TEST_RUNNER_SCREENSHOT_ONLY=$SHOTS xcodebuild test-without-building -xctestrun $xctestrun -destination "platform=macOS" \
+      -only-testing:DazzleMacUITests/MacAppStoreScreenshots/testScreens -collect-test-diagnostics never >$log 2>&1 \
+      || { grep -E "error: -\[|encountered an error" $log; rm -f $log; rm -rf $decks; return 1 }
+    rm -f $log
+    echo "captured Mac/$language"
+  done
+  rm -rf $decks
+}
+
 # MARK: - Capture
 
 # One language at a time on one device; the iPhone and iPad run side by side.
@@ -179,12 +214,13 @@ capture() {
   done
 }
 
-devices=(${=DEVICES:-iPhone iPad Watch})
 (( ${devices[(Ie)Watch]} )) && watch_states
 pids=()
 for device in $devices; do
   if [[ $device == Watch ]]; then
     capture_watch &
+  elif [[ $device == Mac ]]; then
+    capture_mac &
   else
     capture $device &
   fi

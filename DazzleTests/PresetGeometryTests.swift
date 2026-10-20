@@ -1,6 +1,6 @@
 import CoreGraphics
+@testable import DazzleEngine
 import Testing
-@testable import Dazzle
 
 @Suite("Speech bubble geometry")
 struct PresetGeometryTests {

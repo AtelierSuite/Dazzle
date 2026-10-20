@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// A slide, drawn to fill the view. Give it the slide's aspect ratio.

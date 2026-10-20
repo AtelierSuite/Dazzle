@@ -1,0 +1,618 @@
+import CoreGraphics
+import Foundation
+
+/// One effect in a slide's animation sequence, as PowerPoint's animation
+/// pane lists them: a shape, or some of its paragraphs, coming in, drawing
+/// attention, going out, or moving along a path.
+public struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
+    public enum Category: Equatable, Hashable, Sendable {
+        case entrance
+        case emphasis
+        case exit
+        case motionPath
+        /// Anything else the sequence runs, such as playing a video, by its
+        /// `presetClass`.
+        case other(String)
+
+        public init(presetClass: String?) {
+            self = switch presetClass {
+            case "entr": .entrance
+            case "emph": .emphasis
+            case "exit": .exit
+            case "path": .motionPath
+            default: .other(presetClass ?? "")
+            }
+        }
+
+        public var presetClass: String {
+            switch self {
+            case .entrance: "entr"
+            case .emphasis: "emph"
+            case .exit: "exit"
+            case .motionPath: "path"
+            case .other(let name): name
+            }
+        }
+    }
+
+    /// The edge an effect comes in from or goes out to, as `presetSubtype`
+    /// numbers them.
+    public enum Direction: Int, CaseIterable, Hashable, Sendable {
+        case top = 1
+        case right = 2
+        case bottom = 4
+        case left = 8
+
+        public var opposite: Direction {
+            switch self {
+            case .top: .bottom
+            case .right: .left
+            case .bottom: .top
+            case .left: .right
+            }
+        }
+    }
+
+    public enum Effect: Equatable, Hashable, Sendable {
+        case appear
+        case fade
+        case fly(Direction)
+        case wipe(Direction)
+        case zoom
+        case float
+        case pulse
+        case spin
+        case growShrink
+        case teeter
+        case path(MotionPath)
+        case filter(AnimationFilter, id: Int, subtype: Int)
+        /// An effect Dazzle does not make itself: played as near as it can,
+        /// and written back as read.
+        case preset(id: Int, subtype: Int)
+
+        /// What each kind of animation offers to add.
+        public static func choices(for category: Category) -> [Effect] {
+            switch category {
+            case .entrance, .exit: [.appear, .fade, .fly(.bottom), .wipe(.bottom), .zoom, .float]
+            case .emphasis: [.pulse, .spin, .growShrink, .teeter]
+            case .motionPath, .other: []
+            }
+        }
+
+        /// `presetID`, which tells PowerPoint which effect it is.
+        public var presetID: Int {
+            switch self {
+            case .appear: 1
+            case .fly: 2
+            case .growShrink: 6
+            case .spin: 8
+            case .fade: 10
+            case .wipe: 22
+            case .pulse: 26
+            case .teeter: 32
+            case .float: 42
+            case .zoom: 53
+            case .path: 0
+            case .preset(let id, _), .filter(_, let id, _): id
+            }
+        }
+
+        public var presetSubtype: Int {
+            switch self {
+            case .fly(let direction), .wipe(let direction): direction.rawValue
+            case .zoom: 16
+            case .preset(_, let subtype), .filter(_, _, let subtype): subtype
+            default: 0
+            }
+        }
+
+        public var direction: Direction? {
+            switch self {
+            case .fly(let direction), .wipe(let direction): direction
+            default: nil
+            }
+        }
+
+        /// The same effect from another edge.
+        public func with(_ direction: Direction) -> Effect {
+            switch self {
+            case .fly: .fly(direction)
+            case .wipe: .wipe(direction)
+            default: self
+            }
+        }
+
+        /// Whether it is the same effect, whichever edge it uses.
+        public func isKind(of other: Effect) -> Bool {
+            switch (self, other) {
+            case (.fly, .fly), (.wipe, .wipe): true
+            default: self == other
+            }
+        }
+
+        /// How long it runs unless changed, in seconds.
+        public var defaultDuration: Double {
+            switch self {
+            case .appear: 0
+            case .fade, .fly, .wipe, .zoom, .pulse: 0.5
+            case .float, .teeter: 1
+            case .spin, .growShrink, .path: 2
+            case .preset, .filter: 0.5
+            }
+        }
+
+        /// Whether Dazzle writes the effect itself, so can change its timing.
+        public var isMadeByDazzle: Bool {
+            switch self { case .preset, .filter: return false; default: break }
+            return true
+        }
+    }
+
+    public enum Trigger: Hashable, Sendable, CaseIterable {
+        case onClick
+        case withPrevious
+        case afterPrevious
+    }
+
+    public let id: UUID
+    /// The `cNvPr id` of the shape it animates.
+    public var shapeID: Int
+    /// For text built a paragraph at a time, which paragraphs, from zero.
+    public var paragraphs: ClosedRange<Int>?
+    public var category: Category
+    public var effect: Effect
+    public var trigger: Trigger
+    /// Seconds, from when it starts to when it settles.
+    public var duration: Double
+    /// Seconds after its trigger before it starts.
+    public var delay: Double = 0
+    /// The effect's `p:par` as read. Kept while only when it starts changes,
+    /// so whatever Dazzle does not model about it survives; dropped once the
+    /// effect itself is changed and has to be written anew.
+    public var source: String?
+    /// The independent axis values of an imported grow/shrink behaviour.
+    public var scaling: AnimationScale?
+    public var timingCurve: AnimationTimingCurve?
+    public var repetition: AnimationRepetition?
+    public var opacity: AnimationScalar?
+    public var rotationBehavior: AnimationScalar?
+    public var colorChange: AnimationColorChange?
+
+    public var activeDuration: Double { repetition?.duration(base: duration) ?? duration }
+
+    public func progress(elapsed: Double, finished: Bool = false) -> Double {
+        if let repetition { return repetition.progress(elapsed: elapsed, base: duration, finished: finished) }
+        return finished || duration <= 0 ? 1 : min(elapsed / duration, 1)
+    }
+
+    public init(
+        id: UUID = UUID(), shapeID: Int, paragraphs: ClosedRange<Int>? = nil, category: Category, effect: Effect,
+        trigger: Trigger = .onClick, duration: Double? = nil, delay: Double = 0, source: String? = nil,
+        scaling: AnimationScale? = nil, timingCurve: AnimationTimingCurve? = nil, repetition: AnimationRepetition? = nil,
+        opacity: AnimationScalar? = nil, rotationBehavior: AnimationScalar? = nil, colorChange: AnimationColorChange? = nil
+    ) {
+        self.id = id
+        self.shapeID = shapeID
+        self.paragraphs = paragraphs
+        self.category = category
+        self.effect = effect
+        self.trigger = trigger
+        self.duration = duration ?? effect.defaultDuration
+        self.delay = delay
+        self.source = source
+        self.scaling = scaling
+        self.timingCurve = timingCurve
+        self.repetition = repetition
+        self.opacity = opacity
+        self.rotationBehavior = rotationBehavior
+        self.colorChange = colorChange
+    }
+
+    /// The same effect, as a new entry, for a copy of its slide.
+    public init(copying animation: ShapeAnimation) {
+        self.init(
+            shapeID: animation.shapeID, paragraphs: animation.paragraphs, category: animation.category,
+            effect: animation.effect, trigger: animation.trigger, duration: animation.duration,
+            delay: animation.delay, source: animation.source, scaling: animation.scaling, timingCurve: animation.timingCurve, repetition: animation.repetition,
+            opacity: animation.opacity, rotationBehavior: animation.rotationBehavior, colorChange: animation.colorChange
+        )
+    }
+
+    /// Whether it starts a video or sound the slide holds.
+    public var playsMedia: Bool {
+        category == .other("mediacall") && source?.contains("playFrom") == true
+    }
+}
+
+/// OOXML's acceleration/deceleration fractions remap time without changing
+/// the duration. Integrating the piecewise linear speed gives the position.
+public struct AnimationTimingCurve: Equatable, Hashable, Sendable {
+    public var acceleration = 0.0
+    public var deceleration = 0.0
+
+    public func value(at progress: Double) -> Double {
+        let t = min(max(progress, 0), 1)
+        let a = min(max(acceleration, 0), 1)
+        let d = min(max(deceleration, 0), 1 - a)
+        let rate = 1 / (1 - (a + d) / 2)
+        if a > 0, t < a { return rate * t * t / (2 * a) }
+        if d > 0, t > 1 - d { return 1 - rate * pow(1 - t, 2) / (2 * d) }
+        return rate * (t - a / 2)
+    }
+}
+
+/// Scale percentages are measured against the original layout, independently
+/// on each axis. A later scale replaces the earlier held value.
+public struct AnimationScale: Equatable, Hashable, Sendable {
+    public var from = CGSize(width: 1, height: 1)
+    public var to = CGSize(width: 1.5, height: 1.5)
+
+    public func value(at progress: Double) -> CGSize {
+        CGSize(width: from.width + (to.width - from.width) * progress,
+               height: from.height + (to.height - from.height) * progress)
+    }
+}
+
+/// A motion path, as `p:animMotion` writes it: moves and lines and curves
+/// in fractions of the slide, from where the shape sits.
+public struct MotionPath: Equatable, Hashable, Sendable {
+    /// The path as written, such as `M 0 0 L 0.25 0.1 E`.
+    public var path: String
+    /// Layout paths are offsets from the original object center. Parent
+    /// paths give centers measured from the slide's upper-left corner.
+    public var usesSlideOrigin = false
+    public var isAdditive = false
+
+    /// The path flattened into points, in fractions of the slide.
+    public var points: [CGPoint] {
+        var tokens = path.replacingOccurrences(of: ",", with: " ")
+            .split(whereSeparator: \.isWhitespace).map(String.init)[...]
+        var result: [CGPoint] = []
+        var current = CGPoint.zero
+        var start = CGPoint.zero
+        var command = "M"
+        func number() -> CGFloat? {
+            guard let token = tokens.first, let value = Double(token) else { return nil }
+            tokens.removeFirst()
+            return CGFloat(value)
+        }
+        func point(relative: Bool) -> CGPoint? {
+            guard let x = number(), let y = number() else { return nil }
+            return relative ? CGPoint(x: current.x + x, y: current.y + y) : CGPoint(x: x, y: y)
+        }
+        while let token = tokens.first {
+            if let letter = token.first, letter.isLetter {
+                command = token
+                tokens.removeFirst()
+            }
+            let relative = command.first?.isLowercase ?? false
+            switch command.uppercased() {
+            case "M":
+                guard let next = point(relative: relative) else { return result }
+                current = next
+                start = next
+                result.append(next)
+                command = relative ? "l" : "L"
+            case "L":
+                guard let next = point(relative: relative) else { return result }
+                current = next
+                result.append(next)
+            case "C":
+                let from = current
+                guard let first = point(relative: relative), let second = point(relative: relative),
+                      let end = point(relative: relative) else { return result }
+                for step in 1...16 {
+                    let t = CGFloat(step) / 16
+                    let u = 1 - t
+                    result.append(CGPoint(
+                        x: u * u * u * from.x + 3 * u * u * t * first.x + 3 * u * t * t * second.x + t * t * t * end.x,
+                        y: u * u * u * from.y + 3 * u * u * t * first.y + 3 * u * t * t * second.y + t * t * t * end.y
+                    ))
+                }
+                current = end
+            case "Z":
+                current = start
+                result.append(start)
+            case "E":
+                return result
+            default:
+                tokens.removeFirst()
+            }
+        }
+        return result
+    }
+
+    /// Where along the path the shape is, `progress` of the way, in
+    /// fractions of the slide. The path is followed at an even pace.
+    public func offset(at progress: Double) -> CGPoint {
+        let points = points
+        guard let first = points.first, points.count > 1 else { return points.first ?? .zero }
+        var lengths: [CGFloat] = [0]
+        for index in 1..<points.count {
+            lengths.append(lengths[index - 1] + hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y))
+        }
+        guard let total = lengths.last, total > 0 else { return first }
+        let target = total * CGFloat(min(max(progress, 0), 1))
+        let index = lengths.firstIndex { $0 >= target } ?? lengths.count - 1
+        guard index > 0 else { return first }
+        let span = lengths[index] - lengths[index - 1]
+        let t = span > 0 ? (target - lengths[index - 1]) / span : 1
+        return CGPoint(
+            x: points[index - 1].x + (points[index].x - points[index - 1].x) * t,
+            y: points[index - 1].y + (points[index].y - points[index - 1].y) * t
+        )
+    }
+}
+
+/// How an animation leaves a shape at one moment, for drawing.
+public struct AnimatedAppearance: Equatable, Hashable, Sendable {
+    /// The part of a shape a wipe has revealed: a fraction of it, from one edge.
+    public struct Reveal: Equatable, Hashable, Sendable {
+        public var edge: ShapeAnimation.Direction
+        public var fraction: Double
+    }
+
+    public struct Mask: Equatable, Hashable, Sendable {
+        public var filter: AnimationFilter
+        public var progress: Double
+    }
+
+    public var colors: [AnimationColorChange.Target: [AnimationColorChange.Value]] = [:]
+    public var mask: Mask?
+    public var opacity = 1.0
+    /// Points the shape has moved.
+    public var offset = CGSize.zero
+    public var scale = 1.0
+    public var axisScale = CGSize(width: 1, height: 1)
+    /// Degrees clockwise, on top of the shape's own.
+    public var rotation = 0.0
+    public var reveal: Reveal?
+
+    public static let hidden = AnimatedAppearance(opacity: 0)
+
+    public var isIdentity: Bool { self == AnimatedAppearance() }
+}
+
+/// Every animated shape's look at one moment of a slideshow.
+public struct AnimationFrame: Equatable, Hashable, Sendable {
+    /// By `cNvPr id`.
+    public var shapes: [Int: AnimatedAppearance] = [:]
+    /// Each built paragraph's appearance, by `cNvPr id` then paragraph.
+    public var paragraphs: [Int: [Int: AnimatedAppearance]] = [:]
+}
+
+/// When a slide's animations run: grouped into steps a tap starts, each
+/// effect placed in seconds from the start of its step.
+public struct AnimationTimeline: Sendable {
+    public struct Entry: Sendable {
+        public var animation: ShapeAnimation
+        public var start: Double
+        public var end: Double { start + animation.activeDuration }
+    }
+
+    public private(set) var steps: [[Entry]] = []
+    /// Whether the first step runs as the slide appears, rather than on a tap.
+    public private(set) var startsAutomatically = false
+    private let animations: [ShapeAnimation]
+
+    public init(animations: [ShapeAnimation]) {
+        self.animations = animations
+        var subgroupStart = 0.0
+        for animation in animations {
+            if steps.isEmpty || animation.trigger == .onClick {
+                if steps.isEmpty { startsAutomatically = animation.trigger != .onClick }
+                steps.append([])
+                subgroupStart = 0
+            }
+            if animation.trigger == .afterPrevious, let last = steps.indices.last {
+                subgroupStart = steps[last].map(\.end).max() ?? 0
+            }
+            steps[steps.count - 1].append(Entry(animation: animation, start: subgroupStart + animation.delay))
+        }
+    }
+
+    /// Taps the slide's animations wait for.
+    public var tapCount: Int { steps.count - (startsAutomatically ? 1 : 0) }
+
+    /// Steps that have begun as the slide appears.
+    public var initiallyBegun: Int { startsAutomatically ? 1 : 0 }
+
+    public func duration(ofStep index: Int) -> Double {
+        guard steps.indices.contains(index) else { return 0 }
+        return steps[index].map(\.end).max() ?? 0
+    }
+
+    /// The step a tap starts on each animation, from one, or `nil` for those
+    /// that start with the slide.
+    public func tapNumber(of id: ShapeAnimation.ID) -> Int? {
+        guard let step = steps.firstIndex(where: { $0.contains { $0.animation.id == id } }) else { return nil }
+        return startsAutomatically ? (step == 0 ? nil : step) : step + 1
+    }
+
+    /// The look of every animated shape once `begun` steps have started, the
+    /// last of them `elapsed` seconds ago. `shapes` places fly-ins off the slide.
+    public func frame(begun: Int, elapsed: Double, shapes: [SlideShape], slideSize: CGSize) -> AnimationFrame {
+        var progress: [ShapeAnimation.ID: Double] = [:]
+        var ordered: [ShapeAnimation] = []
+        for (index, step) in steps.enumerated() where index < begun {
+            // XML order need not be chronological: effects sharing a trigger
+            // can have arbitrary delays. Ties retain the file's order.
+            for (_, entry) in step.enumerated().sorted(by: {
+                $0.element.start == $1.element.start ? $0.offset < $1.offset : $0.element.start < $1.element.start
+            }) {
+                if index < begun - 1 {
+                    progress[entry.animation.id] = entry.animation.progress(elapsed: entry.animation.activeDuration, finished: true)
+                } else if elapsed >= entry.start {
+                    progress[entry.animation.id] = entry.animation.progress(elapsed: elapsed - entry.start)
+                }
+                if progress[entry.animation.id] != nil { ordered.append(entry.animation) }
+            }
+        }
+
+        var frame = AnimationFrame()
+        let frames = Dictionary(shapes.map { ($0.shapeID, $0.frame.points) }) { first, _ in first }
+        for shapeID in Set(animations.map(\.shapeID)) {
+            guard let shapeFrame = frames[shapeID] else { continue }
+            let whole = animations.filter { $0.shapeID == shapeID && $0.paragraphs == nil }
+            var appearance = whole.first?.category == .entrance ? AnimatedAppearance.hidden : AnimatedAppearance()
+            for animation in ordered where animation.shapeID == shapeID && animation.paragraphs == nil {
+                guard let value = progress[animation.id] else { continue }
+                Self.apply(animation, at: value, to: &appearance, frame: shapeFrame, slideSize: slideSize)
+            }
+            if !appearance.isIdentity { frame.shapes[shapeID] = appearance }
+
+            let built = animations.filter { $0.shapeID == shapeID && $0.paragraphs != nil }
+            for paragraph in Set(built.flatMap { Array($0.paragraphs!) }) {
+                let covering = built.filter { $0.paragraphs!.contains(paragraph) }
+                var appearance = covering.first?.category == .entrance ? AnimatedAppearance.hidden : AnimatedAppearance()
+                for animation in ordered where animation.shapeID == shapeID && animation.paragraphs?.contains(paragraph) == true {
+                    guard let value = progress[animation.id] else { continue }
+                    Self.apply(animation, at: value, to: &appearance, frame: shapeFrame, slideSize: slideSize)
+                }
+                if !appearance.isIdentity { frame.paragraphs[shapeID, default: [:]][paragraph] = appearance }
+            }
+        }
+        return frame
+    }
+
+    /// The look of every animated shape `elapsed` seconds into playing the
+    /// whole slide through, each step starting as the last settles, as the
+    /// editor previews it.
+    public func playingThrough(at elapsed: Double, shapes: [SlideShape], slideSize: CGSize) -> AnimationFrame {
+        var remaining = elapsed
+        for index in steps.indices {
+            let length = duration(ofStep: index) + Self.pauseBetweenSteps
+            if remaining < length || index == steps.count - 1 {
+                return frame(begun: index + 1, elapsed: remaining, shapes: shapes, slideSize: slideSize)
+            }
+            remaining -= length
+        }
+        return frame(begun: 0, elapsed: 0, shapes: shapes, slideSize: slideSize)
+    }
+
+    /// How long playing the slide through takes.
+    public var playingThroughDuration: Double {
+        steps.indices.map { duration(ofStep: $0) }.reduce(0, +) + Double(max(steps.count - 1, 0)) * Self.pauseBetweenSteps
+    }
+
+    public static let pauseBetweenSteps = 0.4
+
+    // MARK: - Effects
+
+    private static func apply(
+        _ animation: ShapeAnimation, at progress: Double, to appearance: inout AnimatedAppearance,
+        frame: CGRect, slideSize: CGSize
+    ) {
+        let progress = animation.timingCurve?.value(at: progress) ?? progress
+        let eased = animation.timingCurve == nil ? 1 - pow(1 - progress, 3) : progress
+        switch animation.category {
+        case .entrance:
+            appearance.opacity = 1
+            appearance.reveal = nil
+            appearance.mask = nil
+            switch animation.effect {
+            case .appear: break
+            case .filter(let filter, _, _):
+                if progress < 1 { appearance.mask = .init(filter: filter, progress: progress) }
+            case .fly(let direction):
+                let start = offscreen(direction, frame: frame, slideSize: slideSize)
+                appearance.offset.width += start.width * (1 - eased)
+                appearance.offset.height += start.height * (1 - eased)
+            case .wipe(let direction):
+                if progress < 1 { appearance.reveal = .init(edge: direction, fraction: progress) }
+            case .zoom:
+                appearance.scale *= eased
+                appearance.opacity = progress
+            case .float:
+                appearance.offset.height += slideSize.height * 0.1 * (1 - eased)
+                appearance.opacity = progress
+            default:
+                appearance.opacity = progress
+            }
+        case .exit:
+            if progress >= 1 {
+                appearance.opacity = 0
+                return
+            }
+            switch animation.effect {
+            case .appear: break
+            case .filter(let filter, _, _):
+                appearance.mask = .init(filter: filter, progress: 1 - progress)
+            case .fly(let direction):
+                let end = offscreen(direction, frame: frame, slideSize: slideSize)
+                let accelerated = animation.timingCurve == nil ? pow(progress, 3) : progress
+                appearance.offset.width += end.width * accelerated
+                appearance.offset.height += end.height * accelerated
+            case .wipe(let direction):
+                appearance.reveal = .init(edge: direction.opposite, fraction: 1 - progress)
+            case .zoom:
+                appearance.scale *= 1 - (animation.timingCurve == nil ? pow(progress, 3) : progress)
+                appearance.opacity *= 1 - progress
+            case .float:
+                appearance.offset.height -= slideSize.height * 0.1 * (animation.timingCurve == nil ? pow(progress, 3) : progress)
+                appearance.opacity *= 1 - progress
+            default:
+                appearance.opacity *= 1 - progress
+            }
+        case .emphasis:
+            if let scaling = animation.scaling {
+                appearance.axisScale = scaling.value(at: progress)
+            } else { switch animation.effect {
+            case .pulse: appearance.scale *= 1 + 0.05 * sin(.pi * progress)
+            case .spin: if animation.rotationBehavior == nil { appearance.rotation += 360 * eased }
+            case .growShrink: appearance.axisScale = (animation.scaling ?? AnimationScale()).value(at: progress)
+            case .teeter: appearance.rotation += Teeter.angle(at: progress)
+            default: break
+            }
+            }
+        case .motionPath:
+            guard case .path(let path) = animation.effect else { return }
+            let point = path.offset(at: progress)
+            let offset = CGSize(
+                width: point.x * slideSize.width - (path.usesSlideOrigin ? frame.midX : 0),
+                height: point.y * slideSize.height - (path.usesSlideOrigin ? frame.midY : 0)
+            )
+            if path.isAdditive {
+                appearance.offset.width += offset.width
+                appearance.offset.height += offset.height
+            } else {
+                appearance.offset = offset
+            }
+        case .other:
+            break
+        }
+        if let opacity = animation.opacity { appearance.opacity = min(max(opacity.value(at: progress, base: appearance.opacity), 0), 1) }
+        if let rotation = animation.rotationBehavior { appearance.rotation = rotation.value(at: progress, base: appearance.rotation) }
+        if let color = animation.colorChange { appearance.colors[color.target, default: []].append(.init(change: color, progress: progress)) }
+    }
+
+    /// How far a shape moves to sit just off the slide past `edge`.
+    private static func offscreen(_ edge: ShapeAnimation.Direction, frame: CGRect, slideSize: CGSize) -> CGSize {
+        switch edge {
+        case .top: CGSize(width: 0, height: -frame.maxY)
+        case .bottom: CGSize(width: 0, height: slideSize.height - frame.minY)
+        case .left: CGSize(width: -frame.maxX, height: 0)
+        case .right: CGSize(width: slideSize.width - frame.minX, height: 0)
+        }
+    }
+}
+
+/// The rocking a teeter makes: turns, in degrees, each over a share of the
+/// effect's time, ending where it began.
+public enum Teeter {
+    public static let swings: [(share: Double, degrees: Double)] = [
+        (0.1, 4), (0.2, -8), (0.2, 8), (0.2, -8), (0.2, 8), (0.1, -4),
+    ]
+
+    public static func angle(at progress: Double) -> Double {
+        var angle = 0.0
+        var start = 0.0
+        for swing in swings {
+            let local = (progress - start) / swing.share
+            if local <= 0 { break }
+            angle += swing.degrees * min(local, 1)
+            start += swing.share
+        }
+        return angle
+    }
+}

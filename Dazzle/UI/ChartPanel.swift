@@ -1,3 +1,4 @@
+import DazzleEngine
 import SwiftUI
 
 /// The selected chart's type, data, title and legend.
@@ -24,7 +25,7 @@ struct ChartPanel: View {
 
     private func typeSection(_ chart: Chart) -> some View {
         Section("Chart.Section.Type") {
-            Picker("Chart.Type", selection: Binding(get: { chart.kind }, set: setKind)) {
+            Picker("Chart.Type", selection: Binding(get: { chart.kind }, set: { state.setChartKind($0, in: &presentation) })) {
                 ForEach(Chart.Kind.allCases, id: \.self) { kind in
                     Label(kind.label, systemImage: kind.symbol).tag(kind)
                 }
@@ -43,17 +44,6 @@ struct ChartPanel: View {
                     Text("Chart.Grouping.Percent").tag(Chart.Grouping.percentStacked)
                 }
                 .pickerStyle(.segmented)
-            }
-        }
-    }
-
-    private func setKind(_ kind: Chart.Kind) {
-        state.updateChart(in: &presentation) { chart in
-            let grouping = kind.hasAxes && kind != .scatter ? chart.plots.first?.grouping ?? .standard : .standard
-            chart.plots = [Chart.Plot(kind: kind, grouping: grouping, series: chart.allSeries)]
-            // A scatter chart's first column is numbers along the x axis.
-            if kind == .scatter, chart.categories.contains(where: { Double($0) == nil }) {
-                chart.categories = chart.categories.indices.map { String($0 + 1) }
             }
         }
     }
@@ -147,8 +137,8 @@ struct ChartDataGrid: View {
                         }
                         ForEach(Array(chart.allSeries.enumerated()), id: \.offset) { column, series in
                             let value = series.values.indices.contains(row) ? series.values[row] : nil
-                            CommitTextField("", text: value.map(Self.format) ?? "", isNumber: true) { text in
-                                let number = Self.parse(text)
+                            CommitTextField("", text: value.map(ChartValues.format) ?? "", isNumber: true) { text in
+                                let number = ChartValues.parse(text)
                                 change { $0.updateSeries(at: column) { series in
                                     while series.values.count <= row { series.values.append(nil) }
                                     series.values[row] = number
@@ -171,16 +161,6 @@ struct ChartDataGrid: View {
             .padding(.vertical, 4)
         }
         .scrollIndicators(.hidden)
-    }
-
-    static func format(_ value: Double) -> String {
-        value.formatted(.number.grouping(.never).precision(.fractionLength(0...6)))
-    }
-
-    static func parse(_ text: String) -> Double? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        return (try? Double(trimmed, format: .number)) ?? Double(trimmed)
     }
 }
 
@@ -213,91 +193,5 @@ struct CommitTextField: View {
                 if !focused, draft != text { commit(draft) }
             }
             .onSubmit { if draft != text { commit(draft) } }
-    }
-}
-
-extension Chart {
-    /// The `index`th series counting through every plot.
-    mutating func updateSeries(at index: Int, _ change: (inout Series) -> Void) {
-        var remaining = index
-        for plot in plots.indices {
-            if remaining < plots[plot].series.count {
-                change(&plots[plot].series[remaining])
-                return
-            }
-            remaining -= plots[plot].series.count
-        }
-    }
-
-    mutating func removeSeries(at index: Int) {
-        var remaining = index
-        for plot in plots.indices {
-            if remaining < plots[plot].series.count {
-                plots[plot].series.remove(at: remaining)
-                plots.removeAll { $0.series.isEmpty }
-                return
-            }
-            remaining -= plots[plot].series.count
-        }
-    }
-
-    mutating func addSeries() {
-        guard !plots.isEmpty else { return }
-        let number = allSeries.count + 1
-        plots[plots.count - 1].series.append(Series(
-            name: String(format: String(localized: "Chart.Sample.Series"), number),
-            values: Array(repeating: nil, count: categories.count)
-        ))
-    }
-
-    mutating func addCategory() {
-        let next = kind == .scatter
-            ? String((Double(categories.last ?? "0") ?? 0) + 1).replacingOccurrences(of: ".0", with: "")
-            : String(format: String(localized: "Chart.Sample.Category"), categories.count + 1)
-        categories.append(next)
-        for plot in plots.indices {
-            for series in plots[plot].series.indices { plots[plot].series[series].values.append(nil) }
-        }
-    }
-
-    mutating func removeCategory(at index: Int) {
-        guard categories.indices.contains(index) else { return }
-        categories.remove(at: index)
-        for plot in plots.indices {
-            for series in plots[plot].series.indices where plots[plot].series[series].values.indices.contains(index) {
-                plots[plot].series[series].values.remove(at: index)
-                // A slice's own colour belongs to the slice, which moves up.
-                plots[plot].series[series].pointColors = Dictionary(uniqueKeysWithValues:
-                    plots[plot].series[series].pointColors.compactMap { key, color in
-                        key == index ? nil : (key > index ? key - 1 : key, color)
-                    })
-            }
-        }
-    }
-}
-
-extension Chart.Kind {
-    var label: LocalizedStringKey {
-        switch self {
-        case .column: "Chart.Kind.Column"
-        case .bar: "Chart.Kind.Bar"
-        case .line: "Chart.Kind.Line"
-        case .area: "Chart.Kind.Area"
-        case .pie: "Chart.Kind.Pie"
-        case .doughnut: "Chart.Kind.Doughnut"
-        case .scatter: "Chart.Kind.Scatter"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .column: "chart.bar"
-        case .bar: "chart.bar.horizontal"
-        case .line: "chart.xyaxis.line"
-        case .area: "chart.line.uptrend.xyaxis"
-        case .pie: "chart.pie"
-        case .doughnut: "circle.circle"
-        case .scatter: "chart.dots.scatter"
-        }
     }
 }
