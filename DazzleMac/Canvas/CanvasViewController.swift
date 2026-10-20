@@ -44,7 +44,12 @@ final class CanvasViewController: NSViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        observing = Observing { [weak self] in self?.canvas.refresh() }
+        observing = Observing { [weak self] in
+            guard let self else { return }
+            canvas.refresh()
+            // A new slide size is fitted afresh.
+            if fitsToWindow { fit() }
+        }
     }
 
     override func viewDidAppear() {
@@ -68,6 +73,7 @@ final class CanvasViewController: NSViewController {
 
     func zoom(to magnification: CGFloat) {
         fitsToWindow = false
+        canvas.keepMargin(at: magnification)
         let center = NSPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
         scrollView.setMagnification(magnification, centeredAt: center)
         canvas.needsDisplay = true
@@ -81,18 +87,23 @@ final class CanvasViewController: NSViewController {
         zoom(to: Self.zoomSteps.last { $0 < scrollView.magnification - 0.01 } ?? scrollView.minMagnification)
     }
 
-    /// Fits the whole slide, with its margin, to the space the window gives it.
+    /// Fits the slide to the space the window gives it, leaving only the
+    /// canvas's margin round it.
     private func fit() {
         let available = scrollView.contentSize
-        let document = canvas.frame.size
-        guard available.width > 0, available.height > 0, document.width > 0, document.height > 0 else { return }
-        let scale = min(available.width / document.width, available.height / document.height)
-        scrollView.magnification = min(max(scale, scrollView.minMagnification), scrollView.maxMagnification)
+        let slide = deck.presentation.slideSize.points
+        let room = 2 * SlideCanvasView.screenMargin
+        guard available.width > room, available.height > room, slide.width > 0, slide.height > 0 else { return }
+        let scale = min((available.width - room) / slide.width, (available.height - room) / slide.height)
+        let magnification = min(max(scale, scrollView.minMagnification), scrollView.maxMagnification)
+        canvas.keepMargin(at: magnification)
+        scrollView.magnification = magnification
         canvas.needsDisplay = true
     }
 
     @objc private func didMagnify(_ notification: Notification) {
         fitsToWindow = false
+        canvas.keepMargin(at: scrollView.magnification)
         canvas.needsDisplay = true
     }
 }

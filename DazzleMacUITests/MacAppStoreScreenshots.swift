@@ -125,15 +125,15 @@ final class MacAppStoreScreenshots: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
     }
 
-    /// Clicks a point on the slide. The canvas is the slide with a margin of
-    /// 6% of its longer side all round; the sample deck is 16:9.
+    /// Clicks a point on the slide. The canvas is the slide with a margin
+    /// of 32 points on screen all round.
     @MainActor
     private func click(_ point: Point) {
-        let slide = CGSize(width: 16, height: 9)
-        let margin = max(slide.width, slide.height) * 0.06
+        let size = canvas.frame.size
+        let margin: CGFloat = 32
         let offset = CGVector(
-            dx: (margin + point.x * slide.width) / (slide.width + 2 * margin),
-            dy: (margin + point.y * slide.height) / (slide.height + 2 * margin)
+            dx: (margin + point.x * (size.width - 2 * margin)) / size.width,
+            dy: (margin + point.y * (size.height - 2 * margin)) / size.height
         )
         canvas.coordinate(withNormalizedOffset: offset).click()
         Thread.sleep(forTimeInterval: 0.5)

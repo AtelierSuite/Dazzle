@@ -85,9 +85,22 @@ final class SlideCanvasView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override var isOpaque: Bool { false }
 
-    /// The space round the slide, which handles reach into and clicks in
-    /// which select nothing.
-    private var margin: CGFloat { max(slideSize.width, slideSize.height) * 0.06 }
+    /// The space round the slide on screen, enough for the rotation handle
+    /// above a shape at the slide's top edge.
+    static let screenMargin: CGFloat = 32
+
+    /// The space round the slide, in slide points, which handles reach into
+    /// and clicks in which select nothing. It stays `screenMargin` on screen
+    /// at whatever zoom, so a fitted slide has the window to itself.
+    private(set) var margin: CGFloat = SlideCanvasView.screenMargin
+
+    /// Keeps the space round the slide the same on screen at a new zoom.
+    func keepMargin(at magnification: CGFloat) {
+        let margin = Self.screenMargin / max(magnification, 0.01)
+        guard abs(margin - self.margin) > 0.01 else { return }
+        self.margin = margin
+        refresh()
+    }
 
     /// Screen points per slide point.
     private var scale: CGFloat { max(enclosingScrollView?.magnification ?? 1, 0.01) }
@@ -107,11 +120,9 @@ final class SlideCanvasView: NSView {
     /// Takes up the presentation and the editor's state, as they are now.
     func refresh() {
         let presentation = deck.presentation
-        let size = presentation.slideSize.points
-        if size != slideSize || frame.size == .zero {
-            slideSize = size
-            setFrameSize(CGSize(width: size.width + 2 * margin, height: size.height + 2 * margin))
-        }
+        slideSize = presentation.slideSize.points
+        let size = CGSize(width: slideSize.width + 2 * margin, height: slideSize.height + 2 * margin)
+        if frame.size != size { setFrameSize(size) }
         // Read so that a change to any of them redraws.
         _ = (state.selectedSlideID, state.selectedShapeIDs, state.croppingShapeID, state.selectedCell, state.isEditingCell)
         if !state.selectedShapeIDs.contains(where: { interaction?.originals[$0] != nil }) { interaction = nil }
