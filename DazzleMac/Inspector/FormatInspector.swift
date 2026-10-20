@@ -513,7 +513,8 @@ extension InspectorViewController {
     private func buildSlide(_ slide: Slide) {
         form.section(String(localized: "Format.Section.Background"))
         form.row(String(localized: "Fill.Kind"), form.color(
-            choices: colorChoices, noneTitle: String(localized: "Fill.Automatic"), resolve: { [unowned self] in resolve($0) },
+            choices: colorChoices, noneTitle: String(localized: "Fill.Automatic"), noneIsAutomatic: true,
+            resolve: { [unowned self] in resolve($0) },
             get: { [unowned self] in
                 switch deck.selectedSlide?.background {
                 case nil: return (nil, true)

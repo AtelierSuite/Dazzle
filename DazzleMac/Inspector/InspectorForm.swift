@@ -285,24 +285,28 @@ final class InspectorForm {
             images: symbols.compactMap { NSImage(systemSymbolName: $0.0, accessibilityDescription: $0.1) },
             trackingMode: .momentary, target: nil, action: nil
         )
+        small(control)
         for (index, symbol) in symbols.enumerated() { control.setToolTip(symbol.1, forSegment: index) }
         bind(control) { perform(control.selectedSegment) }
         return control
     }
 
     /// A colour pop-up: the theme's colours, the system colours, and any
-    /// other from the colour panel. With `noneTitle`, a first item for none.
+    /// other from the colour panel. With `noneTitle`, a first item for none,
+    /// which with `noneIsAutomatic` means what the layout gives rather than nothing.
     func color(
-        choices: [ColorChoice], noneTitle: String? = nil, resolve: @escaping (DrawingColor) -> CGColor,
+        choices: [ColorChoice], noneTitle: String? = nil, noneIsAutomatic: Bool = false,
+        resolve: @escaping (DrawingColor) -> CGColor,
         get: @escaping () -> (color: DrawingColor?, isNone: Bool), set: @escaping (DrawingColor?) -> Void
     ) -> NSPopUpButton {
         let popup = NSPopUpButton()
+        small(popup)
         let menu = NSMenu()
         let custom = NSMenuItem(title: String(localized: "Mac.Inspector.CustomColour"), action: nil, keyEquivalent: "")
         menu.addItem(custom)
         if let noneTitle {
             let none = NSMenuItem(title: noneTitle, action: nil, keyEquivalent: "")
-            none.image = Self.swatch(nil)
+            none.image = noneIsAutomatic ? Self.automaticSwatch : Self.swatch(nil)
             menu.addItem(none)
         }
         for (index, choice) in choices.enumerated() {
@@ -347,19 +351,51 @@ final class InspectorForm {
                       let item = menu.items.first(where: { $0.representedObject as? String == choice.id }) {
                 popup.select(item)
             } else if let color {
+                // Named by its value, as the system colour panel shows it.
+                let shown = resolve(color)
                 custom.isHidden = false
-                custom.title = String(localized: "Mac.Inspector.CustomColour")
-                custom.image = Self.swatch(resolve(color))
+                custom.title = Self.hex(shown)
+                custom.image = Self.swatch(shown)
                 popup.select(custom)
             } else {
                 // Nothing of its own: what the theme or layout gives.
                 custom.isHidden = false
                 custom.title = String(localized: "Fill.Automatic")
-                custom.image = nil
+                custom.image = Self.automaticSwatch
                 popup.select(custom)
             }
         }
         return popup
+    }
+
+    /// A colour written as #RRGGBB.
+    static func hex(_ color: CGColor) -> String {
+        guard let srgb = NSColor(cgColor: color)?.usingColorSpace(.sRGB) else { return "#000000" }
+        let channel = { (value: CGFloat) in Int((min(max(value, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", channel(srgb.redComponent), channel(srgb.greenComponent), channel(srgb.blueComponent))
+    }
+
+    /// A square split light and dark across its diagonal: whatever the
+    /// theme or layout gives, rather than a colour of its own.
+    static let automaticSwatch = NSImage(size: NSSize(width: 14, height: 14), flipped: false) { rect in
+        let square = rect.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: square, xRadius: 3, yRadius: 3)
+        NSGraphicsContext.saveGraphicsState()
+        path.addClip()
+        NSColor.white.setFill()
+        square.fill()
+        let dark = NSBezierPath()
+        dark.move(to: NSPoint(x: square.maxX, y: square.minY))
+        dark.line(to: NSPoint(x: square.maxX, y: square.maxY))
+        dark.line(to: NSPoint(x: square.minX, y: square.maxY))
+        dark.close()
+        NSColor.secondaryLabelColor.setFill()
+        dark.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.separatorColor.setStroke()
+        path.lineWidth = 1
+        path.stroke()
+        return true
     }
 
     /// A small square of colour for a menu item; with none, a crossed-out square.
