@@ -560,20 +560,28 @@ extension InspectorViewController {
 
         form.section(String(localized: "Format.Section.Presentation"))
         let presets = SlideSizeConverter.Preset.allCases
-        let isCustom = SlideSizeConverter.Preset.matching(deck.presentation.slideSize) == nil
+        let shown = { [unowned self] in Self.preset(shaped: deck.presentation.slideSize) }
+        let isCustom = shown() == nil
         form.row(String(localized: "Format.SlideSize"), form.popup(
             presets.map(\.label) + (isCustom ? [String(localized: "SlideSize.Custom")] : []),
-            get: { [unowned self] in
-                SlideSizeConverter.Preset.matching(deck.presentation.slideSize).flatMap(presets.firstIndex(of:)) ?? presets.count
-            },
+            get: { shown().flatMap(presets.firstIndex(of:)) ?? presets.count },
             set: { [unowned self] index in
-                guard presets.indices.contains(index) else { return }
+                // Picking the shape the slides already have changes nothing.
+                guard presets.indices.contains(index), presets[index] != shown() else { return }
                 askToResize(to: presets[index])
             }
         ))
         form.row(nil, form.checkbox(String(localized: "Format.LoopSlideshow"), get: { [unowned self] in
             deck.presentation.loopsSlideshow
         }, set: { [unowned self] isOn in edit { state.setLoopsSlideshow(isOn, in: &$0) } }))
+    }
+
+    /// The preset a slide size is, or has the shape of: a 16:9 deck made 10
+    /// inches wide is widescreen, as PowerPoint's own is 13.33 inches.
+    static func preset(shaped size: EMUSize) -> SlideSizeConverter.Preset? {
+        SlideSizeConverter.Preset.matching(size) ?? SlideSizeConverter.Preset.allCases.first {
+            abs($0.size.aspectRatio - size.aspectRatio) < 0.005
+        }
     }
 
     /// Asks how to fit what is on the slides to a new size, then resizes.
