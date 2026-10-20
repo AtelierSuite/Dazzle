@@ -450,12 +450,14 @@ extension InspectorViewController {
                     var frame = shape.frame.points
                     set(&frame, CGFloat(value))
                     edit { state.setTransform(frame: frame, rotation: shape.rotation, of: shape.id, in: &$0) }
-                }, range: minimum...10_000, step: 1, unit: "pt")
+                }, range: minimum...10_000, step: 1)
             }
-            form.row("X", frameField({ $0.minX }, { $0.origin.x = $1 }, minimum: -10_000))
-            form.row("Y", frameField({ $0.minY }, { $0.origin.y = $1 }, minimum: -10_000))
-            form.row(String(localized: "Mac.Inspector.Width"), frameField({ $0.width }, { $0.size.width = $1 }, minimum: 0))
-            form.row(String(localized: "Mac.Inspector.Height"), frameField({ $0.height }, { $0.size.height = $1 }, minimum: 0))
+            form.pair(String(localized: "Mac.Inspector.Position"),
+                      ("X", frameField({ $0.minX }, { $0.origin.x = $1 }, minimum: -10_000)),
+                      ("Y", frameField({ $0.minY }, { $0.origin.y = $1 }, minimum: -10_000)))
+            form.pair(String(localized: "Mac.Inspector.Size"),
+                      (String(localized: "Mac.Inspector.Width.Short"), frameField({ $0.width }, { $0.size.width = $1 }, minimum: 0)),
+                      (String(localized: "Mac.Inspector.Height.Short"), frameField({ $0.height }, { $0.size.height = $1 }, minimum: 0)))
             if shape.canRotate {
                 form.row(String(localized: "Format.Rotation"), form.number(get: { [unowned self] in
                     (deck.selectedShape?.rotation ?? 0).rounded()
