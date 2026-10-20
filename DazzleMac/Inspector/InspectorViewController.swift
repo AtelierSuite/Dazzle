@@ -10,6 +10,9 @@ final class InspectorViewController: NSViewController {
     var state: EditorState { deck.state }
     let form = InspectorForm()
     private let tabs = NSSegmentedControl()
+    private let scrollView = NSScrollView()
+    /// The kind of thing the controls were last built for.
+    private var builtForKind: [AnyHashable]?
     private var observing: Observing?
     /// What the controls were last built for; they are built again only when it changes.
     private var builtFor: [AnyHashable]?
@@ -51,7 +54,6 @@ final class InspectorViewController: NSViewController {
         document.translatesAutoresizingMaskIntoConstraints = false
         form.stack.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(form.stack)
-        let scrollView = NSScrollView()
         scrollView.documentView = document
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
@@ -107,15 +109,37 @@ final class InspectorViewController: NSViewController {
         let key = structure()
         if key != builtFor {
             builtFor = key
+            // Another shape of the same kind keeps the place scrolled to.
+            let kind = kindOfSelection()
+            let scrolledTo = kind == builtForKind ? scrollView.contentView.bounds.origin : nil
+            builtForKind = kind
             form.reset()
             switch tab {
             case .format: buildFormat()
             case .animate: buildAnimate()
             case .comments: buildComments()
             }
+            form.update()
+            if let scrolledTo {
+                view.layoutSubtreeIfNeeded()
+                let documentHeight = scrollView.documentView?.frame.height ?? 0
+                let limit = max(documentHeight - scrollView.contentView.bounds.height, 0)
+                scrollView.contentView.scroll(to: NSPoint(x: 0, y: min(scrolledTo.y, limit)))
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+            } else {
+                scrollView.contentView.scroll(to: .zero)
+            }
         }
         form.update()
         if tab == .animate { animationList.reloadData() }
+    }
+
+    /// What is selected, by kind rather than by which: the slide, or a
+    /// picture, a table, text being typed, and so on.
+    private func kindOfSelection() -> [AnyHashable] {
+        var kind: [AnyHashable] = [tab.rawValue, state.isEditingCell, state.editingTextShapeID != nil, state.hasMultipleSelection]
+        kind.append(deck.selectedShape.map(Self.kindName(of:)) ?? "slide")
+        return kind
     }
 
     /// What decides which controls the inspector shows.
