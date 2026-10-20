@@ -106,40 +106,6 @@
 		DA0000000000000000000026 /* DazzleMacUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DazzleMacUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFrameworksBuildPhase section */
-		DA0000000000000000000049 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		DA000000000000000000004B /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				DA0000000000000000000051 /* DazzleEngine.framework in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		DA000000000000000000004D /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				DA0000000000000000000053 /* DazzleEngine.framework in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		DA00000000000000000000E1 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				DA00000000000000000000E4 /* DazzleEngine.framework in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXFrameworksBuildPhase section */
-
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		DA0000000000000000000014 /* Exceptions for "Dazzle" folder in "Dazzle" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -196,11 +162,6 @@
 			path = Common;
 			sourceTree = "<group>";
 		};
-		DA000000000000000000001A /* DazzleMacUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = DazzleMacUITests;
-			sourceTree = "<group>";
-		};
 		DA0000000000000000000018 /* DazzleMac */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -209,7 +170,46 @@
 			path = DazzleMac;
 			sourceTree = "<group>";
 		};
+		DA000000000000000000001A /* DazzleMacUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DazzleMacUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		DA0000000000000000000049 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA000000000000000000004B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DA0000000000000000000051 /* DazzleEngine.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA000000000000000000004D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DA0000000000000000000053 /* DazzleEngine.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA00000000000000000000E1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DA00000000000000000000E4 /* DazzleEngine.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		DA0000000000000000000002 = {
@@ -263,8 +263,8 @@
 			);
 			fileSystemSynchronizedGroups = (
 				DA0000000000000000000010 /* Dazzle */,
-				DA0000000000000000000017 /* Common */,
 				DA0000000000000000000012 /* Shared */,
+				DA0000000000000000000017 /* Common */,
 			);
 			name = Dazzle;
 			packageProductDependencies = (
@@ -376,9 +376,9 @@
 				DA00000000000000000000E7 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				DA0000000000000000000018 /* DazzleMac */,
-				DA0000000000000000000017 /* Common */,
 				DA0000000000000000000012 /* Shared */,
+				DA0000000000000000000017 /* Common */,
+				DA0000000000000000000018 /* DazzleMac */,
 			);
 			name = "Dazzle for Mac";
 			packageProductDependencies = (
@@ -474,13 +474,6 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		DA0000000000000000000048 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		DA0000000000000000000041 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -489,6 +482,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		DA0000000000000000000044 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA0000000000000000000048 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
