@@ -27,6 +27,14 @@ final class SlideCanvasView: NSView {
     private var guides: [Snapping.Guide] = []
     /// The rectangle being dragged out to select what it crosses.
     private var marquee: CGRect?
+    /// What the rectangle crosses so far, shown here and handed to the
+    /// editor only when the mouse is let go. Selecting as it goes would
+    /// rebuild the inspector and the toolbar at every shape crossed.
+    private var marqueeSelection: [SlideShape.ID]?
+    /// The slide drawn once when the rectangle is started, which stays as
+    /// it is until it is let go, so the drag doesn't draw every shape anew
+    /// each time the mouse moves.
+    private var marqueeBackdrop: CGImage?
     /// A comment's pin being dragged to another place.
     private var commentDrag: (id: String, position: CGPoint)?
     /// Typing into a shape or a table cell, over the slide.
@@ -149,8 +157,17 @@ final class SlideCanvasView: NSView {
 
         context.saveGState()
         context.translateBy(x: margin, y: margin)
-        SlideRenderer(presentation: deck.presentation, slide: displayed, options: renderOptions(for: displayed, at: Date()))
-            .draw(in: context, size: slideSize)
+        if let marqueeBackdrop {
+            // The image counts y upwards; the view counts it downwards.
+            context.saveGState()
+            context.translateBy(x: 0, y: slideSize.height)
+            context.scaleBy(x: 1, y: -1)
+            context.draw(marqueeBackdrop, in: CGRect(origin: .zero, size: slideSize))
+            context.restoreGState()
+        } else {
+            SlideRenderer(presentation: deck.presentation, slide: displayed, options: renderOptions(for: displayed, at: Date()))
+                .draw(in: context, size: slideSize)
+        }
         drawGuides(in: context)
         drawSelection(of: displayed, in: context)
         drawCommentPins(on: displayed, in: context)
@@ -219,7 +236,8 @@ final class SlideCanvasView: NSView {
 
     private func drawSelection(of slide: Slide, in context: CGContext) {
         let accent = NSColor.controlAccentColor.cgColor
-        let selected = slide.shapes.filter { state.isSelected($0.id) }
+        let ids = marqueeSelection ?? state.selectedShapeIDs
+        let selected = slide.shapes.filter { ids.contains($0.id) }
         if selected.count == 1, let shape = selected.first {
             if shape.id == state.croppingShapeID, case .picture(let picture) = shape.kind {
                 drawCrop(of: shape, picture: picture, in: context)
@@ -684,19 +702,35 @@ final class SlideCanvasView: NSView {
     private func trackMarquee(on slide: Slide, from event: NSEvent) {
         let start = slidePoint(event)
         let before = state.selectedShapeIDs
-        _ = track(from: event, threshold: Self.dragThreshold) { point, next in
+        let shown = slide.shapes.filter { !$0.isHidden }.map { (id: $0.id, box: $0.boundingBox) }
+        marqueeSelection = before
+        let dragged = track(from: event, threshold: Self.dragThreshold) { point, next in
+            if marqueeBackdrop == nil { marqueeBackdrop = backdrop(of: slide) }
             let rect = CGRect(x: min(start.x, point.x), y: min(start.y, point.y),
                               width: abs(point.x - start.x), height: abs(point.y - start.y))
             marquee = rect
-            let crossed = slide.shapes.filter { !$0.isHidden && $0.boundingBox.intersects(rect) }.map(\.id)
-            let ids = next.modifierFlags.contains(.shift) ? before + crossed.filter { !before.contains($0) } : crossed
-            if ids != state.selectedShapeIDs {
-                state.endEditingText()
-                state.selectedShapeIDs = ids
-            }
+            let crossed = shown.filter { $0.box.intersects(rect) }.map(\.id)
+            marqueeSelection = next.modifierFlags.contains(.shift) ? before + crossed.filter { !before.contains($0) } : crossed
+        }
+        if dragged, let ids = marqueeSelection, ids != state.selectedShapeIDs {
+            state.endEditingText()
+            state.selectedShapeIDs = ids
         }
         marquee = nil
+        marqueeSelection = nil
+        marqueeBackdrop = nil
         needsDisplay = true
+    }
+
+    /// The slide as it is drawn now, at the screen's resolution, or nil
+    /// while it is moving and so has to be drawn afresh each time.
+    private func backdrop(of slide: Slide) -> CGImage? {
+        guard state.animationPreviewStartedAt == nil, interaction == nil, cropDraft == nil, commentDrag == nil else { return nil }
+        let pixels = slideSize.width * scale * (window?.backingScaleFactor ?? 2)
+        let width = Int(min(pixels, 8192).rounded(.up))
+        return SlideExporter.cgImage(
+            of: slide, in: deck.presentation, width: max(width, 1), opaque: false, options: renderOptions(for: slide, at: Date())
+        )
     }
 
     /// Writes a finished move, resize or turn to the document.
