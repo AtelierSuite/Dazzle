@@ -39,11 +39,13 @@ final class InspectorForm {
         updates.forEach { $0() }
     }
 
-    /// Controls at the size Mac inspectors use.
+    /// Controls at the size Mac inspectors use. They give way to the pane's
+    /// width rather than widen it for a long title, such as a font's.
     @discardableResult
     func regular<Control: NSControl>(_ control: Control) -> Control {
         control.controlSize = .regular
         control.font = .systemFont(ofSize: NSFont.systemFontSize)
+        if !(control is NSStepper) { control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal) }
         return control
     }
 
@@ -92,6 +94,7 @@ final class InspectorForm {
     func row(_ title: String?, _ control: NSView) {
         if let control = control as? NSControl, !(control is NSTextField) { regular(control) }
         if let segments = control as? NSSegmentedControl { segments.segmentDistribution = .fillEqually }
+        control.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         guard let title else { return add(control, fill: true) }
         let row = NSStackView()
         row.addView(label(title), in: .leading)
