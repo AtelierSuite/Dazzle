@@ -13,42 +13,37 @@ final class InspectorForm {
     private var updates: [() -> Void] = []
     private var targets: [ActionTarget] = []
 
-    static let labelWidth: CGFloat = 92
-    /// Sections the user has folded away, kept as they rebuild.
-    private static var collapsed: Set<String> = []
+    /// The space either side of the rows.
+    static let inset: CGFloat = 14
+    /// The share of a row a labelled control takes, so they line up down the pane.
+    static let controlShare: CGFloat = 0.62
 
-    private struct Section {
-        let title: String
-        let disclosure: NSButton
-        var views: [NSView] = []
-    }
-
-    private var sections: [Section] = []
+    /// The last row added, which a new section's heading leaves room after.
+    private var lastRow: NSView?
 
     init() {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 20, right: 16)
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: Self.inset, bottom: Self.inset, right: Self.inset)
     }
 
     func reset() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         updates = []
         targets = []
-        sections = []
+        lastRow = nil
     }
 
     func update() {
         updates.forEach { $0() }
-        applyCollapsing()
     }
 
-    /// Controls at the size Mac inspectors use, so more fits without scrolling.
+    /// Controls at the size Mac inspectors use.
     @discardableResult
-    func small<Control: NSControl>(_ control: Control) -> Control {
-        control.controlSize = .small
-        control.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+    func regular<Control: NSControl>(_ control: Control) -> Control {
+        control.controlSize = .regular
+        control.font = .systemFont(ofSize: NSFont.systemFontSize)
         return control
     }
 
@@ -59,108 +54,88 @@ final class InspectorForm {
 
     // MARK: - Layout
 
-    /// Starts a section under a heading that folds it away when clicked.
+    /// Starts a section under a heading, set apart from the one before by a line.
     func section(_ title: String) {
         if !stack.arrangedSubviews.isEmpty {
+            if let lastRow { stack.setCustomSpacing(14, after: lastRow) }
             let separator = NSBox()
             separator.boxType = .separator
-            stack.addArrangedSubview(separator)
-            separator.translatesAutoresizingMaskIntoConstraints = false
-            separator.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
-            stack.setCustomSpacing(10, after: separator)
+            add(separator, fill: true)
+            stack.setCustomSpacing(12, after: separator)
         }
-        let disclosure = NSButton(title: title, target: nil, action: nil)
-        disclosure.isBordered = false
-        disclosure.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-        disclosure.imagePosition = .imageTrailing
-        disclosure.imageHugsTitle = true
-        disclosure.contentTintColor = .secondaryLabelColor
-        disclosure.setAccessibilityLabel(title)
-        stack.addArrangedSubview(disclosure)
-        let index = sections.count
-        sections.append(Section(title: title, disclosure: disclosure))
-        bind(disclosure) { [unowned self] in
-            if Self.collapsed.contains(title) { Self.collapsed.remove(title) } else { Self.collapsed.insert(title) }
-            // Shown again, the section's rows take up what they should show.
-            sections[index].views.forEach { $0.isHidden = false }
-            update()
-        }
-    }
-
-    /// Hides the rows of folded sections, and marks each heading's state.
-    private func applyCollapsing() {
-        for section in sections {
-            let isCollapsed = Self.collapsed.contains(section.title)
-            section.disclosure.image = NSImage(
-                systemSymbolName: isCollapsed ? "chevron.right" : "chevron.down", accessibilityDescription: nil
-            )?.withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
-            section.disclosure.setAccessibilityExpanded(!isCollapsed)
-            if isCollapsed { section.views.forEach { $0.isHidden = true } }
-        }
+        let heading = NSTextField(labelWithString: title)
+        heading.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        heading.textColor = .secondaryLabelColor
+        heading.lineBreakMode = .byTruncatingTail
+        heading.setAccessibilityRole(.staticText)
+        add(heading)
     }
 
     func note(_ text: String) {
         let label = NSTextField(wrappingLabelWithString: text)
         label.textColor = .secondaryLabelColor
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize - 1)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         add(label, fill: true)
     }
 
-    private func label(_ title: String?, width: CGFloat? = InspectorForm.labelWidth) -> NSTextField {
-        let label = NSTextField(labelWithString: title ?? "")
-        label.alignment = .right
-        label.textColor = .secondaryLabelColor
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+    private func label(_ title: String) -> NSTextField {
+        let label = NSTextField(labelWithString: title)
         label.lineBreakMode = .byTruncatingTail
-        if let width {
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.widthAnchor.constraint(equalToConstant: width).isActive = true
-        }
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return label
     }
 
-    /// A control with a label before it.
+    /// A control with a label at the start of the row and the control at its
+    /// end. Controls that fill take the same share of every row, so they line
+    /// up down the pane; numbers keep their own size. With no label, the
+    /// control takes the whole row.
     func row(_ title: String?, _ control: NSView) {
-        if let control = control as? NSControl, control.controlSize != .small, !(control is NSTextField) { small(control) }
-        let row = NSStackView(views: [label(title), control])
-        row.spacing = 8
-        row.alignment = .firstBaseline
-        control.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        if let control = control as? NSControl, !(control is NSTextField) { regular(control) }
+        if let segments = control as? NSSegmentedControl { segments.segmentDistribution = .fillEqually }
+        guard let title else { return add(control, fill: true) }
+        let row = NSStackView()
+        row.addView(label(title), in: .leading)
+        row.addView(control, in: .trailing)
+        if !(control is NumberView) {
+            control.widthAnchor.constraint(equalTo: row.widthAnchor, multiplier: Self.controlShare).isActive = true
+        }
         add(row, fill: true)
     }
 
-    /// Two controls on one row, such as X and Y, each with a short label.
+    /// Two numbers on one row, such as X and Y, each with a short label.
     func pair(_ title: String?, _ first: (String, NSView), _ second: (String, NSView)) {
-        let row = NSStackView(views: [label(title), label(first.0, width: nil), first.1, label(second.0, width: nil), second.1])
-        row.spacing = 4
-        row.setCustomSpacing(8, after: row.arrangedSubviews[0])
-        row.setCustomSpacing(10, after: first.1)
-        row.alignment = .firstBaseline
+        let row = NSStackView()
+        row.addView(label(title ?? ""), in: .leading)
+        for (index, item) in [first, second].enumerated() {
+            let short = NSTextField(labelWithString: item.0)
+            short.textColor = .secondaryLabelColor
+            row.addView(short, in: .trailing)
+            row.addView(item.1, in: .trailing)
+            if index == 0 { row.setCustomSpacing(10, after: item.1) }
+        }
         add(row, fill: true)
-        // The two halves share the room evenly.
-        first.1.widthAnchor.constraint(equalTo: second.1.widthAnchor).isActive = true
     }
 
     func add(_ view: NSView, fill: Bool = false) {
         stack.addArrangedSubview(view)
-        if !sections.isEmpty { sections[sections.count - 1].views.append(view) }
+        lastRow = view
         if fill {
             view.translatesAutoresizingMaskIntoConstraints = false
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -2 * Self.inset).isActive = true
         }
     }
 
     // MARK: - Controls
 
     func checkbox(_ title: String, get: @escaping () -> Bool, set: @escaping (Bool) -> Void) -> NSButton {
-        let box = small(NSButton(checkboxWithTitle: title, target: nil, action: nil))
+        let box = regular(NSButton(checkboxWithTitle: title, target: nil, action: nil))
         bind(box) { set(box.state == .on) }
         updates.append { box.state = get() ? .on : .off }
         return box
     }
 
     func button(_ title: String, symbol: String? = nil, action: @escaping () -> Void) -> NSButton {
-        let button = small(NSButton(title: title, target: nil, action: nil))
+        let button = regular(NSButton(title: title, target: nil, action: nil))
         button.bezelStyle = .push
         if let symbol {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
@@ -182,7 +157,7 @@ final class InspectorForm {
 
     /// A pop-up of titles; `get` gives the index shown, or `nil` for none of them.
     func popup(_ titles: [String], get: @escaping () -> Int?, set: @escaping (Int) -> Void) -> NSPopUpButton {
-        let popup = small(NSPopUpButton())
+        let popup = regular(NSPopUpButton())
         popup.addItems(withTitles: titles)
         bind(popup) { set(popup.indexOfSelectedItem) }
         updates.append {
@@ -200,7 +175,7 @@ final class InspectorForm {
         get: @escaping () -> Double, set: @escaping (Double) -> Void, range: ClosedRange<Double>, step: Double,
         unit: String = ""
     ) -> NSView {
-        let field = small(NSTextField())
+        let field = regular(NSTextField())
         field.alignment = .right
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
@@ -209,11 +184,11 @@ final class InspectorForm {
         formatter.maximum = NSNumber(value: range.upperBound)
         field.formatter = formatter
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        let preferred = field.widthAnchor.constraint(equalToConstant: 58)
+        field.widthAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
+        let preferred = field.widthAnchor.constraint(equalToConstant: 56)
         preferred.priority = .defaultLow
         preferred.isActive = true
-        let stepper = small(NSStepper())
+        let stepper = regular(NSStepper())
         stepper.minValue = range.lowerBound
         stepper.maxValue = range.upperBound
         stepper.increment = step
@@ -225,17 +200,20 @@ final class InspectorForm {
             stepper.doubleValue = value
             if field.currentEditor() == nil { field.doubleValue = value }
         }
-        let unitLabel = label(unit, width: nil)
-        unitLabel.alignment = .left
-        let views: [NSView] = unit.isEmpty ? [field, stepper] : [field, unitLabel, stepper]
-        let stack = NSStackView(views: views)
-        stack.spacing = 2
+        let views: [NSView] = [field, stepper]
+        let stack = NumberView(views: views)
+        if !unit.isEmpty {
+            let unitLabel = NSTextField(labelWithString: unit)
+            unitLabel.textColor = .secondaryLabelColor
+            stack.addArrangedSubview(unitLabel)
+        }
+        stack.spacing = 4
         return stack
     }
 
     /// Text set when it is committed, by Return or by leaving the field.
     func text(placeholder: String, get: @escaping () -> String, set: @escaping (String) -> Void) -> NSTextField {
-        let field = small(NSTextField())
+        let field = regular(NSTextField())
         field.placeholderString = placeholder
         field.lineBreakMode = .byTruncatingTail
         bind(field) { set(field.stringValue) }
@@ -249,7 +227,7 @@ final class InspectorForm {
             images: symbols.compactMap { NSImage(systemSymbolName: $0.0, accessibilityDescription: $0.1) },
             trackingMode: .selectAny, target: nil, action: nil
         )
-        small(control)
+        regular(control)
         for (index, symbol) in symbols.enumerated() { control.setToolTip(symbol.1, forSegment: index) }
         var shown: [Bool] = []
         bind(control) {
@@ -272,7 +250,7 @@ final class InspectorForm {
             images: symbols.compactMap { NSImage(systemSymbolName: $0.0, accessibilityDescription: $0.1) },
             trackingMode: .selectOne, target: nil, action: nil
         )
-        small(control)
+        regular(control)
         for (index, symbol) in symbols.enumerated() { control.setToolTip(symbol.1, forSegment: index) }
         bind(control) { set(control.selectedSegment) }
         updates.append { control.selectedSegment = get() ?? -1 }
@@ -285,7 +263,7 @@ final class InspectorForm {
             images: symbols.compactMap { NSImage(systemSymbolName: $0.0, accessibilityDescription: $0.1) },
             trackingMode: .momentary, target: nil, action: nil
         )
-        small(control)
+        regular(control)
         for (index, symbol) in symbols.enumerated() { control.setToolTip(symbol.1, forSegment: index) }
         bind(control) { perform(control.selectedSegment) }
         return control
@@ -300,7 +278,7 @@ final class InspectorForm {
         get: @escaping () -> (color: DrawingColor?, isNone: Bool), set: @escaping (DrawingColor?) -> Void
     ) -> NSPopUpButton {
         let popup = NSPopUpButton()
-        small(popup)
+        regular(popup)
         let menu = NSMenu()
         let custom = NSMenuItem(title: String(localized: "Mac.Inspector.CustomColour"), action: nil, keyEquivalent: "")
         menu.addItem(custom)
@@ -431,6 +409,9 @@ final class InspectorForm {
         control.action = #selector(ActionTarget.run(_:))
     }
 }
+
+/// A number field with its stepper and unit, which keeps its own size in a row.
+final class NumberView: NSStackView {}
 
 /// Calls a closure when a control acts.
 @MainActor

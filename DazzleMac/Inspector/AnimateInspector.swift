@@ -14,7 +14,7 @@ extension InspectorViewController: NSTableViewDataSource, NSTableViewDelegate {
         let canEdit = slide.canEditShapes
         let hasSelection = deck.selectedShapes.contains(where: \.isEditable)
 
-        let add = NSPopUpButton(frame: .zero, pullsDown: true)
+        let add = form.regular(NSPopUpButton(frame: .zero, pullsDown: true))
         add.addItem(withTitle: String(localized: "Animation.Add"))
         for category in [ShapeAnimation.Category.entrance, .emphasis, .exit] {
             let header = NSMenuItem(title: category.label, action: nil, keyEquivalent: "")
@@ -46,8 +46,9 @@ extension InspectorViewController: NSTableViewDataSource, NSTableViewDelegate {
         }
         preview.isEnabled = !slide.animations.isEmpty
         let buttons = NSStackView(views: [add, preview])
-        buttons.spacing = 8
-        form.add(buttons)
+        buttons.distribution = .fillProportionally
+        buttons.spacing = 6
+        form.add(buttons, fill: true)
         if !hasSelection, canEdit { form.note(String(localized: "Animation.SelectHint")) }
 
         guard !slide.animations.isEmpty else { return }
@@ -146,7 +147,8 @@ extension InspectorViewController: NSTableViewDataSource, NSTableViewDelegate {
         order.isEnabled = canEdit
         delete.isEnabled = canEdit
         let row = NSStackView(views: [order, delete])
-        row.spacing = 8
+        row.distribution = .fillEqually
+        row.spacing = 6
         form.row(nil, row)
     }
 

@@ -97,12 +97,12 @@ extension InspectorViewController {
         form.onUpdate { [unowned self] in
             _ = slideTarget
             let link = get()
-            if case .url? = link { address.superview?.isHidden = false } else { address.superview?.isHidden = true }
+            if case .url? = link { address.isHidden = false } else { address.isHidden = true }
             guard case .slide(let id)? = link else {
-                slides.superview?.isHidden = true
+                slides.isHidden = true
                 return
             }
-            slides.superview?.isHidden = false
+            slides.isHidden = false
             let presentation = deck.presentation
             slides.removeAllItems()
             slides.addItems(withTitles: presentation.slides.enumerated().map { index, slide in
@@ -139,7 +139,7 @@ extension InspectorViewController {
             let family = values[index]
             edit { state.setFontFamily(family, in: &$0) }
         })
-        form.row(String(localized: "Format.Font"), fonts)
+        form.row(nil, fonts)
 
         form.row(String(localized: "Format.Text.Size"), form.number(get: { [unowned self] in
             Double(run.size ?? 1_800) / 100
@@ -161,7 +161,7 @@ extension InspectorViewController {
             default: edit { state.toggleStrikethrough(in: &$0) }
             }
         })
-        form.row(String(localized: "Mac.Inspector.Style"), styles)
+        form.row(nil, styles)
 
         form.row(String(localized: "Format.Section.TextColor"), form.color(
             choices: colorChoices, resolve: { [unowned self] in resolve($0) },
@@ -170,7 +170,7 @@ extension InspectorViewController {
         ))
 
         let alignments = ParagraphAlignment.allCases
-        form.row(String(localized: "Format.Alignment"), form.choice([
+        form.row(nil, form.choice([
             ("text.alignleft", String(localized: "Menu.Format.AlignLeft")), ("text.aligncenter", String(localized: "Menu.Format.Centre")),
             ("text.alignright", String(localized: "Menu.Format.AlignRight")), ("text.justify", String(localized: "Menu.Format.Justify")),
         ], get: { [unowned self] in
@@ -191,7 +191,10 @@ extension InspectorViewController {
         ]) { [unowned self] index in
             edit { state.changeIndent(by: index == 0 ? -1 : 1, in: &$0) }
         }
+        list.setContentHuggingPriority(.init(1), for: .horizontal)
+        indent.setContentHuggingPriority(.required, for: .horizontal)
         let listRow = NSStackView(views: [list, indent])
+        listRow.distribution = .fill
         listRow.spacing = 6
         form.row(String(localized: "Format.List"), listRow)
 
@@ -431,6 +434,7 @@ extension InspectorViewController {
             edit { state.resetCrop(in: &$0) }
         }
         let buttons = NSStackView(views: [crop, reset])
+        buttons.distribution = .fillEqually
         buttons.spacing = 6
         form.row(nil, replace)
         form.row(nil, buttons)

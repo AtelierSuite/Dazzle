@@ -65,7 +65,8 @@ final class InspectorViewController: NSViewController {
         NSLayoutConstraint.activate([
             tabs.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 10),
             tabs.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            scrollView.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 6),
+            tabs.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 12),
+            scrollView.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 10),
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),

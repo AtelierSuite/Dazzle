@@ -19,7 +19,7 @@ extension InspectorViewController {
         }))
         form.note(String(localized: "Comments.YourName.Footer"))
 
-        let draft = NSTextField()
+        let draft = form.regular(NSTextField())
         draft.placeholderString = String(localized: "Comments.Placeholder")
         draft.setAccessibilityIdentifier("newComment")
         let add = form.button(String(localized: "Comments.Add"), symbol: "plus.bubble") { [unowned self] in
@@ -29,7 +29,7 @@ extension InspectorViewController {
         }
         form.section(String(localized: "Comments.New"))
         form.add(draft, fill: true)
-        form.add(add)
+        form.add(add, fill: true)
 
         guard !slide.comments.isEmpty else {
             form.section(String(localized: "Panel.Comments.Title"))
@@ -55,7 +55,7 @@ extension InspectorViewController {
             body.setContentHuggingPriority(.defaultLow, for: .horizontal)
             form.add(row, fill: true)
         }
-        let reply = NSTextField()
+        let reply = form.regular(NSTextField())
         reply.placeholderString = String(localized: "Comments.Reply")
         let send = form.button(String(localized: "Comments.Send")) { [unowned self] in
             let text = reply.stringValue
@@ -63,7 +63,7 @@ extension InspectorViewController {
             edit { state.reply(to: thread.id, with: text, author: Self.authorName, in: &$0) }
         }
         let replyRow = NSStackView(views: [reply, send])
-        reply.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        reply.setContentHuggingPriority(.init(1), for: .horizontal)
         form.add(replyRow, fill: true)
         let resolve = form.button(String(localized: thread.isResolved ? "Comments.Reopen" : "Comments.Resolve"),
                                   symbol: thread.isResolved ? "arrow.uturn.backward" : "checkmark.circle") { [unowned self] in
@@ -73,8 +73,9 @@ extension InspectorViewController {
             edit { state.deleteComment(thread.id, in: &$0) }
         }
         let actions = NSStackView(views: [resolve, delete])
+        actions.distribution = .fillEqually
         actions.spacing = 6
-        form.add(actions)
+        form.add(actions, fill: true)
     }
 
     private func commentBody(_ comment: SlideComment, showsAuthor: Bool = false) -> NSView {
