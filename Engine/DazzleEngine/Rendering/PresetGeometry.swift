@@ -144,7 +144,9 @@ public enum PresetGeometry {
             path.addQuadCurve(to: point(edge, h), control: point(spine, h))
         case "wave", "doubleWave":
             path.addPath(wave(name, adjustments: adjustments, in: rect).outline)
-        case "cloud", "cloudCallout", "ellipseRibbon":
+        case "ellipseRibbon":
+            path.addPath(ellipseRibbon(adjustments: adjustments, in: rect).outline)
+        case "cloud", "cloudCallout":
             path.addEllipse(in: rect)
         default:
             path.addRect(rect)
@@ -167,6 +169,8 @@ public enum PresetGeometry {
         switch name {
         case "wave", "doubleWave":
             return wave(name, adjustments: adjustments, in: rect).text
+        case "ellipseRibbon":
+            return ellipseRibbon(adjustments: adjustments, in: rect).text
         case "ellipse", "flowChartConnector", "donut", "wedgeEllipseCallout", "cloud", "cloudCallout":
             // The square inscribed in the circle: 1 − 1/√2, halved.
             return inset(left: w * 0.146_4, top: h * 0.146_4, right: w * 0.146_4, bottom: h * 0.146_4)
@@ -322,6 +326,69 @@ public enum PresetGeometry {
         let text = CGRect(x: rect.minX + left, y: rect.minY + 2 * y1,
                           width: max(right - left, 1), height: max(h - 4 * y1, 1))
         return (path, text)
+    }
+
+    /// A ribbon whose band sags in a parabola, its ends folded behind it.
+    /// `adj1` is the band's height, `adj2` the front panel's width and `adj3`
+    /// the sag; the folds are lines drawn over the fill, as ECMA-376 defines them.
+    private static func ellipseRibbon(adjustments: [String: Int], in rect: CGRect) -> (outline: CGPath, folds: CGPath, text: CGRect) {
+        let w = rect.width
+        let h = rect.height
+        let a1 = pinned(adjustments, "adj1", 25_000, 0, 100_000)
+        let a2 = pinned(adjustments, "adj2", 50_000, 25_000, 75_000)
+        let a3 = min(max(CGFloat(adjustments["adj3"] ?? 12_500) / 100_000, max(0, a1 - (1 - a1) / 2)), a1)
+        func point(_ px: CGFloat, _ py: CGFloat) -> CGPoint { CGPoint(x: rect.minX + px, y: rect.minY + py) }
+        let x2 = w / 2 - w * a2 / 2
+        let x3 = x2 + w / 8
+        let x4 = w - x3
+        let x5 = w - x2
+        let x6 = w - w / 8
+        let dy1 = h * a3
+        // The sag along the band: 0 at the ends, dy1 in the middle.
+        let f1 = w > 0 ? 4 * dy1 / w : 0
+        let y1 = f1 * (x3 - x3 * x3 / max(w, 1))
+        let cx1 = x3 / 2
+        let cy1 = f1 * cx1
+        let cx2 = w - cx1
+        let band = h * a1
+        let dy3 = band - dy1
+        let q5 = f1 * (x2 - x2 * x2 / max(w, 1))
+        let y3 = q5 + dy3
+        let cy3 = (dy1 + dy3 - y3) + dy1 + dy3
+        let rh = h - band
+        let y2 = (dy1 * 14 / 16 + rh) / 2
+        let y5 = q5 + rh
+        let y6 = y3 + rh
+        let cx4 = x2 / 2
+        let cy4 = f1 * cx4 + rh
+        let cx5 = w - cx4
+        let cy6 = cy3 + rh
+        let y7 = y1 + dy3
+
+        let outline = CGMutablePath()
+        outline.move(to: point(0, 0))
+        outline.addQuadCurve(to: point(x3, y1), control: point(cx1, cy1))
+        outline.addLine(to: point(x2, y3))
+        outline.addQuadCurve(to: point(x5, y3), control: point(w / 2, cy3))
+        outline.addLine(to: point(x4, y1))
+        outline.addQuadCurve(to: point(w, 0), control: point(cx2, cy1))
+        outline.addLine(to: point(x6, y2))
+        outline.addLine(to: point(w, rh))
+        outline.addQuadCurve(to: point(x5, y5), control: point(cx5, cy4))
+        outline.addLine(to: point(x5, y6))
+        outline.addQuadCurve(to: point(x2, y6), control: point(w / 2, cy6))
+        outline.addLine(to: point(x2, y5))
+        outline.addQuadCurve(to: point(0, rh), control: point(cx4, cy4))
+        outline.addLine(to: point(w / 8, y2))
+        outline.closeSubpath()
+
+        let folds = CGMutablePath()
+        for (from, to) in [((x2, y5), (x2, y3)), ((x5, y3), (x5, y5)), ((x3, y1), (x3, y7)), ((x4, y7), (x4, y1))] {
+            folds.move(to: point(from.0, from.1))
+            folds.addLine(to: point(to.0, to.1))
+        }
+        let text = CGRect(x: rect.minX + x2, y: rect.minY + band, width: max(x5 - x2, 1), height: max(y6 - band, 1))
+        return (outline, folds, text)
     }
 
     private static func regularPolygon(sides: Int, in rect: CGRect) -> [CGPoint] {

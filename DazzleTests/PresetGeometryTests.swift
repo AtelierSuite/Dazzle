@@ -104,4 +104,27 @@ struct BannerGeometryTests {
         #expect(abs(skewedText.minX - point(0.2, 0).x) < 0.01)
         #expect(abs(skewedText.maxX - point(0.8, 0).x) < 0.01)
     }
+
+    @Test("The ellipse ribbon has a sagging band, folded ends and notched tails")
+    func ellipseRibbon() {
+        let ribbon = PresetGeometry.path("ellipseRibbon", adjustments: [:], in: rect)
+        #expect(ribbon.contains(point(0.5, 0.5), using: .evenOdd))
+        #expect(ribbon.contains(point(3.0 / 400, 3.0 / 200), using: .evenOdd))
+        #expect(ribbon.contains(point(0.1, 0.2), using: .evenOdd))
+        // Above the front panel and inside the left tail's notch.
+        #expect(!ribbon.contains(point(0.5, 0.15), using: .evenOdd))
+        #expect(!ribbon.contains(point(0.02, 0.5), using: .evenOdd))
+
+        let text = PresetGeometry.textRect("ellipseRibbon", adjustments: [:], in: rect)
+        #expect(abs(text.minX - point(0.25, 0).x) < 0.01)
+        #expect(abs(text.maxX - point(0.75, 0).x) < 0.01)
+        #expect(abs(text.minY - point(0, 0.25).y) < 0.01)
+        #expect(abs(text.maxY - (rect.minY + 193.75)) < 0.01)
+
+        // A narrower front panel leaves the tail, which stops higher, under this point.
+        #expect(ribbon.contains(point(0.3, 0.9), using: .evenOdd))
+        let narrow = PresetGeometry.path("ellipseRibbon", adjustments: ["adj2": 25_000], in: rect)
+        #expect(!narrow.contains(point(0.3, 0.9), using: .evenOdd))
+        #expect(narrow.contains(point(0.5, 0.5), using: .evenOdd))
+    }
 }
