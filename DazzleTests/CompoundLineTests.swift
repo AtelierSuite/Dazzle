@@ -50,6 +50,55 @@ struct CompoundLineTests {
         #expect(bands("tri") == triple)
     }
 
+    @Test("Caps and joins map onto CoreGraphics")
+    func capsAndJoins() {
+        #expect(LineStyle(cap: "rnd").cgLineCap == .round)
+        #expect(LineStyle(cap: "sq").cgLineCap == .square)
+        #expect(LineStyle(cap: "flat").cgLineCap == .butt)
+        #expect(LineStyle().cgLineCap == .butt)
+        #expect(LineStyle().cgLineJoin == .round)
+        #expect(LineStyle(join: .bevel).cgLineJoin == .bevel)
+        #expect(LineStyle(join: .miter(limit: 800_000)).cgLineJoin == .miter)
+        #expect(LineStyle(join: .miter(limit: 800_000)).miterLimit == 8)
+    }
+
+    @Test("A double outline is two strokes, one outside the path and one inside, either way round")
+    func doubleOutline() {
+        let line = LineStyle(compound: "dbl")
+        let rect = CGRect(x: 0, y: 0, width: 100, height: 100)
+        let reversed = CGMutablePath()
+        reversed.addLines(between: [CGPoint(x: 0, y: 0), CGPoint(x: 0, y: 100), CGPoint(x: 100, y: 100), CGPoint(x: 100, y: 0)])
+        reversed.closeSubpath()
+        for path in [CGPath(rect: rect, transform: nil), reversed] {
+            let strokes = line.compoundStrokes(of: path, width: 6)
+            #expect(strokes.count == 2)
+            #expect(strokes.map(\.width) == [CGFloat(2), 2])
+            #expect(strokes[0].path.boundingBoxOfPath.insetBy(dx: -0.001, dy: -0.001).contains(rect.insetBy(dx: -2, dy: -2)))
+            #expect(rect.insetBy(dx: 2, dy: 2).insetBy(dx: -0.001, dy: -0.001).contains(strokes[1].path.boundingBoxOfPath))
+        }
+    }
+
+    @Test("An open thick-thin line has its thick stroke on its left, above a line drawn rightwards")
+    func openLine() {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0, y: 0))
+        path.addLine(to: CGPoint(x: 10, y: 0))
+        let strokes = LineStyle(compound: "thickThin").compoundStrokes(of: path, width: 4)
+        #expect(strokes.map(\.width) == [CGFloat(2), 1])
+        #expect(strokes[0].path.boundingBoxOfPath.midY == -1)
+        #expect(strokes[1].path.boundingBoxOfPath.midY == 1.5)
+        #expect(strokes[0].path.boundingBoxOfPath.width == 10)
+    }
+
+    @Test("A single line is stroked along the path itself")
+    func single() {
+        let path = CGPath(ellipseIn: CGRect(x: 0, y: 0, width: 10, height: 10), transform: nil)
+        let strokes = LineStyle(compound: "sng").compoundStrokes(of: path, width: 3)
+        #expect(strokes.count == 1)
+        #expect(strokes[0].path == path)
+        #expect(strokes[0].width == 3)
+    }
+
     @Test("A compound line, cap and join are written on save and read back")
     func roundTrip() throws {
         var presentation = Presentation.blank

@@ -520,7 +520,7 @@ public struct SlideRenderer {
         context.saveGState()
         context.setStrokeColor(resolved.cgColor)
         context.setLineWidth(width)
-        context.setLineJoin(.round)
+        line.applyCapAndJoin(to: context)
         switch line.dash {
         case "dash", "sysDash": context.setLineDash(phase: 0, lengths: [width * 4, width * 3])
         case "lgDash": context.setLineDash(phase: 0, lengths: [width * 8, width * 3])
@@ -530,8 +530,11 @@ public struct SlideRenderer {
             context.setLineDash(phase: 0, lengths: [width * 8, width * 3, width, width * 3])
         default: break
         }
-        context.addPath(path)
-        context.strokePath()
+        for band in line.compoundStrokes(of: path, width: width) {
+            context.setLineWidth(band.width)
+            context.addPath(band.path)
+            context.strokePath()
+        }
         context.restoreGState()
 
         // Arrowheads, at either end of an open line.
