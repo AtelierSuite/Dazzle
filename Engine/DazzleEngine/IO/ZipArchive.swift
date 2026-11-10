@@ -1,4 +1,6 @@
+#if canImport(Compression)
 import Compression
+#endif
 import Foundation
 
 public enum ZipError: LocalizedError {
@@ -357,6 +359,7 @@ public enum ZipArchive {
         return nil
     }
 
+    #if canImport(Compression)
     private static func decode(_ data: Data, into capacity: Int) -> Data? {
         let destination = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
         defer { destination.deallocate() }
@@ -379,6 +382,18 @@ public enum ZipArchive {
         guard written > 0 else { return nil }
         return Data(bytes: destination, count: written)
     }
+    #else
+    private static func decode(_ data: Data, into capacity: Int) -> Data? {
+        // Stops at `capacity`, as the buffer would: output that fills it is
+        // taken as cut short, and the caller tries again with more room.
+        guard let decoded = RawDeflate.inflate(data, limit: capacity), !decoded.isEmpty else { return nil }
+        return decoded
+    }
+
+    private static func deflate(_ data: Data) -> Data? {
+        RawDeflate.deflate(data)
+    }
+    #endif
 
     // MARK: - CRC-32
 
