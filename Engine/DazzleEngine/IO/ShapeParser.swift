@@ -79,7 +79,7 @@ public final class ShapeParser {
         case "contentPart":
             features.insert(.embeddedObjects)
             return SlideShape(
-                shapeID: 0, name: "Ink", kind: .unsupported(String(localized: "Object.Ink", bundle: #bundle)), frame: .zero
+                shapeID: 0, name: "Ink", kind: .unsupported(String(localized: "Object.Ink", bundle: .engine)), frame: .zero
             )
         default:
             return nil
@@ -236,7 +236,7 @@ public final class ShapeParser {
         let data = element.firstChild(named: "graphic")?.firstChild(named: "graphicData")
         let uri = data?.attribute("uri") ?? ""
         var shape = SlideShape(
-            shapeID: id, name: name, kind: .unsupported(String(localized: "Object.Embedded", bundle: #bundle)), frame: .zero
+            shapeID: id, name: name, kind: .unsupported(String(localized: "Object.Embedded", bundle: .engine)), frame: .zero
         )
         shape.placeholder = Placeholder(element: nonVisual?.firstChild(named: "nvPr")?.firstChild(named: "ph"))
         applyTransform(element.firstChild(named: "xfrm"), to: &shape)
@@ -251,7 +251,7 @@ public final class ShapeParser {
             if chart == nil { features.insert(.charts) }
             shape.kind = .chart(chart)
         } else if uri.hasSuffix("/diagram") {
-            shape.kind = diagram(data, frame: shape.frame) ?? .unsupported(String(localized: "Object.SmartArt", bundle: #bundle))
+            shape.kind = diagram(data, frame: shape.frame) ?? .unsupported(String(localized: "Object.SmartArt", bundle: .engine))
         } else if uri.hasSuffix("/ole") {
             features.insert(.embeddedObjects)
             // An embedded object usually carries a picture of itself.

@@ -182,6 +182,6 @@ public enum KeynoteReadError: LocalizedError {
     case corrupt
 
     public var errorDescription: String? {
-        String(localized: "Error.NotAKeynotePresentation", bundle: #bundle)
+        String(localized: "Error.NotAKeynotePresentation", bundle: .engine)
     }
 }

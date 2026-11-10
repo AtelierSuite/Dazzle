@@ -198,11 +198,11 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
 
         public var message: String {
             switch self {
-            case .macros: String(localized: "Notice.Feature.Macros", bundle: #bundle)
-            case .charts: String(localized: "Notice.Feature.Charts", bundle: #bundle)
-            case .media: String(localized: "Notice.Feature.Media", bundle: #bundle)
-            case .embeddedObjects: String(localized: "Notice.Feature.EmbeddedObjects", bundle: #bundle)
-            case .transitions: String(localized: "Notice.Feature.Transitions", bundle: #bundle)
+            case .macros: String(localized: "Notice.Feature.Macros", bundle: .engine)
+            case .charts: String(localized: "Notice.Feature.Charts", bundle: .engine)
+            case .media: String(localized: "Notice.Feature.Media", bundle: .engine)
+            case .embeddedObjects: String(localized: "Notice.Feature.EmbeddedObjects", bundle: .engine)
+            case .transitions: String(localized: "Notice.Feature.Transitions", bundle: .engine)
             }
         }
     }
@@ -218,11 +218,11 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
 
         public var message: String {
             switch self {
-            case .tables: String(localized: "Notice.Omission.Tables", bundle: #bundle)
-            case .charts: String(localized: "Notice.Omission.Charts", bundle: #bundle)
-            case .builds: String(localized: "Notice.Omission.Builds", bundle: #bundle)
-            case .movies: String(localized: "Notice.Omission.Movies", bundle: #bundle)
-            case .otherObjects: String(localized: "Notice.Omission.Other", bundle: #bundle)
+            case .tables: String(localized: "Notice.Omission.Tables", bundle: .engine)
+            case .charts: String(localized: "Notice.Omission.Charts", bundle: .engine)
+            case .builds: String(localized: "Notice.Omission.Builds", bundle: .engine)
+            case .movies: String(localized: "Notice.Omission.Movies", bundle: .engine)
+            case .otherObjects: String(localized: "Notice.Omission.Other", bundle: .engine)
             }
         }
     }

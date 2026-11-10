@@ -4,7 +4,7 @@ public enum PresentationReadError: LocalizedError {
     case notAPresentation
 
     public var errorDescription: String? {
-        String(localized: "Error.NotAPresentation", bundle: #bundle)
+        String(localized: "Error.NotAPresentation", bundle: .engine)
     }
 }
 

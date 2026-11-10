@@ -276,19 +276,19 @@ extension Chart {
         if kind.colorsByPoint {
             return Chart(
                 path: path,
-                plots: [Plot(kind: kind, series: [Series(name: String(localized: "Chart.Sample.Sales", bundle: #bundle), values: [8.2, 3.2, 1.4, 1.2])])],
-                categories: (1...4).map { String(format: String(localized: "Chart.Sample.Quarter", bundle: #bundle), $0) },
-                title: String(localized: "Chart.Sample.Sales", bundle: #bundle), legendPosition: "b"
+                plots: [Plot(kind: kind, series: [Series(name: String(localized: "Chart.Sample.Sales", bundle: .engine), values: [8.2, 3.2, 1.4, 1.2])])],
+                categories: (1...4).map { String(format: String(localized: "Chart.Sample.Quarter", bundle: .engine), $0) },
+                title: String(localized: "Chart.Sample.Sales", bundle: .engine), legendPosition: "b"
             )
         }
         let values: [[Double?]] = [[4.3, 2.5, 3.5, 4.5], [2.4, 4.4, 1.8, 2.8], [2, 2, 3, 5]]
         let categories = kind == .scatter
             ? ["0.7", "1.8", "2.6", "3.4"]
-            : (1...4).map { String(format: String(localized: "Chart.Sample.Category", bundle: #bundle), $0) }
+            : (1...4).map { String(format: String(localized: "Chart.Sample.Category", bundle: .engine), $0) }
         return Chart(
             path: path,
             plots: [Plot(kind: kind, series: values.enumerated().map { index, values in
-                Series(name: String(format: String(localized: "Chart.Sample.Series", bundle: #bundle), index + 1), values: values)
+                Series(name: String(format: String(localized: "Chart.Sample.Series", bundle: .engine), index + 1), values: values)
             })],
             categories: categories, title: nil, legendPosition: "b"
         )

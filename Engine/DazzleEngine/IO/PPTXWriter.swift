@@ -6,7 +6,7 @@ public enum PresentationWriteError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unwritablePart(let part):
-            String(format: String(localized: "Error.UnwritablePart", bundle: #bundle), part)
+            String(format: String(localized: "Error.UnwritablePart", bundle: .engine), part)
         }
     }
 }
