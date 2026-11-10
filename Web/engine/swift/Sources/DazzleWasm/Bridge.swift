@@ -304,7 +304,7 @@ final class Bridge {
             let tiled = r["tiled"] as? Bool ?? false
             func retiled(_ fill: Fill?) -> Fill? {
                 switch fill {
-                case .picture(let path, let effects)?, .tiledPicture(let path, let effects)?:
+                case .picture(let path, let effects)?, .tiledPicture(let path, let effects, _)?:
                     tiled ? .tiledPicture(path: path, effects: effects) : .picture(path: path, effects: effects)
                 default: nil
                 }

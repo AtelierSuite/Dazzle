@@ -195,7 +195,7 @@ struct WebRenderer {
             return ["t": "linear", "angle": gradient.angle, "stops": stops]
         case .picture(let path, let effects):
             return ["t": "image", "src": path, "tile": false, "fx": self.effects(effects, placeholder: placeholder, style: style)]
-        case .tiledPicture(let path, let effects):
+        case .tiledPicture(let path, let effects, _):
             return ["t": "image", "src": path, "tile": true, "fx": self.effects(effects, placeholder: placeholder, style: style)]
         }
     }

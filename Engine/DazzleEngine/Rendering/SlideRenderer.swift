@@ -481,7 +481,7 @@ public struct SlideRenderer {
             context.clip(using: .evenOdd)
             drawImage(image, in: bounds, context: context)
             context.restoreGState()
-        case .tiledPicture(let imagePath, let effects):
+        case .tiledPicture(let imagePath, let effects, _):
             guard let image = image(at: imagePath, effects: effects, placeholderColor: placeholderColor, style: style) else {
                 return
             }
