@@ -461,8 +461,11 @@ struct WebRenderer {
             "anchor": (properties.anchor ?? .top).rawValue,
             "wrap": properties.wraps ?? true,
         ]
-        if let vertical = properties.vertical, ["vert", "eaVert", "vert270", "wordArtVert", "mongolianVert"].contains(vertical) {
-            json["vert"] = vertical == "vert270" ? -90 : 90
+        // How the text runs when it isn't horizontal, by its name in the file:
+        // turned a quarter (vert, vert270), or set in vertical lines (eaVert,
+        // mongolianVert, wordArtVert, wordArtVertRtl), which the page lays out.
+        if let vertical = properties.vertical, ["vert", "eaVert", "vert270", "wordArtVert", "wordArtVertRtl", "mongolianVert"].contains(vertical) {
+            json["vert"] = vertical
         }
         switch properties.autofit {
         case .normal(let scale, let reduction)?:

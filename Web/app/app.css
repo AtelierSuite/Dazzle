@@ -644,9 +644,31 @@ body {
   justify-content: flex-end;
 }
 
+/*
+ * Vertical lines. Japanese and Chinese stand upright and other letters lie on
+ * their side (eaVert, mongolianVert), or every letter is stacked upright
+ * (wordArtVert, wordArtVertRtl). Lines run right to left, except Mongolian
+ * and stacked text, which run left to right. The box's top, middle or bottom
+ * anchor follows the lines, to the first, middle or last.
+ */
+.text[data-vertical="eaVert"],
+.text[data-vertical="wordArtVertRtl"] {
+  writing-mode: vertical-rl;
+}
+
+.text[data-vertical="mongolianVert"],
+.text[data-vertical="wordArtVert"] {
+  writing-mode: vertical-lr;
+}
+
+.text[data-vertical="wordArtVert"],
+.text[data-vertical="wordArtVertRtl"] {
+  text-orientation: upright;
+}
+
 .text__flow {
   flex: none;
-  min-height: 1em;
+  min-block-size: 1em;
   overflow-wrap: break-word;
   white-space: pre-wrap;
 }

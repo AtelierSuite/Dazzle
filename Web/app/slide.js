@@ -10,6 +10,9 @@ const SVG = "http://www.w3.org/2000/svg";
 let uniqueId = 0;
 const nextId = (prefix) => `${prefix}${++uniqueId}`;
 
+/** Text turned a quarter, letters and all, by how far. Other vertical text is set in vertical lines (app.css). */
+const TURNED_TEXT = { vert: 90, vert270: -90 };
+
 /** Office faces that devices other than Windows rarely have, and what to set them in instead. */
 const SUBSTITUTES = [
   [/^calibri/, ["Carlito"]],
@@ -457,17 +460,21 @@ export class SlideDrawer {
     box.dataset.anchor = body.anchor;
     if (!body.wrap) box.dataset.nowrap = "1";
     if (body.fit) box.dataset.fit = body.fit;
-    if (body.vert) {
-      // Vertical text is laid out across the box's height, then turned.
+    const turn = TURNED_TEXT[body.vert];
+    if (turn) {
+      // Text turned a quarter is laid out across the box's height, then turned.
       Object.assign(box.style, {
         left: `${body.x + body.w / 2 - body.h / 2}px`, top: `${body.y + body.h / 2 - body.w / 2}px`,
-        width: `${Math.max(body.h, 0)}px`, height: `${Math.max(body.w, 0)}px`, transform: `rotate(${body.vert}deg)`,
+        width: `${Math.max(body.h, 0)}px`, height: `${Math.max(body.w, 0)}px`, transform: `rotate(${turn}deg)`,
       });
+    } else if (body.vert) {
+      // Vertical lines, as Japanese and Chinese are set: the page lays them out.
+      box.dataset.vertical = body.vert;
     }
     box.textBody = body;
     const flow = html("div", "text__flow", box);
     if (!body.wrap) {
-      flow.style.width = "max-content";
+      flow.style.inlineSize = "max-content";
       const align = body.paras[0]?.align ?? "l";
       flow.style.alignSelf = align === "ctr" ? "center" : align === "r" ? "flex-end" : "flex-start";
     }
@@ -487,8 +494,9 @@ export class SlideDrawer {
     const align = { l: "left", ctr: "center", r: "right", just: "justify" }[paragraph.align] ?? "left";
     const first = Math.max(paragraph.ml + paragraph.ind, 0);
     Object.assign(element.style, {
-      textAlign: align, paddingLeft: `${paragraph.ml}px`, textIndent: `${first - paragraph.ml}px`,
-      marginTop: `${paragraph.sb * scale}px`, marginBottom: `${paragraph.sa * scale}px`,
+      // Logical sides, so indents and spacing follow vertical lines too.
+      textAlign: align, paddingInlineStart: `${paragraph.ml}px`, textIndent: `${first - paragraph.ml}px`,
+      marginBlockStart: `${paragraph.sb * scale}px`, marginBlockEnd: `${paragraph.sa * scale}px`,
     });
     if (paragraph.lh?.pt) {
       element.style.lineHeight = `${paragraph.lh.pt}px`;
@@ -607,12 +615,15 @@ export function fitText(box) {
   const body = box.textBody;
   const flow = box.querySelector(".text__flow");
   if (!body || !flow || body.fit !== "shrink" || (body.scale ?? 1) !== 1) return;
-  const height = box.clientHeight;
-  if (!height || flow.scrollHeight <= height + 1) return;
+  // Lines stack down the box, or across it when they run vertically.
+  const across = Boolean(box.dataset.vertical);
+  const room = across ? box.clientWidth : box.clientHeight;
+  const used = () => (across ? flow.scrollWidth : flow.scrollHeight);
+  if (!room || used() <= room + 1) return;
   const drawer = new SlideDrawer(null);
   for (let scale = 0.9; scale >= 0.3 - 0.001; scale -= 0.1) {
     drawer.fillFlow(flow, body, { scale, reduce: 0.1 });
-    if (flow.scrollHeight <= height + 1) return;
+    if (used() <= room + 1) return;
   }
 }
 

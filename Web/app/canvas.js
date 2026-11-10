@@ -627,7 +627,8 @@ export class SlideCanvas extends EventTarget {
     if (signature === editing.sent) return;
     editing.sent = signature;
     const args = { paras };
-    if (editing.body.fit === "grow" && !editing.cell) {
+    // Only horizontal text grows its shape's height as it is typed.
+    if (editing.body.fit === "grow" && !editing.cell && !editing.body.vert) {
       const node = this.shape(editing.id);
       const insets = node ? node.h - editing.body.h : 0;
       args.height = editing.flow.scrollHeight + insets;
