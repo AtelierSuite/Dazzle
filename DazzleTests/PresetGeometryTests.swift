@@ -164,4 +164,25 @@ struct BannerGeometryTests {
         let callout = PresetGeometry.path("cloudCallout", adjustments: [:], in: rect)
         #expect(!callout.contains(point(0.8, 1.1), using: .evenOdd))
     }
+
+    @Test("Ribbon folds and cloud puffs are stroked over the fill, inside the outline")
+    func detailLines() {
+        #expect(PresetGeometry.detailPath("wave", adjustments: [:], in: rect) == nil)
+        for preset in ["ellipseRibbon", "cloud", "cloudCallout"] {
+            let outline = PresetGeometry.path(preset, adjustments: [:], in: rect)
+            let details = PresetGeometry.detailPath(preset, adjustments: [:], in: rect)
+            #expect(details != nil && !details!.isEmpty, "\(preset)")
+            guard let details else { continue }
+            let bounds = details.boundingBoxOfPath
+            #expect(outline.boundingBoxOfPath.insetBy(dx: -1, dy: -1).contains(bounds), "\(preset)")
+            let centre = CGPoint(x: bounds.midX, y: bounds.midY)
+            #expect(outline.contains(centre, using: .evenOdd), "\(preset)")
+        }
+        // The ribbon's folds drop straight down at the front panel's edges.
+        let folds = PresetGeometry.detailPath("ellipseRibbon", adjustments: [:], in: rect)!
+        let stroked = folds.copy(strokingWithWidth: 2, lineCap: .butt, lineJoin: .miter, miterLimit: 10)
+        #expect(stroked.contains(point(0.25, 0.5)))
+        #expect(stroked.contains(point(0.75, 0.5)))
+        #expect(!stroked.contains(point(0.5, 0.5)))
+    }
 }

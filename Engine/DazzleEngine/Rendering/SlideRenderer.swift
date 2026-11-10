@@ -349,7 +349,14 @@ public struct SlideRenderer {
         switch shape.geometry {
         case .preset(let name, let adjustments):
             let path = PresetGeometry.path(name, adjustments: adjustments, in: frame)
-            return (path, path, PresetGeometry.isOpen(name) || shape.kind == .connector)
+            var stroke = path
+            if let details = PresetGeometry.detailPath(name, adjustments: adjustments, in: frame) {
+                let combined = CGMutablePath()
+                combined.addPath(path)
+                combined.addPath(details)
+                stroke = combined
+            }
+            return (path, stroke, PresetGeometry.isOpen(name) || shape.kind == .connector)
         case .custom(let paths):
             let (fill, stroke) = PresetGeometry.path(paths, in: frame)
             return (fill, stroke, false)

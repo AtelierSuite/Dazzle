@@ -156,6 +156,26 @@ public enum PresetGeometry {
         return path
     }
 
+    /// Lines some presets draw over their fill, with the outline's stroke but
+    /// never filled: a ribbon's folds and the inner curves of a cloud's puffs.
+    public static func detailPath(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath? {
+        switch name {
+        case "ellipseRibbon":
+            return ellipseRibbon(adjustments: adjustments, in: rect).folds
+        case "cloud", "cloudCallout":
+            let path = CGMutablePath()
+            let scale = CGSize(width: rect.width / 43_200, height: rect.height / 43_200)
+            for puff in cloudPuffs {
+                let start = CGPoint(x: rect.minX + puff.x * scale.width, y: rect.minY + puff.y * scale.height)
+                path.move(to: start)
+                arcTo(path, from: start, wR: puff.wR, hR: puff.hR, start: puff.start, sweep: puff.sweep, scale: scale)
+            }
+            return path
+        default:
+            return nil
+        }
+    }
+
     /// The rectangle text is laid out in, which for most presets is smaller
     /// than the shape so text stays inside its outline.
     public static func textRect(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGRect {
@@ -406,6 +426,16 @@ public enum PresetGeometry {
         (5_785, 7_867, 37_501, 6_842_000), (6_752, 9_215, 1_347_096, 6_910_353),
         (7_720, 10_543, 3_974_558, 4_542_661), (4_360, 5_918, -16_496_525, 8_804_134),
         (4_345, 5_945, -14_809_710, 9_151_131),
+    ]
+
+    /// The inner curves where the cloud's puffs overlap, in the same space.
+    private static let cloudPuffs: [(x: CGFloat, y: CGFloat, wR: CGFloat, hR: CGFloat, start: CGFloat, sweep: CGFloat)] = [
+        (4_693, 26_177, 4_345, 5_945, 5_204_520, 1_585_770), (6_928, 34_899, 4_360, 5_918, 4_416_628, 686_848),
+        (16_478, 39_090, 6_752, 9_215, 8_257_449, 844_866), (28_827, 34_751, 6_752, 9_215, 387_196, 959_901),
+        (34_129, 22_954, 5_785, 7_867, -4_217_541, 4_255_042), (41_798, 15_354, 5_333, 7_273, 1_819_082, 1_665_090),
+        (38_324, 5_426, 4_857, 6_595, -824_660, 891_534), (29_078, 3_952, 4_857, 6_595, -8_950_887, 1_091_722),
+        (22_141, 4_720, 4_365, 5_945, -9_809_656, 1_061_181), (14_000, 5_192, 6_753, 9_190, -4_002_417, 739_161),
+        (4_127, 15_789, 6_753, 9_190, 9_459_261, 711_490),
     ]
 
     private static func cloud(in rect: CGRect) -> CGMutablePath {
