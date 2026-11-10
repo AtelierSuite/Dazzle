@@ -142,7 +142,9 @@ public enum PresetGeometry {
             path.addQuadCurve(to: point(spine, h * 0.1), control: point(spine, 0))
             path.addLine(to: point(spine, h * 0.9))
             path.addQuadCurve(to: point(edge, h), control: point(spine, h))
-        case "cloud", "cloudCallout", "ellipseRibbon", "wave", "doubleWave":
+        case "wave", "doubleWave":
+            path.addPath(wave(name, adjustments: adjustments, in: rect).outline)
+        case "cloud", "cloudCallout", "ellipseRibbon":
             path.addEllipse(in: rect)
         default:
             path.addRect(rect)
@@ -163,6 +165,8 @@ public enum PresetGeometry {
             CGRect(x: rect.minX + left, y: rect.minY + top, width: max(w - left - right, 1), height: max(h - top - bottom, 1))
         }
         switch name {
+        case "wave", "doubleWave":
+            return wave(name, adjustments: adjustments, in: rect).text
         case "ellipse", "flowChartConnector", "donut", "wedgeEllipseCallout", "cloud", "cloudCallout":
             // The square inscribed in the circle: 1 − 1/√2, halved.
             return inset(left: w * 0.146_4, top: h * 0.146_4, right: w * 0.146_4, bottom: h * 0.146_4)
@@ -266,6 +270,58 @@ public enum PresetGeometry {
         path.addLine(to: point(0, radius))
         turn(0, 0, radius, 0)
         path.closeSubpath()
+    }
+
+    /// An adjust value pinned to the range the preset allows, as a fraction.
+    private static func pinned(_ adjustments: [String: Int], _ key: String, _ fallback: Int, _ low: Int, _ high: Int) -> CGFloat {
+        CGFloat(min(max(adjustments[key] ?? fallback, low), high)) / 100_000
+    }
+
+    /// A banner with one (`wave`) or two (`doubleWave`) S-curves along its top
+    /// and bottom. `adj1` is the curves' depth and `adj2` skews the bottom
+    /// edge against the top, as ECMA-376 defines them.
+    private static func wave(_ name: String, adjustments: [String: Int], in rect: CGRect) -> (outline: CGPath, text: CGRect) {
+        let w = rect.width
+        let h = rect.height
+        let isDouble = name == "doubleWave"
+        let depth = pinned(adjustments, "adj1", isDouble ? 6_250 : 12_500, 0, isDouble ? 12_500 : 20_000)
+        let skew = pinned(adjustments, "adj2", 0, -10_000, 10_000)
+        func point(_ px: CGFloat, _ py: CGFloat) -> CGPoint { CGPoint(x: rect.minX + px, y: rect.minY + py) }
+        let y1 = h * depth
+        let swing = y1 * 10 / 3
+        let y4 = h - y1
+        // A positive skew pulls the top edge's right end and the bottom
+        // edge's left end in; a negative one the other two ends.
+        let offset = w * skew * 2
+        let topLeft = offset > 0 ? 0 : -offset
+        let topRight = w - max(offset, 0)
+        let bottomLeft = max(offset, 0)
+        let bottomRight = w + min(offset, 0)
+        let waves = isDouble ? 2 : 1
+        let length = (topRight - topLeft) / CGFloat(waves)
+
+        let path = CGMutablePath()
+        path.move(to: point(topLeft, y1))
+        for index in 0..<waves {
+            let start = topLeft + length * CGFloat(index)
+            path.addCurve(to: point(start + length, y1),
+                          control1: point(start + length / 3, y1 - swing),
+                          control2: point(start + length * 2 / 3, y1 + swing))
+        }
+        path.addLine(to: point(bottomRight, y4))
+        for index in 0..<waves {
+            let start = bottomRight - length * CGFloat(index)
+            path.addCurve(to: point(start - length, y4),
+                          control1: point(start - length / 3, y4 + swing),
+                          control2: point(start - length * 2 / 3, y4 - swing))
+        }
+        path.closeSubpath()
+
+        let left = max(topLeft, bottomLeft)
+        let right = min(topRight, bottomRight)
+        let text = CGRect(x: rect.minX + left, y: rect.minY + 2 * y1,
+                          width: max(right - left, 1), height: max(h - 4 * y1, 1))
+        return (path, text)
     }
 
     private static func regularPolygon(sides: Int, in rect: CGRect) -> [CGPoint] {

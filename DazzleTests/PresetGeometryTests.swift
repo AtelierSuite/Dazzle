@@ -61,3 +61,47 @@ struct PresetGeometryTests {
         #expect(text.maxY < rect.maxY)
     }
 }
+
+@Suite("Banner and cloud geometry")
+struct BannerGeometryTests {
+    private let rect = CGRect(x: 10, y: 20, width: 400, height: 200)
+
+    private func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+        CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+    }
+
+    @Test("Waves follow their S-curves rather than an ellipse")
+    func waves() {
+        let wave = PresetGeometry.path("wave", adjustments: [:], in: rect)
+        #expect(wave.contains(point(0.01, 0.5), using: .evenOdd))
+        #expect(wave.contains(point(0.25, 0.05), using: .evenOdd))
+        #expect(!wave.contains(point(0.75, 0.2), using: .evenOdd))
+        #expect(wave.contains(point(0.75, 0.95), using: .evenOdd))
+        #expect(!wave.contains(point(0.25, 0.8), using: .evenOdd))
+
+        let double = PresetGeometry.path("doubleWave", adjustments: [:], in: rect)
+        #expect(double.contains(point(0.125, 0.03), using: .evenOdd))
+        #expect(!double.contains(point(0.375, 0.1), using: .evenOdd))
+        #expect(double.contains(point(0.625, 0.03), using: .evenOdd))
+        #expect(double.contains(point(0.01, 0.5), using: .evenOdd))
+    }
+
+    @Test("Wave adjustments set the depth and skew, and the text sits between the curves")
+    func waveAdjustments() {
+        let text = PresetGeometry.textRect("wave", adjustments: [:], in: rect)
+        #expect(abs(text.minY - point(0, 0.25).y) < 0.01)
+        #expect(abs(text.maxY - point(0, 0.75).y) < 0.01)
+        #expect(text.minX == rect.minX && text.maxX == rect.maxX)
+
+        let flat = PresetGeometry.path("wave", adjustments: ["adj1": 0], in: rect)
+        #expect(flat.contains(point(0.75, 0.02), using: .evenOdd))
+
+        // A positive skew pulls in the top's right end and the bottom's left end.
+        let skewed = PresetGeometry.path("wave", adjustments: ["adj2": 10_000], in: rect)
+        #expect(!skewed.contains(point(0.99, 0.15), using: .evenOdd))
+        #expect(!skewed.contains(point(0.01, 0.85), using: .evenOdd))
+        let skewedText = PresetGeometry.textRect("wave", adjustments: ["adj2": 10_000], in: rect)
+        #expect(abs(skewedText.minX - point(0.2, 0).x) < 0.01)
+        #expect(abs(skewedText.maxX - point(0.8, 0).x) < 0.01)
+    }
+}
