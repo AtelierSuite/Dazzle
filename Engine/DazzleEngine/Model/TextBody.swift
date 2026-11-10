@@ -310,6 +310,8 @@ public struct RunProperties: Equatable, Hashable, Sendable {
     public var eastAsianFont: String?
     /// Thousandths of a percent; positive for superscript.
     public var baseline: Int?
+    /// Extra space between letters, in hundredths of a point; negative condenses.
+    public var spacing: Int?
     /// `all` or `small` capitals.
     public var capitalization: String?
     /// A line drawn around each letter.
@@ -334,6 +336,7 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         isUnderlined = element.attribute("u").map { $0 != "none" }
         isStruckThrough = element.attribute("strike").map { $0 != "noStrike" }
         baseline = element.attribute("baseline").flatMap(Int.init)
+        spacing = element.attribute("spc").flatMap(Int.init)
         capitalization = element.attribute("cap").flatMap { $0 == "none" ? nil : $0 }
         if let fill = element.firstChild(named: "solidFill") {
             color = DrawingColor.first(in: fill)
@@ -361,6 +364,7 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         result.latinFont = latinFont ?? base.latinFont
         result.eastAsianFont = eastAsianFont ?? base.eastAsianFont
         result.baseline = baseline ?? base.baseline
+        result.spacing = spacing ?? base.spacing
         result.capitalization = capitalization ?? base.capitalization
         result.outline = outline ?? base.outline
         result.shadow = shadow ?? base.shadow
