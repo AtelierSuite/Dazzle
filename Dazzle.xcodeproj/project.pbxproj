@@ -154,7 +154,7 @@
 		};
 		DA0000000000000000000016 /* DazzleEngine */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = DazzleEngine;
+			path = Engine/DazzleEngine;
 			sourceTree = "<group>";
 		};
 		DA0000000000000000000017 /* Common */ = {

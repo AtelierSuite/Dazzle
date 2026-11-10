@@ -1,4 +1,8 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#else
+import Foundation
+#endif
 import DazzleEngine
 
 /// Where a shape being moved or resized settles: onto the slide's edges and

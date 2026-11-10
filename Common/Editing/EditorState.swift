@@ -58,8 +58,15 @@ final class EditorState {
     var isDrawing = false
     var errorMessage: String?
     var isShowingUnsupportedFeatureNotice = false
+    #if canImport(CoreTransferable)
     /// What the export panel opens on.
     var exportFormat: ExportOptions.Format = .pdf
+    #else
+    /// How tall the text being typed lays out, as the page measured it, for
+    /// a shape that grows to fit its text. Where there is no text layout
+    /// engine, the text is laid out by whatever shows it.
+    var measuredTextHeight: Double?
+    #endif
     /// When the canvas began playing the slide's animations through, while it is.
     private(set) var animationPreviewStartedAt: Date?
     @ObservationIgnored private var animationPreviewTask: Task<Void, Never>?
@@ -1058,7 +1065,12 @@ final class EditorState {
             var measured = current
             measured.text = body
             let width = measured.frame.points.width
+            #if canImport(CoreText)
             height = TextRenderer(style: style, slideNumber: 1).height(of: body, shape: measured, width: width)
+            #else
+            _ = (style, width)
+            height = measuredTextHeight
+            #endif
         }
         updateShape(current.id, edits: height == nil ? [.text] : [.text, .transform], in: &presentation) { shape in
             shape.text = body
