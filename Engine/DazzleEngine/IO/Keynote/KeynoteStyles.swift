@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Looks properties up through Keynote's style inheritance and turns the
@@ -74,6 +76,7 @@ public struct KeynoteStyles {
             red = message.float(3) ?? 0
             green = message.float(4) ?? 0
             blue = message.float(5) ?? 0
+            #if canImport(CoreGraphics)
             if message.int(12) == 2, let p3 = CGColorSpace(name: CGColorSpace.displayP3),
                let srgb = CGColorSpace(name: CGColorSpace.sRGB),
                let converted = CGColor(colorSpace: p3, components: [red, green, blue, 1])?
@@ -83,10 +86,31 @@ public struct KeynoteStyles {
                 green = components[1]
                 blue = components[2]
             }
+            #else
+            if message.int(12) == 2 { (red, green, blue) = displayP3ToSRGB(red, green, blue) }
+            #endif
         }
         func byte(_ value: Double) -> Int { Int((min(max(value, 0), 1) * 255).rounded()) }
         return (String(format: "%02X%02X%02X", byte(red), byte(green), byte(blue)), message.float(6) ?? 1)
     }
+
+    #if !canImport(CoreGraphics)
+    /// A Display P3 colour in sRGB, as Core Graphics converts it: both share
+    /// sRGB's transfer curve, and differ only in their primaries.
+    static func displayP3ToSRGB(_ r: Double, _ g: Double, _ b: Double) -> (Double, Double, Double) {
+        func linear(_ v: Double) -> Double { v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4) }
+        func encoded(_ v: Double) -> Double {
+            let v = min(max(v, 0), 1)
+            return v <= 0.0031308 ? v * 12.92 : 1.055 * pow(v, 1 / 2.4) - 0.055
+        }
+        let (lr, lg, lb) = (linear(r), linear(g), linear(b))
+        return (
+            encoded(1.2249401 * lr - 0.2249404 * lg),
+            encoded(-0.0420569 * lr + 1.0420571 * lg),
+            encoded(-0.0196376 * lr - 0.0786361 * lg + 1.0982735 * lb)
+        )
+    }
+    #endif
 
     public static func colorXML(_ message: ProtoMessage?, opacity: Double = 1) -> String? {
         guard let color = color(message) else { return nil }

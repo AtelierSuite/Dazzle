@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// A Keynote table (`TST.TableInfoArchive`) as a DrawingML table.

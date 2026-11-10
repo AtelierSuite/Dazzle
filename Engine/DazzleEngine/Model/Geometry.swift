@@ -1,4 +1,7 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+import Foundation
 
 /// English Metric Units, the unit every length in a presentation is stored in.
 public enum EMU {

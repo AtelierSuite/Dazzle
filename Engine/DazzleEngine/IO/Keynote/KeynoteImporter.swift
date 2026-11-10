@@ -69,6 +69,7 @@ public enum KeynoteImporter {
         return presentation
     }
 
+    #if canImport(CoreText)
     /// Where growing text ends up, by slide and shape id, in the space of
     /// whatever holds it. It grows from where it is anchored: down from the
     /// top, out from the middle, up from the bottom.
@@ -108,6 +109,10 @@ public enum KeynoteImporter {
             return frames
         }
     }
+    #else
+    /// Without a text layout engine, text keeps the frames Keynote saved.
+    private static func fittedFrames(in presentation: Presentation) -> [[Int: EMURect]] { [] }
+    #endif
 
     public struct Conversion {
         public var parts: [String: Data]

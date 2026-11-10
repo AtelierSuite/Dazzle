@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(UniformTypeIdentifiers)
 import UniformTypeIdentifiers
+#endif
 
 /// The package a new presentation starts as: a 16:9 deck with a theme of
 /// HIG system colours set in Arial and Meiryo UI, five common layouts and
@@ -117,7 +119,7 @@ public enum PresentationTemplate {
         overrides += added.sorted { $0.key < $1.key }.map { ("/" + $0.key, $0.value) }
         let entries = overrides.map { "<Override PartName=\"\($0.0)\" ContentType=\"\($0.1)\"/>" }.joined()
         let media = Set(mediaExtensions).subtracting(["png", "jpeg"]).sorted().map { ext in
-            "<Default Extension=\"\(ext)\" ContentType=\"\(UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream")\"/>"
+            "<Default Extension=\"\(ext)\" ContentType=\"\(MediaTypes.mimeType(forExtension: ext))\"/>"
         }.joined()
         return """
             <Types xmlns="\(OOXML.contentTypesNS)">\
@@ -300,7 +302,7 @@ public enum PresentationTemplate {
             ),
         ].joined()
         let layoutIDs = (0..<layoutCount).map {
-            "<p:sldLayoutId id=\"\(2_147_483_649 + $0)\" r:id=\"rId\($0 + 1)\"/>"
+            "<p:sldLayoutId id=\"\(Int64(2_147_483_649) + Int64($0))\" r:id=\"rId\($0 + 1)\"/>"
         }.joined()
         return """
             <p:sldMaster \(namespaces)><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg>\

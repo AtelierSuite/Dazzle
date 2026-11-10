@@ -1,6 +1,11 @@
+#if canImport(CoreText)
+#if canImport(CoreText)
 import CoreText
+#endif
 import Foundation
+#if canImport(ImageIO)
 import ImageIO
+#endif
 #if canImport(UIKit)
 import UIKit
 
@@ -240,3 +245,4 @@ public final class FontResolver: @unchecked Sendable {
         "ms mincho": "Hiragino Mincho ProN", "yu mincho": "Hiragino Mincho ProN",
     ]
 }
+#endif

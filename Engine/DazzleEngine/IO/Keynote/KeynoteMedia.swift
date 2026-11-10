@@ -1,7 +1,13 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
+#if canImport(ImageIO)
 import ImageIO
+#endif
+#if canImport(UniformTypeIdentifiers)
 import UniformTypeIdentifiers
+#endif
 
 /// The pictures a converted presentation carries, each written once however
 /// many slides use it.
@@ -54,11 +60,18 @@ public final class KeynoteMedia {
         if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return (data, "png") }
         if bytes.starts(with: [0xFF, 0xD8, 0xFF]) { return (data, "jpeg") }
         if bytes.starts(with: [0x47, 0x49, 0x46, 0x38]) { return (data, "gif") }
+        #if canImport(ImageIO)
         if bytes.starts(with: [0x25, 0x50, 0x44, 0x46]) { return pdfToPNG(data).map { ($0, "png") } }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         return png(image).map { ($0, "png") }
+        #else
+        // TIFF, HEIC and PDF pictures need an image decoder this platform lacks.
+        return nil
+        #endif
     }
+
+    #if canImport(ImageIO)
 
     private static func png(_ image: CGImage) -> Data? {
         let output = NSMutableData()
@@ -89,4 +102,5 @@ public final class KeynoteMedia {
         context.drawPDFPage(page)
         return context.makeImage().flatMap(png)
     }
+    #endif
 }

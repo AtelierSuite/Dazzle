@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Writes one Keynote slide's drawables as `p:spTree` children, collecting

@@ -1,4 +1,6 @@
+#if canImport(CoreText)
 import CoreText
+#endif
 import Foundation
 
 /// Turns a `TSWP.StorageArchive` into DrawingML paragraphs.
@@ -396,6 +398,7 @@ public struct KeynoteText {
     /// name so it is not drawn as the regular.
     public static func font(_ postScriptName: String) -> (typeface: String, bold: Bool, italic: Bool) {
         if let cached = fontCache[postScriptName] { return cached }
+        #if canImport(CoreText)
         let font = CTFontCreateWithName(postScriptName as CFString, 12, nil)
         var result = (typeface: postScriptName, bold: false, italic: false)
         if (CTFontCopyPostScriptName(font) as String) == postScriptName {
@@ -411,6 +414,10 @@ public struct KeynoteText {
         } else {
             result = Self.family(of: postScriptName)
         }
+        #else
+        // No fonts to look the name up in: taken apart as for an uninstalled font.
+        let result = Self.family(of: postScriptName)
+        #endif
         fontCache[postScriptName] = result
         return result
     }

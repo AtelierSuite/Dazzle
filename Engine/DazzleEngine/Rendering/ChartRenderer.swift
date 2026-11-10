@@ -1,5 +1,10 @@
+#if canImport(CoreText)
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+#if canImport(CoreText)
 import CoreText
+#endif
 import Foundation
 
 /// Draws a chart from its data, in the look PowerPoint gives a new chart:
@@ -483,3 +488,4 @@ public struct ChartRenderer {
         return height
     }
 }
+#endif

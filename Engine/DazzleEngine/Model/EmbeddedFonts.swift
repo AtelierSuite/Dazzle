@@ -1,4 +1,6 @@
+#if canImport(CoreText)
 import CoreText
+#endif
 import Foundation
 import Synchronization
 
@@ -20,9 +22,11 @@ public final class EmbeddedFonts: Sendable {
     public let typefaces: [String]
     /// Each typeface's font files, by lowercased name, as stored in the package.
     private let files: [String: [Face: Data]]
+    #if canImport(CoreText)
     /// Decoded faces, nil where a file would not decode. Decoding takes a few
     /// milliseconds a face, so it waits until text asks for one.
     private let decoded = Mutex<[String: [Face: CTFontDescriptor?]]>([:])
+    #endif
 
     public init(files: [String: [Face: Data]]) {
         typefaces = files.keys.sorted()
@@ -31,6 +35,17 @@ public final class EmbeddedFonts: Sendable {
 
     public var isEmpty: Bool { files.isEmpty }
 
+    /// Every face carried, as a font file a browser or font manager can load
+    /// (TrueType or OpenType), by typeface name as the file spells it.
+    public func fontFiles() -> [(family: String, face: Face, data: Data)] {
+        typefaces.flatMap { family -> [(family: String, face: Face, data: Data)] in
+            (files[family.lowercased()] ?? [:]).compactMap { face, file in
+                EmbeddedFontDecoder.sfnt(from: file).map { (family, face, $0) }
+            }
+        }
+    }
+
+    #if canImport(CoreText)
     /// The face of `family` closest to the style asked for, or nil when the
     /// presentation does not carry that typeface.
     public func descriptor(family: String, bold: Bool, italic: Bool) -> CTFontDescriptor? {
@@ -57,4 +72,5 @@ public final class EmbeddedFonts: Sendable {
             return descriptor
         }
     }
+    #endif
 }

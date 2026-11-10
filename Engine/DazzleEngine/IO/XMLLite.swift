@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationXML)
+import FoundationXML
+#endif
 
 /// A tiny XML tree, built on `XMLParser`. Namespace prefixes are
 /// dropped so `<p:spTree>` and `<spTree>` look the same to callers.

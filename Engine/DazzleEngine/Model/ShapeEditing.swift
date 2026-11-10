@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 extension SlideShape {
@@ -26,7 +28,7 @@ extension SlideShape {
     /// from the group's member space into slide space, and turned and
     /// flipped as the group turned and flipped it.
     public static func ungrouped(_ member: SlideShape, from group: SlideShape, childFrame: EMURect) -> SlideShape {
-        var shape = SlideRenderer.placed(member, from: childFrame, into: group.frame)
+        var shape = member.placed(from: childFrame, into: group.frame)
         let groupFrame = group.frame.points
         let center = CGPoint(x: groupFrame.midX, y: groupFrame.midY)
         var frame = shape.frame.points

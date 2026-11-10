@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// A DrawingML colour as the file states it: a base colour, which may be a
@@ -161,9 +163,11 @@ public struct RGBAColor: Equatable, Hashable, Sendable {
         return byte(red) << 16 | byte(green) << 8 | byte(blue)
     }
 
+    #if canImport(CoreGraphics)
     public var cgColor: CGColor {
         CGColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
     }
+    #endif
 
     /// Hue, saturation and luminance, each 0…1.
     public var hsl: (hue: Double, saturation: Double, luminance: Double) {

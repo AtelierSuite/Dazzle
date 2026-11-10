@@ -1,8 +1,16 @@
+#if canImport(AVFoundation)
 import AVFoundation
+#endif
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
+#if canImport(ImageIO)
 import ImageIO
+#endif
+#if canImport(UniformTypeIdentifiers)
 import UniformTypeIdentifiers
+#endif
 
 /// A picture made ready to put in a presentation.
 ///
@@ -15,6 +23,23 @@ public struct PreparedMedia: Sendable {
     /// In pixels, which is also the size it is placed at, in points.
     public var size: CGSize
 
+    /// A picture already in a format every reader takes (PNG or JPEG), as
+    /// another platform's image decoder made it ready.
+    public init(data: Data, fileExtension: String, size: CGSize) {
+        self.data = data
+        self.fileExtension = fileExtension
+        self.size = size
+    }
+
+    public init(png: Data, size: CGSize) {
+        data = png
+        fileExtension = "png"
+        self.size = size
+    }
+}
+
+#if canImport(ImageIO)
+extension PreparedMedia {
     public init?(data: Data) {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let type = CGImageSourceGetType(source).flatMap({ UTType($0 as String) }),
@@ -50,12 +75,6 @@ public struct PreparedMedia: Sendable {
         fileExtension = hasAlpha ? "png" : "jpeg"
     }
 
-    public init(png: Data, size: CGSize) {
-        data = png
-        fileExtension = "png"
-        self.size = size
-    }
-
     public static func png(of image: CGImage) -> Data? {
         let output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else {
@@ -69,12 +88,23 @@ public struct PreparedMedia: Sendable {
 /// A video made ready to put in a presentation: in H.264 MP4, which
 /// PowerPoint plays everywhere, with a picture of its first frame to show
 /// until it plays.
+#endif
+
 public struct PreparedVideo: Sendable {
     public var data: Data
     public var poster: PreparedMedia
     /// At its natural size and orientation, in points.
     public var size: CGSize
 
+    public init(data: Data, poster: PreparedMedia, size: CGSize) {
+        self.data = data
+        self.poster = poster
+        self.size = size
+    }
+}
+
+#if canImport(AVFoundation)
+extension PreparedVideo {
     public static func prepare(from url: URL) async throws -> PreparedVideo {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
@@ -98,3 +128,4 @@ public struct PreparedVideo: Sendable {
         return PreparedVideo(data: try Data(contentsOf: output), poster: PreparedMedia(png: png, size: size), size: size)
     }
 }
+#endif

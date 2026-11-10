@@ -1,6 +1,13 @@
+#if canImport(CoreText)
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+#if canImport(CoreImage)
 import CoreImage
+#endif
+#if canImport(CoreText)
 import CoreText
+#endif
 import Foundation
 
 /// Draws slides with CoreGraphics, for every place a slide appears: the
@@ -176,7 +183,7 @@ public struct SlideRenderer {
         case .chart(let chart?):
             ChartRenderer(chart: chart, style: style).draw(in: frame, context: context)
         case .chart(nil):
-            drawStandIn(String(localized: "Object.Chart", bundle: #bundle), frame: frame, context: context, isChart: true)
+            drawStandIn(String(localized: "Object.Chart", bundle: .engine), frame: frame, context: context, isChart: true)
         case .unsupported(let label):
             if frame.width > 0, frame.height > 0 {
                 drawStandIn(label, frame: frame, context: context, isChart: false)
@@ -335,21 +342,7 @@ public struct SlideRenderer {
 
     /// A group member moved from the group's child space into its frame.
     public static func placed(_ shape: SlideShape, from child: EMURect, into frame: EMURect) -> SlideShape {
-        guard child.width > 0, child.height > 0 else { return shape }
-        let scaleX = Double(frame.width) / Double(child.width)
-        let scaleY = Double(frame.height) / Double(child.height)
-        func map(_ rect: EMURect) -> EMURect {
-            EMURect(
-                x: frame.x + Int((Double(rect.x - child.x) * scaleX).rounded()),
-                y: frame.y + Int((Double(rect.y - child.y) * scaleY).rounded()),
-                width: Int((Double(rect.width) * scaleX).rounded()),
-                height: Int((Double(rect.height) * scaleY).rounded())
-            )
-        }
-        var placed = shape
-        placed.frame = map(shape.frame)
-        placed.textFrame = shape.textFrame.map(map)
-        return placed
+        shape.placed(from: child, into: frame)
     }
 
     private func outline(of shape: SlideShape, in frame: CGRect) -> (fill: CGPath, stroke: CGPath, isOpen: Bool) {
@@ -418,10 +411,10 @@ public struct SlideRenderer {
         context.restoreGState()
 
         let prompt = switch placeholder.type {
-        case "title", "ctrTitle": String(localized: "Placeholder.Title", bundle: #bundle)
-        case "subTitle": String(localized: "Placeholder.Subtitle", bundle: #bundle)
-        case "pic": String(localized: "Placeholder.Picture", bundle: #bundle)
-        default: String(localized: "Placeholder.Text", bundle: #bundle)
+        case "title", "ctrTitle": String(localized: "Placeholder.Title", bundle: .engine)
+        case "subTitle": String(localized: "Placeholder.Subtitle", bundle: .engine)
+        case "pic": String(localized: "Placeholder.Picture", bundle: .engine)
+        default: String(localized: "Placeholder.Text", bundle: .engine)
         }
         var body = shape.text ?? TextBody(paragraphs: [])
         let paragraph = body.paragraphs.first ?? Paragraph(runs: [])
@@ -617,7 +610,7 @@ public struct SlideRenderer {
     ) {
         guard let path = picture.imagePath,
               let image = image(at: path, effects: picture.effects, placeholderColor: nil, style: style) else {
-            drawStandIn(String(localized: "Object.Picture", bundle: #bundle), frame: frame, context: context, isChart: false)
+            drawStandIn(String(localized: "Object.Picture", bundle: .engine), frame: frame, context: context, isChart: false)
             return
         }
         // The crop says which part of the picture fills the frame. Cut from
@@ -939,3 +932,4 @@ public struct TableLayout {
         return shape
     }
 }
+#endif

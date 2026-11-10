@@ -1,8 +1,17 @@
+#if canImport(CoreText)
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+#if canImport(CoreText)
 import CoreText
+#endif
 import Foundation
+#if canImport(ImageIO)
 import ImageIO
+#endif
+#if canImport(UniformTypeIdentifiers)
 import UniformTypeIdentifiers
+#endif
 
 /// Renders slides to PDF and to pictures.
 public enum SlideExporter {
@@ -256,3 +265,4 @@ public enum SlideExporter {
         return data as Data
     }
 }
+#endif

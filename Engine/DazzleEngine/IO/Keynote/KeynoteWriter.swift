@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(ImageIO)
 import ImageIO
+#endif
 
 /// A Keynote document as it was opened: every entry, and its objects, kept
 /// so that the presentation can be written back over it.
@@ -90,6 +92,7 @@ public enum KeynoteWriter {
     /// The first slide shown, drawn as it is now at the size the preview it
     /// replaces was.
     private static func preview(of presentation: Presentation, like data: Data) -> Data? {
+        #if canImport(ImageIO)
         guard let image = CGImageSourceCreateWithData(data as CFData, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
@@ -100,6 +103,10 @@ public enum KeynoteWriter {
         let fitted = min(width, Int((Double(height) * aspect).rounded()))
         guard fitted > 0 else { return nil }
         return SlideExporter.image(of: presentation.slides[index], in: presentation, width: fitted, format: .jpeg)
+        #else
+        // Nothing here draws slides as pictures; the preview is left as it was.
+        return nil
+        #endif
     }
 
     private static func package(_ entries: [(path: String, data: Data)]) -> FileWrapper {
@@ -141,6 +148,6 @@ public enum KeynoteSaveError: LocalizedError {
     case unsupportedChange
 
     public var errorDescription: String? {
-        String(localized: "Error.KeynoteNotWritable", bundle: #bundle)
+        String(localized: "Error.KeynoteNotWritable", bundle: .engine)
     }
 }

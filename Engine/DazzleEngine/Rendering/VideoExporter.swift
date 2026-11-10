@@ -1,6 +1,13 @@
+#if canImport(CoreText)
+#if canImport(AVFoundation)
 import AVFoundation
+#endif
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
+#if canImport(CoreVideo)
 import CoreVideo
+#endif
 import Foundation
 
 /// Renders slides to an H.264 movie: each slide held for its time, with a
@@ -12,8 +19,8 @@ public enum VideoExporter {
 
         public var errorDescription: String? {
             switch self {
-            case .couldNotStart: String(localized: "Error.VideoExport", bundle: #bundle)
-            case .failed(let reason): String(localized: "Error.VideoExport", bundle: #bundle) + "\n" + reason
+            case .couldNotStart: String(localized: "Error.VideoExport", bundle: .engine)
+            case .failed(let reason): String(localized: "Error.VideoExport", bundle: .engine) + "\n" + reason
             }
         }
     }
@@ -106,3 +113,4 @@ public enum VideoExporter {
         return buffer
     }
 }
+#endif
