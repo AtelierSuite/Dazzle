@@ -49,4 +49,26 @@ struct CompoundLineTests {
         #expect(bands("thinThick") == thinThick)
         #expect(bands("tri") == triple)
     }
+
+    @Test("A compound line, cap and join are written on save and read back")
+    func roundTrip() throws {
+        var presentation = Presentation.blank
+        let line = LineStyle(
+            fill: .solid(.rgb(0x112233)), width: 50_800, compound: "tri", cap: "sq", join: .bevel
+        )
+        presentation.slides[0].shapes[1].line = line
+        presentation.slides[0].shapes[1].edits.insert(.line)
+        presentation.slides[0].isModified = true
+        let copy = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        #expect(copy.slides[0].shapes[1].line == line)
+
+        // Changing the join replaces the old one rather than adding a second.
+        presentation = copy
+        presentation.slides[0].shapes[1].line?.join = .miter(limit: 400_000)
+        presentation.slides[0].shapes[1].edits.insert(.line)
+        presentation.slides[0].isModified = true
+        let again = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        #expect(again.slides[0].shapes[1].line?.join == .miter(limit: 400_000))
+        #expect(again.slides[0].shapes[1].line?.compound == "tri")
+    }
 }
