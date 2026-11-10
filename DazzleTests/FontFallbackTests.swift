@@ -61,4 +61,36 @@ struct FontFallbackTests {
         #expect(CTFontCopyFamilyName(font("Georgia")) as String == "Georgia")
         #expect(CTFontCopyFamilyName(font("Calibri")) as String != "Times New Roman")
     }
+
+    private func isInstalled(_ family: String) -> Bool {
+        CTFontCopyFamilyName(CTFontCreateWithName(family as CFString, 12, nil)) as String == family
+    }
+
+    @Test("Office and Windows families are drawn in metric-compatible stand-ins first, then the nearest in look")
+    func substituteTable() {
+        #expect(FontResolver.substitutes(for: "Calibri")?.first == "Carlito")
+        #expect(FontResolver.substitutes(for: "Calibri Light")?.first == "Carlito")
+        #expect(FontResolver.substitutes(for: "Cambria")?.first == "Caladea")
+        #expect(FontResolver.substitutes(for: "Arial") == ["Helvetica"])
+        #expect(FontResolver.substitutes(for: "Liberation Sans")?.first == "Arial")
+        #expect(FontResolver.substitutes(for: "Meiryo UI") == ["Hiragino Sans"])
+        #expect(FontResolver.substitutes(for: "Yu Gothic") == ["Hiragino Sans"])
+        #expect(FontResolver.substitutes(for: "ＭＳ Ｐゴシック") == ["Hiragino Sans"])
+        // The longest prefix wins, and whole-name entries don't take in their longer relatives.
+        #expect(FontResolver.substitutes(for: "Arial Nova") == [""])
+        #expect(FontResolver.substitutes(for: "Arial Narrow") == nil)
+        #expect(FontResolver.substitutes(for: "Open Sans") == nil)
+    }
+
+    @Test("A stand-in is used only where the device has it")
+    func installedStandIns() {
+        #expect(CTFontCopyFamilyName(font("Calibri")) as String == (isInstalled("Carlito") ? "Carlito" : CTFontCopyFamilyName(font("Aptos")) as String))
+        #expect(CTFontCopyFamilyName(font("Cambria")) as String == (isInstalled("Caladea") ? "Caladea" : "Georgia"))
+        #expect(CTFontCopyFamilyName(font("Meiryo")) as String == "Hiragino Sans")
+        #expect(CTFontCopyFamilyName(font("Arial")) as String == (isInstalled("Arial") ? "Arial" : "Helvetica"))
+        #if os(iOS)
+        // iOS ships Carlito, metric-compatible with Calibri.
+        #expect(CTFontCopyFamilyName(font("Calibri")) as String == "Carlito")
+        #endif
+    }
 }

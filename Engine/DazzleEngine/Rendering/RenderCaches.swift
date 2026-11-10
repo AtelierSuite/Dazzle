@@ -97,9 +97,10 @@ public final class ImageCache: @unchecked Sendable {
 }
 
 /// Fonts by family, size and style. A font the presentation carries comes
-/// first; families Apple platforms do not have — Calibri, Aptos and the other Office
-/// faces — are drawn in the closest one it does, and any other in the kind
-/// of face its name suggests.
+/// first, then one the device has; families Apple platforms do not have —
+/// Calibri, Cambria and the other Office and Windows faces — are drawn in the
+/// closest one they do, metric-compatible where there is one so lines break
+/// where they did, and any other in the kind of face its name suggests.
 public final class FontResolver: @unchecked Sendable {
     public static let shared = FontResolver()
 
@@ -117,7 +118,7 @@ public final class FontResolver: @unchecked Sendable {
         let key = "\(family ?? "")|\(size)|\(bold)|\(italic)" as NSString
         if let cached = cache.object(forKey: key) { return cached }
 
-        var (font, isWeighted) = base(family: family, size: size)
+        var (font, isWeighted, _) = base(family: family, size: size)
         var traits: CTFontSymbolicTraits = []
         // A heavy face the system does not have is closest in the bold of the substitute.
         let lowered = family?.lowercased() ?? ""
@@ -133,22 +134,31 @@ public final class FontResolver: @unchecked Sendable {
         return font
     }
 
-    /// The face for `family`, and whether it already has the weight the name asks for.
-    private func base(family: String?, size: CGFloat) -> (font: CTFont, isWeighted: Bool) {
+    /// The face for `family`, whether it already has the weight the name asks
+    /// for, and whether it is another family standing in.
+    private func base(family: String?, size: CGFloat) -> (font: CTFont, isWeighted: Bool, isSubstitute: Bool) {
         let system = CTFontCreateUIFontForLanguage(.system, size, nil) ?? CTFontCreateWithName("Helvetica" as CFString, size, nil)
-        guard let family = family?.trimmed, !family.isEmpty else { return (system, false) }
+        guard let family = family?.trimmed, !family.isEmpty else { return (system, false, false) }
         let lowered = family.lowercased()
-        if let substitute = Self.substitutes.first(where: { lowered.hasPrefix($0.key) })?.value {
-            return (substitute.isEmpty ? system : CTFontCreateWithName(substitute as CFString, size, nil), false)
+        if let installed = Self.installed(family, size: size) {
+            return (installed, false, false)
         }
-        let candidate = CTFontCreateWithName(family as CFString, size, nil)
-        let found = (CTFontCopyFamilyName(candidate) as String).lowercased()
+        if let candidates = Self.substitutes(for: lowered) {
+            let font = candidates.lazy.compactMap { $0.isEmpty ? system : Self.installed($0, size: size) }.first ?? system
+            return (font, false, true)
+        }
+        return (Self.fallback(for: lowered, size: size), true, true)
+    }
+
+    /// The device's font of that family or full name, or nil when it has none.
+    private static func installed(_ name: String, size: CGFloat) -> CTFont? {
+        let candidate = CTFontCreateWithName(name as CFString, size, nil)
+        let lowered = name.lowercased()
         // CoreText answers an unknown name with some other font rather than
         // nothing; only keep what came back if it is what was asked for.
-        if found == lowered || (CTFontCopyFullName(candidate) as String).lowercased() == lowered {
-            return (candidate, false)
-        }
-        return (Self.fallback(for: lowered, size: size), true)
+        guard (CTFontCopyFamilyName(candidate) as String).lowercased() == lowered
+            || (CTFontCopyFullName(candidate) as String).lowercased() == lowered else { return nil }
+        return candidate
     }
 
     /// A face for a family the system doesn't have, going by its name: serifs in
@@ -234,15 +244,43 @@ public final class FontResolver: @unchecked Sendable {
         return weights.first { name.contains($0.0) }?.1 ?? .regular
     }
 
-    /// Office typefaces mapped to what iOS and macOS ship. Empty means the system font.
-    private static let substitutes: [String: String] = [
-        "calibri": "", "aptos": "", "segoe": "", "arial nova": "", "tahoma": "", "candara": "",
-        "corbel": "", "franklin gothic": "", "century gothic": "Avenir Next", "gill sans mt": "Gill Sans",
-        "cambria": "Georgia", "constantia": "Georgia", "book antiqua": "Palatino", "garamond": "Baskerville",
-        "consolas": "Menlo", "lucida console": "Menlo", "courier": "Courier New",
-        "meiryo": "Hiragino Sans", "yu gothic": "Hiragino Sans", "ms gothic": "Hiragino Sans",
-        "ms pgothic": "Hiragino Sans", "游ゴシック": "Hiragino Sans", "メイリオ": "Hiragino Sans",
-        "ms mincho": "Hiragino Mincho ProN", "yu mincho": "Hiragino Mincho ProN",
+    /// The families to draw `family` in, best first, when the device lacks
+    /// it: the longest matching prefix wins, so Arial Nova is not taken for Arial.
+    static func substitutes(for family: String) -> [String]? {
+        let name = family.lowercased()
+        if let exact = exactSubstitutes[name] { return exact }
+        return prefixSubstitutes.filter { name.hasPrefix($0.key) }.max { $0.key.count < $1.key.count }?.value
+    }
+
+    /// Office and Windows typefaces, and the families iOS and macOS have to
+    /// stand in for them, best first: metric-compatible ones (Carlito for
+    /// Calibri, Caladea for Cambria) where the device has them, then the
+    /// nearest in look. An empty name means the system font. Each covers its
+    /// family's weights and widths too, such as Calibri Light or Segoe UI.
+    private static let prefixSubstitutes: [String: [String]] = [
+        "calibri": ["Carlito", ""], "cambria": ["Caladea", "Georgia"],
+        "aptos": [""], "segoe": [""], "arial nova": [""], "tahoma": [""], "candara": [""],
+        "corbel": [""], "franklin gothic": [""], "century gothic": ["Avenir Next"], "gill sans mt": ["Gill Sans"],
+        "constantia": ["Georgia"], "book antiqua": ["Palatino"], "garamond": ["Baskerville"],
+        "consolas": ["Menlo"], "lucida console": ["Menlo"], "courier": ["Courier New", "Courier"],
+        "meiryo": ["Hiragino Sans"], "yu gothic": ["Hiragino Sans"], "ms gothic": ["Hiragino Sans"],
+        "ms pgothic": ["Hiragino Sans"], "ms ui gothic": ["Hiragino Sans"], "游ゴシック": ["Hiragino Sans"],
+        "メイリオ": ["Hiragino Sans"], "ｍｓ ゴシック": ["Hiragino Sans"], "ｍｓ ｐゴシック": ["Hiragino Sans"],
+        "ms mincho": ["Hiragino Mincho ProN"], "ms pmincho": ["Hiragino Mincho ProN"],
+        "yu mincho": ["Hiragino Mincho ProN"], "游明朝": ["Hiragino Mincho ProN"],
+        "ｍｓ 明朝": ["Hiragino Mincho ProN"], "ｍｓ ｐ明朝": ["Hiragino Mincho ProN"],
+        "microsoft yahei": ["PingFang SC", ""], "microsoft jhenghei": ["PingFang TC", ""],
+        "malgun gothic": ["Apple SD Gothic Neo"],
+    ]
+
+    /// Families matched by their whole name, whose longer names are other
+    /// faces: Arial Narrow is not drawn in Arial's width.
+    private static let exactSubstitutes: [String: [String]] = [
+        "arial": ["Helvetica"], "helvetica": ["Arial"],
+        "liberation sans": ["Arial", "Helvetica"], "arimo": ["Arial", "Helvetica"],
+        "liberation serif": ["Times New Roman"], "tinos": ["Times New Roman"],
+        "liberation mono": ["Courier New"], "cousine": ["Courier New"],
+        "carlito": ["Calibri", ""], "caladea": ["Cambria", "Georgia"],
     ]
 }
 #endif
