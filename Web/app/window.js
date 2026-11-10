@@ -15,12 +15,8 @@ import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js
 import { Slideshow, hasSecondDisplay } from "./slideshow.js";
 
 const isApple = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-/**
- * Dazzle for iPhone, iPad and Mac: one App Store listing, opened in the
- * visitor's own storefront. Set once the listing is public; until then the
- * Help menu doesn't offer it.
- */
-const APP_STORE_URL = null;
+/** Dazzle for iPhone, iPad and Mac: one App Store listing, opened in the visitor's own storefront. */
+const APP_STORE_URL = "https://apps.apple.com/app/id6819683894";
 const SOURCE_CODE_URL = "https://github.com/AtelierSuite/Dazzle";
 /** Which Apple app to offer: "ios" on an iPhone or iPad, "mac" on a Mac, null elsewhere. */
 const appStorePlatform = (() => {
@@ -569,7 +565,7 @@ export class PresentationWindow {
       { label: t("Menu.Window"), get items() {
         return self.document ? [{ label: self.document.name, checked: true, action: () => self.canvas.element.focus() }] : [{ label: "Dazzle", disabled: true }];
       } },
-      { label: t("Menu.Help"), get items() { return self.items(...(appStorePlatform && APP_STORE_URL ? ["downloadApp", "-"] : []), "about"); } },
+      { label: t("Menu.Help"), get items() { return self.items(...(appStorePlatform ? ["downloadApp", "-"] : []), "about"); } },
     ];
     const bar = this.root.querySelector("#menu-bar");
     this.menuBarOverflow = attachMenuBar(bar, menus, { label: t("Web.Menu.Label"), overflowLabel: t("Toolbar.More") });

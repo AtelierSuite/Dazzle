@@ -65,5 +65,4 @@ The app works end to end: start screen; new presentations; opening `.pptx`, `.pp
 
 - [ ] Browser tests in Chromium, WebKit and Firefox through WebDriver, including two-display presenting.
 - [ ] Accessibility passes with VoiceOver and keyboard only.
-- [ ] The App Store link in the Help menu, once Dazzle's listing is public (`APP_STORE_URL` in `app/window.js`).
 - [ ] A social sharing picture, as Tables has.
