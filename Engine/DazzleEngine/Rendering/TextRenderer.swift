@@ -321,6 +321,7 @@ public struct TextRenderer {
     private static let paragraphKey = NSAttributedString.Key(kCTParagraphStyleAttributeName as String)
     private static let underlineKey = NSAttributedString.Key(kCTUnderlineStyleAttributeName as String)
     private static let superscriptKey = NSAttributedString.Key(kCTSuperscriptAttributeName as String)
+    private static let kernKey = NSAttributedString.Key(kCTKernAttributeName as String)
     private static let strikeKey = NSAttributedString.Key("DazzleStrikethrough")
     private static let linkKey = NSAttributedString.Key("DazzleLink")
     private static let strokeWidthKey = NSAttributedString.Key(kCTStrokeWidthAttributeName as String)
@@ -478,6 +479,10 @@ public struct TextRenderer {
         }
         if let baseline = run.baseline, baseline != 0 {
             attributes[Self.superscriptKey] = NSNumber(value: baseline > 0 ? 1 : -1)
+        }
+        if let spacing = run.spacing, spacing != 0 {
+            // Spacing scales with the text when it is shrunk to fit, but not with superscript.
+            attributes[Self.kernKey] = NSNumber(value: Double(spacing) / 100 * scale)
         }
         if case .line(let width, let outlineColor) = run.outline, width > 0 {
             // CoreText strokes by a percentage of the font size; negative fills the letters too.
