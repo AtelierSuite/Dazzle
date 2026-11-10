@@ -229,19 +229,25 @@ struct KeynoteConversionTests {
 
     @Test("What could not be brought across is reported")
     func omissions() {
-        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .builds])
+        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .approximatedBuilds])
     }
 
     @Test("Builds become animations on the shapes they build")
     func builds() throws {
         let shape = try #require(presentation.slides[0].shapes.first { $0.fill != nil && $0.text == nil })
         let dissolve = try #require(presentation.slides[0].animations.first)
-        #expect(presentation.slides[0].animations.count == 1)
+        #expect(presentation.slides[0].animations.count == 2)
         #expect(dissolve.shapeID == shape.shapeID)
         #expect(dissolve.category == .entrance)
         #expect(dissolve.effect == .fade)
         #expect(dissolve.trigger == .onClick)
         #expect(dissolve.duration == 0.75)
+        // A motion path, which Keynote keeps in a form Dazzle doesn't read,
+        // plays as the nearest emphasis rather than being dropped.
+        let motion = presentation.slides[0].animations[1]
+        #expect(motion.shapeID == shape.shapeID)
+        #expect(motion.category == .emphasis)
+        #expect(motion.effect == .pulse)
 
         let box = try #require(presentation.slides[1].shapes.first)
         let paragraphs = presentation.slides[1].animations
@@ -275,6 +281,14 @@ struct KeynoteConversionTests {
         #expect(effect("Action", "apple:action-flip") == .spin)
         #expect(effect("Action", "apple:action-swing") == .teeter)
         #expect(effect("Action", "apple:action-scale") == .growShrink)
+
+        // Effects with no counterpart are left to the nearest.
+        #expect(effect("In", "apple:made-up") == nil)
+        #expect(effect("Action", "apple:action-motion-path") == nil)
+        #expect(KeynoteBuilds.nearestEffect(type: "In") == (.entrance, .fade))
+        #expect(KeynoteBuilds.nearestEffect(type: "Out") == (.exit, .fade))
+        #expect(KeynoteBuilds.nearestEffect(type: "Action") == (.emphasis, .pulse))
+        #expect(KeynoteBuilds.nearestEffect(type: nil) == (.entrance, .fade))
     }
 
     @Test("Transitions are kept as PowerPoint's nearest, and automatic ones move on by themselves")

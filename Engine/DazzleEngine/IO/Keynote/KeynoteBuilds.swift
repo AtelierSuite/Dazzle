@@ -10,19 +10,30 @@ import Foundation
 public struct KeynoteBuilds {
     public let archive: KeynoteArchive
 
-    /// The animations, and whether any build had no counterpart.
-    public func animations(_ slide: KeynoteArchive.Object, shapeIDs: [UInt64: Int]) -> (animations: [ShapeAnimation], lost: Bool) {
+    /// The animations; whether any build was lost, its object not brought
+    /// across; and whether any had no counterpart, so plays as the nearest.
+    public func animations(
+        _ slide: KeynoteArchive.Object, shapeIDs: [UInt64: Int]
+    ) -> (animations: [ShapeAnimation], lost: Bool, approximated: Bool) {
         var animations: [ShapeAnimation] = []
         var lost = false
+        var approximated = false
         var paragraphsBuilt: [UInt64: Int] = [:]
         for chunkID in slide.message.references(43) {
             guard let chunk = archive[chunkID]?.message, let buildID = chunk.reference(1),
                   let build = archive[buildID]?.message else { continue }
             let attributes = build.message(4)?.message(18)
-            guard let shapeID = build.reference(1).flatMap({ shapeIDs[$0] }),
-                  let (category, effect) = Self.effect(type: attributes?.string(1), name: attributes?.string(2)) else {
+            guard let shapeID = build.reference(1).flatMap({ shapeIDs[$0] }) else {
                 lost = true
                 continue
+            }
+            let type = attributes?.string(1), name = attributes?.string(2)
+            let category: ShapeAnimation.Category, effect: ShapeAnimation.Effect
+            if let match = Self.effect(type: type, name: name) {
+                (category, effect) = match
+            } else {
+                (category, effect) = Self.nearestEffect(type: type)
+                approximated = true
             }
             var paragraphs: ClosedRange<Int>?
             if build.string(2)?.lowercased().contains("paragraph") == true {
@@ -36,7 +47,7 @@ public struct KeynoteBuilds {
                 duration: chunk.float(4) ?? attributes?.float(3), delay: chunk.float(3) ?? 0
             ))
         }
-        return (animations, lost)
+        return (animations, lost, approximated)
     }
 
     /// Keynote's build type and effect name as a category and effect.
@@ -75,8 +86,7 @@ public struct KeynoteBuilds {
             } else if ["zoom", "scale", "pop", "compress", "squeeze", "twirl", "orbital", "spin", "blur"].contains(where: name.contains) {
                 .zoom
             } else {
-                // Anything without a match fades.
-                .fade
+                nil
             }
             return effect.map { (category, $0) }
         case "action":
@@ -94,6 +104,17 @@ public struct KeynoteBuilds {
             return effect.map { (.emphasis, $0) }
         default:
             return nil
+        }
+    }
+
+    /// What a build with no counterpart plays as: a dissolve for an In or
+    /// Out build, a pulse for an Action, and an In build when the type is
+    /// unknown.
+    public static func nearestEffect(type: String?) -> (ShapeAnimation.Category, ShapeAnimation.Effect) {
+        switch type?.lowercased() {
+        case "out": (.exit, .fade)
+        case "action": (.emphasis, .pulse)
+        default: (.entrance, .fade)
         }
     }
 

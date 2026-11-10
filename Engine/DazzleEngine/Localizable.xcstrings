@@ -491,6 +491,41 @@
         }
       }
     },
+    "Notice.Omission.ApproximatedBuilds" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Some builds’ effects, which play as the nearest Dazzle has instead"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一部のビルドのエフェクト（代わりにDazzleで最も近いエフェクトで再生）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일부 빌드 효과(대신 Dazzle에서 가장 가까운 효과로 재생)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分构件效果（改为以 Dazzle 中最接近的效果播放）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分組件效果（改為以 Dazzle 中最接近的效果播放）"
+          }
+        }
+      }
+    },
     "Notice.Omission.Builds" : {
       "extractionState" : "manual",
       "localizations" : {
