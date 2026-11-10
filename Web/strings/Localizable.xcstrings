@@ -1401,41 +1401,6 @@
         }
       }
     },
-    "Web.Offline.Ready": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dazzle is ready to work offline."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dazzle はオフラインで使えるようになりました。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이제 Dazzle을 오프라인에서 사용할 수 있습니다."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dazzle 已可离线使用。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dazzle 已可離線使用。"
-          }
-        }
-      }
-    },
     "Web.Play.PopupBlocked": {
       "extractionState": "manual",
       "localizations": {
