@@ -105,6 +105,8 @@ public final class FontResolver: @unchecked Sendable {
     public static let shared = FontResolver()
 
     private let cache = NSCache<NSString, CTFont>()
+    /// What `substitute(for:)` found by family, empty where nothing stands in.
+    private let substituteCache = NSCache<NSString, NSString>()
 
     public func font(family: String?, size: CGFloat, bold: Bool, italic: Bool, embedded: EmbeddedFonts = .none) -> CTFont {
         if let family, let descriptor = embedded.descriptor(family: family, bold: bold, italic: italic) {
@@ -132,6 +134,24 @@ public final class FontResolver: @unchecked Sendable {
         }
         cache.setObject(font, forKey: key)
         return font
+    }
+
+    /// The family `family` is drawn in on this device when the presentation
+    /// does not carry it, or nil when the device has it.
+    public func substitute(for family: String, embedded: EmbeddedFonts = .none) -> String? {
+        let family = family.trimmed
+        guard !family.isEmpty, embedded.descriptor(family: family, bold: false, italic: false) == nil else { return nil }
+        let key = family as NSString
+        if let cached = substituteCache.object(forKey: key) { return cached.length == 0 ? nil : cached as String }
+        var substitute = ""
+        let resolved = base(family: family, size: 12)
+        if resolved.isSubstitute {
+            let name = CTFontCopyFamilyName(resolved.font) as String
+            // The system font's family is hidden behind a name starting with a dot.
+            substitute = name.hasPrefix(".") ? "SF Pro" : name
+        }
+        substituteCache.setObject(substitute as NSString, forKey: key)
+        return substitute.isEmpty ? nil : substitute
     }
 
     /// The face for `family`, whether it already has the weight the name asks
