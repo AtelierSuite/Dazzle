@@ -12,6 +12,13 @@ public struct TextRenderer {
     public let style: SlideStyleContext
     public let slideNumber: Int
 
+    /// The kinds of vertical text, by their name in the file, all laid out
+    /// across the shape and turned a quarter.
+    static let verticalKinds: Set = ["vert", "eaVert", "vert270", "wordArtVert", "wordArtVertRtl", "mongolianVert"]
+    /// Those set in vertical lines (縦書き and stacked), where Japanese and
+    /// Chinese stand upright, rather than turned letters and all.
+    static let uprightKinds: Set = ["eaVert", "wordArtVert", "wordArtVertRtl"]
+
     /// Text laid out in a shape: the frame CoreText made, and where it sits.
     private struct Layout {
         var frame: CTFrame
@@ -40,9 +47,18 @@ public struct TextRenderer {
 
         // Vertical text is laid out across the shape's height, then turned.
         var turn: (center: CGPoint, angle: CGFloat)?
-        if let vertical = properties.vertical, ["vert", "eaVert", "vert270", "wordArtVert", "mongolianVert"].contains(vertical) {
+        if let vertical = properties.vertical, Self.verticalKinds.contains(vertical) {
             turn = (CGPoint(x: inner.midX, y: inner.midY), vertical == "vert270" ? -.pi / 2 : .pi / 2)
             inner = CGRect(x: -inner.height / 2, y: -inner.width / 2, width: inner.height, height: inner.width)
+        }
+        // Set in vertical lines rather than turned, Japanese and Chinese take
+        // their vertical forms, which CoreText draws upright in the turned line.
+        let upright = properties.vertical.map(Self.uprightKinds.contains) ?? false
+        func shaped(_ string: NSAttributedString) -> NSAttributedString {
+            guard upright else { return string }
+            let shaped = NSMutableAttributedString(attributedString: string)
+            shaped.addAttribute(NSAttributedString.Key(kCTVerticalFormsAttributeName as String), value: true, range: NSRange(location: 0, length: shaped.length))
+            return shaped
         }
 
         var fontScale = 1.0
@@ -54,22 +70,22 @@ public struct TextRenderer {
         let wraps = properties.wraps ?? true
         let layoutWidth = wraps ? max(inner.width, 1) : 100_000
 
-        var string = attributedString(
+        var string = shaped(attributedString(
             body, shape: shape, sources: sources, scale: fontScale, spacingReduction: spacingReduction,
             colorOverride: colorOverride, hidesText: hidesText, paragraphOpacity: paragraphOpacity,
             colorChanges: colorChanges, paragraphColorChanges: paragraphColorChanges
-        )
+        ))
         var framesetter = CTFramesetterCreateWithAttributedString(string)
         var size = suggestedSize(framesetter, string: string, width: layoutWidth)
 
         // Shrink on overflow, as PowerPoint would have when it last saved.
         if case .normal = properties.autofit, fontScale == 1, size.height > inner.height + 1 {
             for scale in stride(from: 0.9, through: 0.3, by: -0.1) {
-                string = attributedString(
+                string = shaped(attributedString(
                     body, shape: shape, sources: sources, scale: scale, spacingReduction: 0.1, colorOverride: colorOverride,
                     hidesText: hidesText, paragraphOpacity: paragraphOpacity,
                     colorChanges: colorChanges, paragraphColorChanges: paragraphColorChanges
-                )
+                ))
                 framesetter = CTFramesetterCreateWithAttributedString(string)
                 size = suggestedSize(framesetter, string: string, width: layoutWidth)
                 if size.height <= inner.height + 1 { break }
