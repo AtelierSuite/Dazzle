@@ -253,6 +253,30 @@ struct KeynoteConversionTests {
         #expect(reread.slides[1].animations.map(\.paragraphs) == [0...0, 1...1])
     }
 
+    @Test("Keynote's build effects become the nearest of Dazzle's")
+    func buildEffects() throws {
+        func effect(_ type: String, _ name: String) -> ShapeAnimation.Effect? { KeynoteBuilds.effect(type: type, name: name)?.1 }
+        #expect(effect("In", "apple:dissolve") == .fade)
+        #expect(effect("In", "apple:move-in") == .fly(.bottom))
+        #expect(effect("In", "apple:drop") == .fly(.top))
+        #expect(effect("Out", "apple:fall") == .fly(.bottom))
+        #expect(effect("In", "apple:drift") == .float)
+        #expect(effect("In", "apple:typewriter") == .wipe(.left))
+        #expect(effect("In", "apple:twirl") == .zoom)
+        let blinds = try #require(AnimationFilter("blinds(horizontal)"))
+        #expect(effect("In", "apple:blinds") == .filter(blinds, id: 3, subtype: 10))
+        let circle = try #require(AnimationFilter("circle(out)"))
+        #expect(effect("Out", "apple:wipe-iris") == .filter(circle, id: 6, subtype: 32))
+        let dissolve = try #require(AnimationFilter("dissolve"))
+        #expect(effect("In", "apple:sparkle") == .filter(dissolve, id: 9, subtype: 0))
+        #expect(KeynoteBuilds.effect(type: "Out", name: "apple:shimmer")?.0 == .exit)
+
+        #expect(KeynoteBuilds.effect(type: "Action", name: "apple:action-flip")?.0 == .emphasis)
+        #expect(effect("Action", "apple:action-flip") == .spin)
+        #expect(effect("Action", "apple:action-swing") == .teeter)
+        #expect(effect("Action", "apple:action-scale") == .growShrink)
+    }
+
     @Test("Transitions are kept as PowerPoint's nearest, and automatic ones move on by themselves")
     func transitions() {
         #expect(presentation.unsupportedFeatures.features == [.transitions])
