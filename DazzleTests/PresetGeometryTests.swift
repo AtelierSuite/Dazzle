@@ -127,4 +127,41 @@ struct BannerGeometryTests {
         #expect(!narrow.contains(point(0.3, 0.9), using: .evenOdd))
         #expect(narrow.contains(point(0.5, 0.5), using: .evenOdd))
     }
+
+    @Test("The cloud is drawn from its puffs, with ECMA-376's text box")
+    func cloud() {
+        let cloud = PresetGeometry.path("cloud", adjustments: [:], in: rect)
+        // The puffs reach the frame's edges, and dip in between them.
+        let bounds = cloud.boundingBoxOfPath
+        #expect(abs(bounds.minX - rect.minX) < rect.width * 0.01 && abs(bounds.maxX - rect.maxX) < rect.width * 0.01)
+        #expect(abs(bounds.minY - rect.minY) < rect.height * 0.01 && abs(bounds.maxY - rect.maxY) < rect.height * 0.01)
+        #expect(!cloud.contains(point(0.07, 0.333), using: .evenOdd))
+        #expect(!cloud.contains(point(0.5, 0.02), using: .evenOdd))
+        #expect(cloud.contains(point(0.2, 0.12), using: .evenOdd))
+        #expect(cloud.contains(point(0.5, 0.5), using: .evenOdd))
+        #expect(!cloud.contains(point(0.03, 0.03), using: .evenOdd))
+
+        let text = PresetGeometry.textRect("cloudCallout", adjustments: [:], in: rect)
+        #expect(abs(text.minX - point(2_977.0 / 21_600, 0).x) < 0.01)
+        #expect(abs(text.maxY - point(0, 17_337.0 / 21_600).y) < 0.01)
+    }
+
+    @Test("Cloud callout bubbles trail to the adjust point without cutting holes in the cloud")
+    func cloudCallout() {
+        let cloud = PresetGeometry.path("cloud", adjustments: [:], in: rect)
+        for position in [[-20_833, 62_500], [70_000, -60_000], [-10_000, 40_000], [0, 0]] {
+            let callout = PresetGeometry.path(
+                "cloudCallout", adjustments: ["adj1": position[0], "adj2": position[1]], in: rect
+            )
+            let tip = point(0.5 + CGFloat(position[0]) / 100_000, 0.5 + CGFloat(position[1]) / 100_000)
+            #expect(callout.contains(tip, using: .evenOdd), "\(position)")
+            for x in stride(from: 0.0, through: 1.0, by: 0.02) {
+                for y in stride(from: 0.0, through: 1.0, by: 0.02) where cloud.contains(point(x, y), using: .evenOdd) {
+                    #expect(callout.contains(point(x, y), using: .evenOdd), "\(position), \(x), \(y)")
+                }
+            }
+        }
+        let callout = PresetGeometry.path("cloudCallout", adjustments: [:], in: rect)
+        #expect(!callout.contains(point(0.8, 1.1), using: .evenOdd))
+    }
 }
