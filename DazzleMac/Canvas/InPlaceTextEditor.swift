@@ -28,6 +28,8 @@ final class InPlaceTextEditor: NSView, NSTextViewDelegate {
         /// Where in it the text goes.
         var area: CGRect
         var rotation: Double
+        /// How the text runs, when it runs vertically.
+        var vertical: String? = nil
     }
 
     private(set) var target: Target
@@ -54,6 +56,9 @@ final class InPlaceTextEditor: NSView, NSTextViewDelegate {
         textView.isHorizontallyResizable = false
         textView.delegate = self
         textView.setAccessibilityIdentifier("inPlaceTextEditor")
+        // Vertical text is typed in vertical lines, right to left, Japanese
+        // and Chinese upright; text turned anticlockwise is typed across.
+        if target.vertical.map({ $0 != "vert270" }) == true { textView.setLayoutOrientation(.vertical) }
         addSubview(textView)
         load()
     }
@@ -110,6 +115,10 @@ final class InPlaceTextEditor: NSView, NSTextViewDelegate {
     /// shape's anchor says, letting it run past the area as the slide does.
     private func layoutText() {
         let area = target.area.offsetBy(dx: -target.frame.minX, dy: -target.frame.minY)
+        if textView.layoutOrientation == .vertical {
+            layoutVerticalText(in: area)
+            return
+        }
         textView.textContainer?.containerSize = NSSize(width: max(area.width, 1), height: .greatestFiniteMagnitude)
         var height: CGFloat = 0
         if let layoutManager = textView.layoutManager, let container = textView.textContainer {
@@ -124,6 +133,26 @@ final class InPlaceTextEditor: NSView, NSTextViewDelegate {
         case .bottom: room
         }
         textView.frame = CGRect(x: area.minX, y: area.minY + top, width: max(area.width, 1), height: height)
+    }
+
+    /// Sets vertical lines down the area, from its right, or its middle or
+    /// left as the shape's anchor says. The text container's width runs
+    /// down the lines, and its height across them.
+    private func layoutVerticalText(in area: CGRect) {
+        textView.textContainer?.containerSize = NSSize(width: max(area.height, 1), height: .greatestFiniteMagnitude)
+        var width: CGFloat = 0
+        if let layoutManager = textView.layoutManager, let container = textView.textContainer {
+            layoutManager.ensureLayout(for: container)
+            width = layoutManager.usedRect(for: container).height
+        }
+        width = max(width, 1)
+        let room = max(area.width - width, 0)
+        let right: CGFloat = switch target.anchor {
+        case .top: 0
+        case .center: room / 2
+        case .bottom: room
+        }
+        textView.frame = CGRect(x: area.maxX - right - width, y: area.minY, width: width, height: max(area.height, 1))
     }
 
     // MARK: - NSTextViewDelegate

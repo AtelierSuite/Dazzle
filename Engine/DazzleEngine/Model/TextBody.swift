@@ -128,6 +128,17 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
         result.columnsRightToLeft = columnsRightToLeft ?? base.columnsRightToLeft
         return result
     }
+
+    /// The kinds of vertical text, by their name in the file.
+    public static let verticalKinds: Set = ["vert", "eaVert", "vert270", "wordArtVert", "wordArtVertRtl", "mongolianVert"]
+
+    /// Whether the text runs down the box, its lines stacked across it.
+    public var runsVertically: Bool { vertical.map(Self.verticalKinds.contains) ?? false }
+
+    /// Whether vertical lines start at the box's right and follow each other
+    /// leftwards, as Japanese and Chinese do; Mongolian and stacked text, and
+    /// text turned anticlockwise, start at its left.
+    public var linesStartAtRight: Bool { ["vert", "eaVert", "wordArtVertRtl"].contains(vertical ?? "") }
 }
 
 /// A paragraph of runs.

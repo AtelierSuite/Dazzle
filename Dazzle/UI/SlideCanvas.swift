@@ -441,14 +441,28 @@ struct SlideCanvas: View {
         let frame = shape.frame.points
         var fontScale = 1.0
         if case .normal(let scale, _) = properties.autofit { fontScale = scale }
+        // Vertical text is typed across the area's height, turned as the slide turns it.
+        let vertical = properties.runsVertically
+        let turn: Double = vertical ? (properties.vertical == "vert270" ? -90 : 90) : 0
+        var anchor = properties.anchor ?? .top
+        // Lines the slide sets left to right start, at least, on the side they do there.
+        if vertical, !properties.linesStartAtRight, properties.vertical != "vert270" {
+            anchor = switch anchor {
+            case .top: .bottom
+            case .bottom: .top
+            case .center: .center
+            }
+        }
         return InPlaceTextEditor(
             body: shape.text ?? TextBody(paragraphs: [Paragraph(runs: [])]),
             shape: shape, sources: sources, style: style, slideNumber: slideNumber, scale: scale, fontScale: fontScale,
-            anchor: properties.anchor ?? .top, selection: state.textSelection,
+            anchor: anchor, vertical: properties.vertical, selection: state.textSelection,
             onChange: { state.setTextBody($0, in: &presentation) },
             onSelectionChange: { state.textSelection = $0 },
             toolbar: textToolbar
         )
+        .frame(width: max((vertical ? area.height : area.width) * scale, 1), height: max((vertical ? area.width : area.height) * scale, 1))
+        .rotationEffect(.degrees(turn))
         .frame(width: max(area.width * scale, 1), height: max(area.height * scale, 1))
         .offset(x: (area.minX - frame.minX) * scale, y: (area.minY - frame.minY) * scale)
         .frame(width: max(frame.width * scale, 1), height: max(frame.height * scale, 1), alignment: .topLeading)

@@ -311,6 +311,10 @@ function deckWithShapes() {
           <a:r><a:rPr lang="en-US"/><a:t>Bullet\tRight</a:t></a:r></a:p>
         <a:p><a:r><a:rPr lang="en-US"/><a:t>No tabs</a:t></a:r></a:p>
       </p:txBody>
+    </p:sp>
+    <p:sp><p:nvSpPr><p:cNvPr id="932" name="Vertical"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
+      <p:txBody><a:bodyPr vert="eaVert"><a:spAutoFit/></a:bodyPr><a:p><a:r><a:rPr lang="ja-JP"/><a:t>縦書きText</a:t></a:r></a:p></p:txBody>
     </p:sp>`;
   const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
@@ -353,7 +357,7 @@ const drawn = (() => {
       lined: named("Lined"), tiled: named("Tiled"), patterned: named("Patterned"), grid: named("Grid"),
       cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
       recoloured: named("Recoloured"), stylised: named("Stylised"),
-      columned: named("Columned"), tabbed: named("Tabbed"),
+      columned: named("Columned"), tabbed: named("Tabbed"), vertical: named("Vertical"),
     };
   } catch (error) {
     return { error };
@@ -432,6 +436,24 @@ test("draws the presets ECMA-376 defines rather than their frames", () => {
 test("names the typefaces the presentation doesn't carry", () => {
   if (drawn.error) throw drawn.error;
   assert.ok(drawn.info.typefaces.includes("Calibri"));
+});
+
+test("passes vertical text to the page to set in vertical lines", () => {
+  if (drawn.error) throw drawn.error;
+  assert.equal(drawn.vertical.text.vert, "eaVert");
+});
+
+test("grows vertical text across as it is typed, leftwards from its first line on the right", () => {
+  if (drawn.error) throw drawn.error;
+  const before = drawn.vertical;
+  call("select", { slide: drawn.slide, shapes: [before.id] });
+  call("beginText", { shape: before.id });
+  call("setText", { paras: [{ src: 0, runs: [{ t: "縦書きText" }] }, { src: 0, runs: [{ t: "二行目" }] }], width: before.w + 40 });
+  call("endText");
+  const after = call("scene", { slide: drawn.slide }).result.shapes.find((node) => node.name === "Vertical");
+  assert.ok(Math.abs(after.w - (before.w + 40)) < 0.5, "as wide as the page measured it");
+  assert.ok(Math.abs(after.x + after.w - (before.x + before.w)) < 0.5, "its right side stays put");
+  assert.equal(after.h, before.h, "as tall as before");
 });
 
 test("sets text in the columns its body asks for, and keeps them when typed into and saved", () => {

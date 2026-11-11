@@ -25,7 +25,7 @@ const outlineOf = (element) => {
 };
 
 /** Text turned a quarter, letters and all, by how far. Other vertical text is set in vertical lines (app.css). */
-const TURNED_TEXT = { vert: 90, vert270: -90 };
+export const TURNED_TEXT = { vert: 90, vert270: -90 };
 
 /**
  * Office and Windows faces that other devices rarely have, and what to set them in instead, best first: the

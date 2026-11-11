@@ -367,7 +367,8 @@ final class Bridge {
         // Text
         case "setText":
             // The text the page's editor holds, as paragraphs of runs naming the runs they came from.
-            if let height = r["height"] as? Double { editor.measuredTextHeight = height } else { editor.measuredTextHeight = nil }
+            // How far it reaches across its lines: its height, or its width when it runs vertically.
+            editor.measuredTextExtent = (r["height"] ?? r["width"]) as? Double
             let key = "text:\(editor.selectedShapeID?.uuidString ?? ""):\(editor.selectedCell.map { "\($0.row),\($0.column)" } ?? "")"
             let paragraphs = r["paras"] as? [[String: Any]] ?? []
             edit(coalesce: key) { state, presentation in
@@ -382,7 +383,7 @@ final class Bridge {
                     state.setTextBody(body, in: &presentation)
                 }
             }
-            editor.measuredTextHeight = nil
+            editor.measuredTextExtent = nil
         case "format":
             let set = r["set"] as? [String: Any] ?? [:]
             session.endCoalescing()
