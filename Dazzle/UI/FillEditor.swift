@@ -27,7 +27,7 @@ struct FillEditor: View {
 
     private var currentKind: Kind {
         switch fill {
-        case nil, .none?, .group?: .none
+        case nil, .none?, .group?, .pattern?: .none
         case .solid?: .solid
         case .gradient?: .gradient
         case .picture?, .tiledPicture?: .picture
