@@ -15,12 +15,15 @@ struct DeckView: View {
     @State private var undoneTo: Presentation?
     /// Tells this window's slideshow apart from another window's.
     @State private var editorID = UUID()
+    /// Flipped to put the quick Paste button back in the bar; see `quickPasteToolbar`.
+    @State private var quickPasteGeneration = 0
     @Environment(\.undoManager) private var undoManager
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @Namespace private var panelTransition
 
     private var session: PresentationSession { .shared }
+    private var pasteboard: PasteboardMonitor { .shared }
     private var presentation: Binding<Presentation> { $document.presentation }
 
     private var name: String {
@@ -107,6 +110,7 @@ struct DeckView: View {
                 .presentationContentInteraction(.scrolls)
         }
         .fullScreenCover(isPresented: slideshowBinding, onDismiss: {
+            restoreQuickPaste()
             if let id = session.lastShownSlideID, document.presentation.index(of: id) != nil { state.selectSlide(id) }
         }) {
             SlideshowView(session: session)
@@ -141,10 +145,15 @@ struct DeckView: View {
                 history.record(from: old, to: new)
             }
             state.reconcile(with: new)
+            restoreQuickPaste()
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { offerToRemote() }
+            if phase == .active {
+                offerToRemote()
+                restoreQuickPaste()
+            }
         }
+        .onChange(of: state.editingTextShapeID) { _, _ in restoreQuickPaste() }
         .onChange(of: state.isDrawing) { _, isDrawing in
             if isDrawing { state.presentedPanel = nil }
         }
@@ -234,6 +243,7 @@ struct DeckView: View {
     /// "…" are shown.
     @ToolbarContentBuilder
     private var editorToolbar: some ToolbarContent {
+        quickPasteToolbar
         if horizontalSizeClass != .compact {
             clipboardToolbar
             ToolbarSpacer(.fixed, placement: .primaryAction)
@@ -271,6 +281,38 @@ struct DeckView: View {
                 state.paste(in: &document.presentation)
             }
             .accessibilityIdentifier("paste")
+        }
+    }
+
+    /// A Paste button in the top-left corner, there only while something is
+    /// waiting to be pasted, such as what was copied in another app. The
+    /// slideshow covers it, so it needs no hiding there.
+    ///
+    /// The document's bar resets its leading items when the document is
+    /// edited, text editing starts or ends, or the slideshow closes, and takes
+    /// the button with it. SwiftUI only puts it back when the item changes, so
+    /// `restoreQuickPaste()` flips it between two identical branches.
+    @ToolbarContentBuilder
+    private var quickPasteToolbar: some ToolbarContent {
+        if let kind = pasteboard.kind {
+            if quickPasteGeneration.isMultiple(of: 2) {
+                ToolbarItem(placement: .topBarLeading) {
+                    QuickPasteButton(kind: kind) { state.paste(in: &document.presentation) }
+                }
+            } else {
+                ToolbarItem(placement: .topBarLeading) {
+                    QuickPasteButton(kind: kind) { state.paste(in: &document.presentation) }
+                }
+            }
+        }
+    }
+
+    /// Puts the quick Paste button back once the bar has settled.
+    private func restoreQuickPaste() {
+        guard pasteboard.kind != nil else { return }
+        Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            quickPasteGeneration &+= 1
         }
     }
 
@@ -317,7 +359,9 @@ struct DeckView: View {
                     UnsupportedFeatureNotice(report: document.presentation.unsupportedFeatures)
                 }
             }
-            shareMenu
+            if !sharesInMoreMenu {
+                shareMenu
+            }
             moreMenu
         }
     }
@@ -331,35 +375,15 @@ struct DeckView: View {
         .accessibilityIdentifier("find")
     }
 
+    /// An iPhone's bar has no room for Share beside the quick Paste button,
+    /// so while that shows, Share moves into "…".
+    private var sharesInMoreMenu: Bool {
+        horizontalSizeClass == .compact && pasteboard.kind != nil
+    }
+
     private var shareMenu: some View {
         Menu {
-            ShareLink(
-                item: PresentationShare(presentation: document.presentation, name: name),
-                preview: SharePreview(name, image: Image(systemName: "play.rectangle"))
-            ) {
-                Label("Share.Presentation", systemImage: "doc")
-            }
-            Button("Share.PDF", systemImage: "doc.richtext") {
-                state.exportFormat = .pdf
-                state.presentedPanel = .export
-            }
-            .accessibilityIdentifier("exportPDF")
-            Button("Share.Images", systemImage: "photo.on.rectangle") {
-                state.exportFormat = .images
-                state.presentedPanel = .export
-            }
-            .accessibilityIdentifier("exportImages")
-            Button("Share.Video", systemImage: "film") {
-                state.exportFormat = .video
-                state.presentedPanel = .export
-            }
-            .accessibilityIdentifier("exportVideo")
-            Button("Share.Print", systemImage: "printer") {
-                state.exportFormat = .pdf
-                state.presentedPanel = .export
-            }
-            .keyboardShortcut("p", modifiers: .command)
-            .accessibilityIdentifier("exportPrint")
+            shareItems
         } label: {
             Image(systemName: "square.and.arrow.up")
         }
@@ -367,10 +391,49 @@ struct DeckView: View {
         .accessibilityLabel("Toolbar.Share")
     }
 
+    @ViewBuilder
+    private var shareItems: some View {
+        ShareLink(
+            item: PresentationShare(presentation: document.presentation, name: name),
+            preview: SharePreview(name, image: Image(systemName: "play.rectangle"))
+        ) {
+            Label("Share.Presentation", systemImage: "doc")
+        }
+        Button("Share.PDF", systemImage: "doc.richtext") {
+            state.exportFormat = .pdf
+            state.presentedPanel = .export
+        }
+        .accessibilityIdentifier("exportPDF")
+        Button("Share.Images", systemImage: "photo.on.rectangle") {
+            state.exportFormat = .images
+            state.presentedPanel = .export
+        }
+        .accessibilityIdentifier("exportImages")
+        Button("Share.Video", systemImage: "film") {
+            state.exportFormat = .video
+            state.presentedPanel = .export
+        }
+        .accessibilityIdentifier("exportVideo")
+        Button("Share.Print", systemImage: "printer") {
+            state.exportFormat = .pdf
+            state.presentedPanel = .export
+        }
+        .keyboardShortcut("p", modifiers: .command)
+        .accessibilityIdentifier("exportPrint")
+    }
+
     /// The "…" menu. A menu of its own rather than `.secondaryAction`, which
     /// an iPad's document bar lays out inline instead of collapsing.
     private var moreMenu: some View {
         Menu {
+            if sharesInMoreMenu {
+                Menu {
+                    shareItems
+                } label: {
+                    Label("Toolbar.Share", systemImage: "square.and.arrow.up")
+                }
+                .accessibilityIdentifier("share")
+            }
             if horizontalSizeClass == .compact {
                 redoButton
                 if !document.presentation.unsupportedFeatures.isEmpty {

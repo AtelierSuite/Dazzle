@@ -46,7 +46,13 @@ final class DeckClipboard {
         #endif
         self.content = content
         changeCount = Self.systemChangeCount
+        NotificationCenter.default.post(name: Self.didCopy, object: self)
     }
+
+    /// Posted once Dazzle has copied something and `current` holds it. The
+    /// system's own change notification comes too early for that, while the
+    /// pasteboard is being written.
+    static let didCopy = Notification.Name("DeckClipboard.didCopy")
 
     private static var systemChangeCount: Int {
         #if canImport(UIKit)
@@ -82,6 +88,42 @@ final class DeckClipboard {
         #endif
     }
 }
+
+/// What a paste would bring in, told without reading the system pasteboard
+/// (which would ask permission to): Dazzle's own shapes or slides, or what
+/// kind of thing another app copied.
+enum PasteKind: Equatable {
+    case shapes(count: Int)
+    case slides(count: Int)
+    case image
+    case text
+    case link
+
+    /// Mirrors the order `paste(in:)` tries things in: Dazzle's own content,
+    /// then a picture, then text or a link's address.
+    static func of(_ own: DeckClipboard.Content?, hasImages: Bool, hasStrings: Bool, hasURLs: Bool) -> PasteKind? {
+        switch own {
+        case .shapes(let shapes, _, _): return .shapes(count: shapes.count)
+        case .slides(let slides, _): return .slides(count: slides.count)
+        case nil: break
+        }
+        if hasImages { return .image }
+        if hasStrings { return .text }
+        if hasURLs { return .link }
+        return nil
+    }
+}
+
+#if canImport(UIKit)
+extension DeckClipboard {
+    /// What would paste now. The `has…` checks only look at the kinds of data
+    /// on the pasteboard, so they never bring up the paste permission prompt.
+    var pasteKind: PasteKind? {
+        let pasteboard = UIPasteboard.general
+        return PasteKind.of(current, hasImages: pasteboard.hasImages, hasStrings: pasteboard.hasStrings, hasURLs: pasteboard.hasURLs)
+    }
+}
+#endif
 
 extension EditorState {
     // MARK: - Copying
