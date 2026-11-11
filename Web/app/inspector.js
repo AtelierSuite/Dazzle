@@ -164,9 +164,11 @@ export class Inspector extends EventTarget {
     let html = this.section(t("Format.Section.Background"),
       this.row(t("Fill.Kind"), this.popup("bgKind", t("Fill.Kind"), [
         ["auto", t("Fill.Automatic")], ["solid", t("Fill.Solid")], ["gradient", t("Fill.Gradient")], ["picture", t("Fill.Picture")],
+        ...(background.own && background.kind === "pattern" ? [["pattern", t("Fill.Pattern")]] : []),
       ], background.own ? background.kind : "auto"))
       + (background.kind === "solid" || !background.own ? this.row(t("Mac.Inspector.Colour"), this.color("bgColor", t("Mac.Inspector.Colour"), background.color)) : "")
       + (background.own && background.kind === "gradient" ? this.gradientRows("bg", background) : "")
+      + (background.own && background.kind === "pattern" ? this.patternRows("bg", background) : "")
       + (background.own && background.kind === "picture" ? this.row("", this.buttons([["bgPicture", t("Fill.Picture.Change")]])) + this.row("", this.check("bgTile", t("Fill.Picture.Tile"), background.tiled)) : "")
       + this.note(t("Format.Background.Footer")));
     const layouts = (info.layouts ?? []).map((layout) => [layout.path, layout.name]);
@@ -197,6 +199,12 @@ export class Inspector extends EventTarget {
       + this.row("", this.check(`${prefix}Radial`, t("Fill.Gradient.Radial"), fill.radial));
   }
 
+  /** A pattern fill's two colours. Patterns come from files; they're kept and recoloured, not made here. */
+  patternRows(prefix, fill) {
+    return this.row(t("Fill.Pattern.Foreground"), this.color(`${prefix}PatternFg`, t("Fill.Pattern.Foreground"), fill.color ?? "#000000"))
+      + this.row(t("Fill.Pattern.Background"), this.color(`${prefix}PatternBg`, t("Fill.Pattern.Background"), fill.background ?? "#ffffff"));
+  }
+
   shapePane(data) {
     const t = this.t;
     const shape = data.shape;
@@ -211,9 +219,11 @@ export class Inspector extends EventTarget {
       html += this.section(t("Format.Section.Fill"),
         this.row(t("Fill.Kind"), this.popup("fillKind", t("Fill.Kind"), [
           ["none", t("Fill.None")], ["solid", t("Fill.Solid")], ["gradient", t("Fill.Gradient")], ["picture", t("Fill.Picture")],
+          ...(fill.kind === "pattern" ? [["pattern", t("Fill.Pattern")]] : []),
         ], fill.kind))
         + (fill.kind === "solid" ? this.row(t("Mac.Inspector.Colour"), this.color("fillColor", t("Mac.Inspector.Colour"), fill.color)) : "")
         + (fill.kind === "gradient" ? this.gradientRows("fill", fill) : "")
+        + (fill.kind === "pattern" ? this.patternRows("fill", fill) : "")
         + (fill.kind === "picture" ? this.row("", this.buttons([["fillPicture", t("Fill.Picture.Change")]])) + this.row("", this.check("fillTile", t("Fill.Picture.Tile"), fill.tiled)) : ""));
     }
     if (shape.line) html += this.outlineSection(shape.line) + this.effectsSection(shape);
@@ -560,6 +570,7 @@ export class Inspector extends EventTarget {
       case "lineSpacing": return format({ lineSpacing: Number(value) });
       // Fill
       case "fillKind":
+        if (value === "pattern") return;
         if (value === "picture") return this.run("fillPicture");
         if (value === "none") return engine.call("setFill", { fill: { kind: "none" } });
         if (value === "solid") return engine.call("setFill", { fill: { kind: "solid", color: shape?.fill?.color ?? "scheme:accent1" } });
@@ -574,9 +585,16 @@ export class Inspector extends EventTarget {
         if (name === "fillRadial") fill.radial = value;
         return engine.call("setFill", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, radial: fill.radial } });
       }
+      case "fillPatternFg": case "fillPatternBg": {
+        const color = colorValue();
+        if (!color) return;
+        const fill = { ...shape.fill, [name === "fillPatternFg" ? "color" : "background"]: color };
+        return engine.call("setFill", { fill: { kind: "pattern", preset: fill.preset, color: fill.color, background: fill.background } });
+      }
       case "fillTile": return engine.call("setTiled", { tiled: value });
       // Background
       case "bgKind":
+        if (value === "pattern") return;
         if (value === "auto") return engine.call("setBackground", {});
         if (value === "picture") return this.run("backgroundPicture");
         if (value === "solid") return engine.call("setBackground", { fill: { kind: "solid", color: data.slide.background.color ?? "#ffffff" } });
@@ -590,6 +608,12 @@ export class Inspector extends EventTarget {
         if (name === "bgAngle") fill.angle = Number(value);
         if (name === "bgRadial") fill.radial = value;
         return engine.call("setBackground", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, radial: fill.radial } });
+      }
+      case "bgPatternFg": case "bgPatternBg": {
+        const color = colorValue();
+        if (!color) return;
+        const fill = { ...data.slide.background, [name === "bgPatternFg" ? "color" : "background"]: color };
+        return engine.call("setBackground", { fill: { kind: "pattern", preset: fill.preset, color: fill.color, background: fill.background } });
       }
       case "bgTile": return engine.call("setTiled", { tiled: value, background: true });
       // Outline and effects
