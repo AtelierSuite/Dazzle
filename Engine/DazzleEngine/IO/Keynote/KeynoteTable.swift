@@ -41,7 +41,8 @@ public struct KeynoteTable {
         guard model.type == KeynoteType.tableModel, let store = message.message(4) else { return nil }
         let rowCount = message.int(6) ?? 0
         let columnCount = message.int(7) ?? 0
-        guard rowCount > 0, columnCount > 0 else { return nil }
+        // A table too big to draw on a slide is left to its stand-in.
+        guard rowCount > 0, columnCount > 0, rowCount * columnCount <= Self.maximumCells else { return nil }
         let headerRows = message.int(9) ?? 0
         let headerColumns = message.int(10) ?? 0
         let footerRows = message.int(11) ?? 0
@@ -164,12 +165,13 @@ public struct KeynoteTable {
     }
 
     /// The size, in points, a table model's visible rows and columns add up
-    /// to, for a table the rest of which can't be read.
+    /// to, for a table the rest of which can't be read. A table too big to
+    /// draw has none: its stand-in takes the drawable's frame.
     public func size(model: KeynoteArchive.Object) -> CGSize? {
         let message = model.message
         let rowCount = message.int(6) ?? 0
         let columnCount = message.int(7) ?? 0
-        guard rowCount > 0, columnCount > 0, rowCount <= Self.maximumCount, columnCount <= Self.maximumCount else { return nil }
+        guard rowCount > 0, columnCount > 0, rowCount * columnCount <= Self.maximumCells else { return nil }
         let store = message.message(4)
         let rows = headers(store?.message(1)?.references(2).compactMap { archive[$0]?.message } ?? [], count: rowCount,
                            default: message.float(16) ?? 20)
@@ -182,9 +184,10 @@ public struct KeynoteTable {
         return size.width > 0 && size.height > 0 ? size : nil
     }
 
-    /// The most rows or columns a table is read with; Numbers allows a
-    /// million rows, which no slide could show.
-    static let maximumCount = 65_536
+    /// The most cells a table is drawn with. Keynote's own tables are
+    /// rarely more than a few hundred; one pasted from a spreadsheet can
+    /// be far bigger than any slide shows.
+    static let maximumCells = 20_000
 
     // MARK: - Data store
 
