@@ -257,6 +257,13 @@ export class SlideDrawer {
       const fill = svg("path", { d: node.path, "fill-rule": node.rule ?? "evenodd" }, geometry);
       this.paint(fill, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
       fill.classList.add("shape__fill");
+      // Shaded parts (a cube's sides, a scroll's curls): the fill again, with black or white over it.
+      for (const shade of node.shades ?? []) {
+        const base = svg("path", { d: shade.d, "fill-rule": "evenodd" }, geometry);
+        this.paint(base, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
+        base.classList.add("shape__fill");
+        svg("path", { d: shade.d, "fill-rule": "evenodd", fill: shade.c, "fill-opacity": shade.o, class: "shape__shade" }, geometry);
+      }
     }
     if (node.line && (node.strokePath ?? node.path)) this.stroke(node.strokePath ?? node.path, node.line, geometry, context, node);
     if (node.text && !(node.prompt && isEmptyText(node.text))) {
