@@ -185,6 +185,11 @@ struct SlideCanvas: View {
                 .gesture(CanvasPressRecognizer { press(at: $0, on: slide, scale: scale) } onEnded: { isPressingForMenu = false })
                 .gesture(CanvasPressRecognizer(isSecondaryClick: true) { press(at: $0, on: slide, scale: scale) })
                 .accessibilityIdentifier("slideCanvas")
+                .accessibilityActions { menuActions(for: nil) }
+
+            if !state.isDrawing, interaction == nil {
+                shapeAccessibilityElements(on: slide, scale: scale)
+            }
 
             editMenu(on: slide, scale: scale)
                 .frame(width: size.width, height: size.height)
@@ -609,6 +614,54 @@ struct SlideCanvas: View {
         )
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    /// Each shape as VoiceOver finds it, where it is on the slide: picked by
+    /// activating it, with the menu's actions as its custom actions.
+    private func shapeAccessibilityElements(on slide: Slide, scale: CGFloat) -> some View {
+        ForEach(slide.shapes.filter { !$0.isHidden }) { shape in
+            let box = shape.boundingBox
+            Color.clear
+                .frame(width: max(box.width * scale, 1), height: max(box.height * scale, 1))
+                .offset(x: box.minX * scale, y: box.minY * scale)
+                .allowsHitTesting(false)
+                .accessibilityElement()
+                .accessibilityLabel(Self.accessibilityLabel(of: shape))
+                .accessibilityValue(shape.isEditable ? "" : String(localized: "Canvas.Locked"))
+                .accessibilityAddTraits(state.isSelected(shape.id) ? [.isButton, .isSelected] : .isButton)
+                .accessibilityIdentifier("canvasShape.\(shape.shapeID)")
+                .accessibilityAction { state.selectedShapeID = shape.id }
+                .accessibilityActions { menuActions(for: shape) }
+        }
+    }
+
+    /// The menu's actions as custom actions: for `shape`, picked first if it
+    /// isn't, or with no shape, for the slide.
+    @ViewBuilder
+    private func menuActions(for shape: SlideShape?) -> some View {
+        if let slide = state.selectedSlide(in: presentation) {
+            let selection = shape.map { shape in
+                state.isSelected(shape.id) ? slide.shapes.filter { state.isSelected($0.id) } : [shape]
+            } ?? []
+            let menu = CanvasMenu(selection: selection, on: slide, canPaste: PasteboardMonitor.shared.kind != nil)
+            ForEach(Array(menu.allItems.enumerated()), id: \.offset) { _, item in
+                Button(item.title) {
+                    if let shape {
+                        if !state.isSelected(shape.id) { state.selectedShapeID = shape.id }
+                    } else if !state.selectedShapeIDs.isEmpty {
+                        state.selectedShapeID = nil
+                    }
+                    state.perform(item.action, in: $presentation)
+                }
+            }
+        }
+    }
+
+    private static func accessibilityLabel(of shape: SlideShape) -> String {
+        if let text = shape.text?.plainText.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+            return text
+        }
+        return shape.name
     }
 
     /// Whether a hardware keyboard's Shift key is down. SwiftUI's taps do
