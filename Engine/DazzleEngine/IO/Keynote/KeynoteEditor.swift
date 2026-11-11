@@ -148,6 +148,7 @@ public struct KeynoteEditor {
             path = [1]
             // A masked picture's crop would need resizing with it.
             resizable = !object.message.has(5)
+        case KeynoteType.movie: path = [1]
         case KeynoteType.group:
             path = [1]
             resizable = false
