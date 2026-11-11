@@ -548,12 +548,12 @@ public struct SlideRenderer {
                 options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
             )
         case .rect:
+            // The bands meet each other and `fillToRect`; softened edges would show there as seams.
+            context.setShouldAntialias(false)
             context.setFillColor(gradient.color(at: 1, resolve: color).cgColor)
             context.fill(bounds.union(gradient.tileRect.rect(in: bounds)))
             context.setFillColor(gradient.color(at: 0, resolve: color).cgColor)
             context.fill(gradient.fillToRect.rect(in: bounds))
-            // Bands meet along the diagonals; softened edges would show there as seams.
-            context.setShouldAntialias(false)
             for band in gradient.rectangleBands(in: bounds) {
                 context.saveGState()
                 context.addLines(between: band.outline)
