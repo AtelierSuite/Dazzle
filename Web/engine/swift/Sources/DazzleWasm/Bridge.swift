@@ -881,6 +881,13 @@ final class Bridge {
                 if values.count < count { values += Array(repeating: nil, count: count - values.count) }
                 if values.count > count { values = Array(values.prefix(count)) }
                 chart.plots[plot].series[series].values = values
+                // A bubble added is as big as the series' others are on average.
+                if chart.plots[plot].kind == .bubble {
+                    let sizes = chart.plots[plot].series[series].sizes
+                    let known = sizes.compactMap(\.self)
+                    let average = known.isEmpty ? 1 : known.reduce(0, +) / Double(known.count)
+                    chart.plots[plot].series[series].sizes = (0..<count).map { sizes.indices.contains($0) ? sizes[$0] ?? average : average }
+                }
             }
         }
     }
@@ -972,7 +979,7 @@ final class Bridge {
             "reflections": FormatChoices.reflections.map { ["id": $0.id, "label": $0.label] },
             "dashes": FormatChoices.dashes.map { ["id": $0.0, "label": $0.1] },
             "lineEnds": FormatChoices.lineEnds.map { ["id": $0.0, "label": $0.1] },
-            "charts": Chart.Kind.allCases.map { ["kind": $0.rawValue, "label": $0.label] },
+            "charts": Chart.Kind.insertable.map { ["kind": $0.rawValue, "label": $0.label] },
             "sizes": SlideSizeConverter.Preset.allCases.map { ["id": $0.rawValue, "label": $0.label] },
             "dateFormats": DateField.allCases.map { ["id": $0.rawValue, "label": $0.string(for: Date(), locale: Locale(identifier: PortableStrings.localeIdentifier))] },
             "animations": [
@@ -1158,6 +1165,7 @@ final class Bridge {
                 "kind": chart.kind.rawValue, "title": chart.title ?? "", "legend": chart.hasLegend ? chart.legendPosition : "none",
                 "gridlines": chart.showsGridlines, "labels": chart.showsValueLabels,
                 "grouping": chart.plots.first?.grouping.rawValue ?? "standard", "hasAxes": chart.kind.hasAxes,
+                "hasGrouping": chart.kind.hasGrouping, "kinds": chart.kind.choices.map { ["kind": $0.rawValue, "label": $0.label] },
                 "categories": chart.categories,
                 "series": chart.allSeries.map { ["name": $0.name, "values": $0.values.map { $0.map(ChartValues.format) ?? "" }] },
             ]

@@ -14,9 +14,10 @@ public struct KeynoteChart {
 
     public func chart(_ drawable: ProtoMessage, path: String) -> Chart? {
         guard let info = drawable.message(10_000), let grid = info.message(7) else { return nil }
-        // 3D charts are drawn flat. Mixed and two-axis charts give each
-        // series a kind of its own, all against the one value axis.
+        // 3D charts (12 to 19) are drawn with depth. Mixed and two-axis charts
+        // give each series a kind of its own, all against the one value axis.
         let type = info.int(1) ?? 1
+        let isThreeD = (12...19).contains(type)
         let kind: Chart.Kind
         var grouping = Chart.Grouping.standard
         // Columns of the grid each scatter point takes: x and y, and a bubble's size.
@@ -24,14 +25,15 @@ public struct KeynoteChart {
         switch type {
         case 1, 10, 11, 12, 20: kind = .column
         case 2, 13, 21: kind = .bar
-        case 3, 14, 27: kind = .line
+        case 3, 14: kind = .line
+        case 27: kind = .radar
         case 4, 15: kind = .area
         case 5, 16: kind = .pie
         case 6, 17: kind = .column; grouping = .stacked
         case 7, 18: kind = .bar; grouping = .stacked
         case 8, 19: kind = .area; grouping = .stacked
         case 9, 23: kind = .scatter; pointWidth = 2
-        case 22, 24: kind = .scatter; pointWidth = 3
+        case 22, 24: kind = .bubble; pointWidth = 3
         case 25, 26: kind = .doughnut
         default: return nil
         }
@@ -55,13 +57,13 @@ public struct KeynoteChart {
         let nonStyles = Self.sparse(info.message(19))
         // A scatter series takes its x values from one name's data and its
         // y values from the next, unless every series shares the first's x
-        // values (2); a bubble's size, after its y values, is not drawn.
+        // values (2); a bubble's size comes after its y values.
         // Dazzle's charts share their x values, which are the first series' own.
-        let sharesX = kind == .scatter && info.int(2) == 2
+        let sharesX = kind.isXY && info.int(2) == 2
         let stride = sharesX ? pointWidth - 1 : pointWidth
-        let seriesCount = switch (kind, sharesX) {
-        case (.scatter, true): max(0, names.count - 1) / stride
-        case (.scatter, false): names.count / stride
+        let seriesCount = switch (kind.isXY, sharesX) {
+        case (true, true): max(0, names.count - 1) / stride
+        case (true, false): names.count / stride
         default: names.count
         }
         var plots: [Chart.Plot] = []
@@ -76,25 +78,26 @@ public struct KeynoteChart {
                 }
             }
             // The name whose data are the series' values.
-            let column = switch (kind, sharesX) {
-            case (.scatter, true): 1 + index * stride
-            case (.scatter, false): index * stride + 1
+            let column = switch (kind.isXY, sharesX) {
+            case (true, true): 1 + index * stride
+            case (true, false): index * stride + 1
             default: index
             }
             var series = Chart.Series(name: names[column], values: categories.indices.map { cell(column, $0) })
+            if kind == .bubble, column + 1 < names.count { series.sizes = categories.indices.map { cell(column + 1, $0) } }
             series.color = color(style, kind: seriesKind)
             if let last = plots.indices.last, plots[last].kind == seriesKind {
                 plots[last].series.append(series)
             } else {
-                plots.append(Chart.Plot(kind: seriesKind, grouping: grouping, series: [series]))
+                plots.append(Chart.Plot(kind: seriesKind, grouping: grouping, series: [series], isThreeD: isThreeD))
             }
         }
-        if plots.isEmpty { plots = [Chart.Plot(kind: kind, grouping: grouping, series: [])] }
+        if plots.isEmpty { plots = [Chart.Plot(kind: kind, grouping: grouping, series: [], isThreeD: isThreeD)] }
 
         let xValues = categories.indices.map { index in
             cell(0, index).map { $0 == $0.rounded() && abs($0) < 1e15 ? String(Int($0)) : String($0) } ?? String(index + 1)
         }
-        var chart = Chart(path: path, plots: plots, categories: kind == .scatter ? xValues : categories)
+        var chart = Chart(path: path, plots: plots, categories: kind.isXY ? xValues : categories)
         let nonStyle = info.reference(10)
         if generated(nonStyle, 21) { $0.bool(21) } == true {
             chart.title = generated(nonStyle, 23) { $0.string(23) }
@@ -127,9 +130,11 @@ public struct KeynoteChart {
         case .column: [13, 14]
         case .bar: [12, 14]
         case .area: [11, 14]
-        case .pie, .doughnut: [17, 14]
-        case .line: [48]
+        case .pie, .doughnut, .pieOfPie, .barOfPie: [17, 14]
+        case .line, .radar, .stock: [48]
         case .scatter: [59, 14]
+        case .bubble: [14, 59]
+        case .surface: [14]
         }
         for field in fields {
             let property = generated(style, field) { $0.message(field) }

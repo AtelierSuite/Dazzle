@@ -882,6 +882,97 @@ test("draws every Keynote chart it reads, and a stand-in for one it can't", () =
   }
 });
 
+/** A chart part of `plot`, with the axes it names, as PowerPoint writes one. */
+function chartPart(plot, { axes = "cat", view3D = "" } = {}) {
+  const axis = (id, cross, pos, name = "valAx", extra = "") =>
+    `<c:${name}><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${pos}"/>`
+    + `${extra}<c:crossAx val="${cross}"/></c:${name}>`;
+  const axisXML = {
+    cat: axis(1, 2, "b", "catAx") + axis(2, 1, "l", "valAx", "<c:majorGridlines/>"),
+    xy: axis(1, 2, "b", "valAx", "<c:majorGridlines/>") + axis(2, 1, "l", "valAx", "<c:majorGridlines/>"),
+    surface: axis(1, 2, "b", "catAx") + axis(2, 1, "l", "valAx", "<c:majorGridlines/>") + axis(3, 2, "b", "serAx"),
+    none: "",
+  }[axes];
+  return new TextEncoder().encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+    + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:autoTitleDeleted val="1"/>'
+    + `${view3D}<c:plotArea><c:layout/>${plot}${axisXML}</c:plotArea><c:legend><c:legendPos val="b"/></c:legend></c:chart></c:chartSpace>`);
+}
+
+/** A series of a category chart: its name, categories (or dates) and values. */
+function chartSeries(index, name, values, { categories = ["North", "East", "South", "West", "Middle"], dates = false, extra = "" } = {}) {
+  const points = (list) => list.map((value, at) => `<c:pt idx="${at}"><c:v>${value}</c:v></c:pt>`).join("");
+  const category = dates
+    ? `<c:cat><c:numRef><c:f>Sheet1!$A$2:$A$6</c:f><c:numCache><c:formatCode>m/d/yyyy</c:formatCode><c:ptCount val="5"/>${points([45292, 45293, 45294, 45295, 45296])}</c:numCache></c:numRef></c:cat>`
+    : `<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$${categories.length + 1}</c:f><c:strCache><c:ptCount val="${categories.length}"/>${points(categories)}</c:strCache></c:strRef></c:cat>`;
+  return `<c:ser><c:idx val="${index}"/><c:order val="${index}"/><c:tx><c:v>${name}</c:v></c:tx>${extra}${category}`
+    + `<c:val><c:numRef><c:f>Sheet1!$B$2:$B$6</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${values.length}"/>${points(values)}</c:numCache></c:numRef></c:val></c:ser>`;
+}
+
+const FRUIT = [["Apples", [4.3, 2.5, 3.5, 4.5, 3]], ["Pears", [2.4, 4.4, 1.8, 2.8, 3.6]], ["Plums", [2, 2, 3, 5, 1.5]]];
+const literal = (values) => `<c:numLit><c:ptCount val="${values.length}"/>${values.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join("")}</c:numLit>`;
+const NEW_CHART_KINDS = [
+  chartPart(`<c:radarChart><c:radarStyle val="filled"/>${FRUIT.map(([name, values], index) => chartSeries(index, name, values)).join("")}<c:axId val="1"/><c:axId val="2"/></c:radarChart>`),
+  chartPart(`<c:stockChart>${[["Open", [44, 25, 38, 50, 36]], ["High", [55, 57, 57, 58, 58]], ["Low", [11, 12, 13, 11, 25]], ["Close", [25, 38, 50, 35, 43]]]
+    .map(([name, values], index) => chartSeries(index, name, values, { dates: true, extra: "<c:spPr><a:ln><a:noFill/></a:ln></c:spPr>" })).join("")}`
+    + "<c:hiLowLines/><c:upDownBars><c:upBars/><c:downBars/></c:upDownBars><c:axId val=\"1\"/><c:axId val=\"2\"/></c:stockChart>"),
+  chartPart("<c:bubbleChart><c:varyColors val=\"0\"/><c:ser><c:idx val=\"0\"/><c:order val=\"0\"/><c:tx><c:v>Sales</c:v></c:tx>"
+    + `<c:xVal>${literal([1, 2, 3])}</c:xVal><c:yVal>${literal([2, 3, 1])}</c:yVal><c:bubbleSize>${literal([1, 4, 9])}</c:bubbleSize>`
+    + "</c:ser><c:bubbleScale val=\"100\"/><c:axId val=\"1\"/><c:axId val=\"2\"/></c:bubbleChart>", { axes: "xy" }),
+  chartPart(`<c:ofPieChart><c:ofPieType val="pie"/><c:varyColors val="1"/>${chartSeries(0, "Drinks", [42, 25, 15, 8, 6, 4], { categories: ["Tea", "Coffee", "Juice", "Water", "Milk", "Soda"] })}`
+    + "<c:gapWidth val=\"100\"/><c:splitType val=\"pos\"/><c:splitPos val=\"3\"/><c:secondPieSize val=\"75\"/><c:serLines/></c:ofPieChart>", { axes: "none" }),
+  chartPart(`<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/>${FRUIT.map(([name, values], index) => chartSeries(index, name, values)).join("")}<c:axId val="1"/><c:axId val="2"/></c:bar3DChart>`,
+    { view3D: "<c:view3D><c:rotX val=\"15\"/><c:rotY val=\"20\"/><c:rAngAx val=\"1\"/></c:view3D>" }),
+  chartPart(`<c:surfaceChart><c:wireframe val="0"/>${[["Morning", [10, 20, 30, 25, 15]], ["Noon", [20, 40, 55, 45, 25]], ["Night", [5, 10, 15, 12, 8]]]
+    .map(([name, values], index) => chartSeries(index, name, values)).join("")}<c:axId val="1"/><c:axId val="2"/><c:axId val="3"/></c:surfaceChart>`, { axes: "surface" }),
+];
+
+/** A deck of one chart of each kind above: column charts inserted and saved, their parts then swapped for these. */
+function deckOfNewChartKinds() {
+  call("new", { name: "Kinds.pptx" });
+  for (let index = 0; index < NEW_CHART_KINDS.length; index++) call("insertChart", { kind: "column" });
+  const entries = unzip(call("save", { format: "pptx", keep: true }).payload);
+  NEW_CHART_KINDS.forEach((part, index) => entries.set(`ppt/charts/chart${index + 1}.xml`, part));
+  return zip(entries);
+}
+
+test("draws radar, stock, bubble, of-pie, 3D and surface charts as themselves, and keeps their kind when edited", () => {
+  const opened = call("open", { name: "Kinds.pptx" }, deckOfNewChartKinds());
+  const charts = call("scene", { slide: opened.state.slides[0].id }).result.shapes.filter((node) => node.kind === "chart");
+  assert.equal(charts.length, NEW_CHART_KINDS.length);
+  const [radar, stock, bubble, ofPie, column3D, surface] = charts.map((node) => node.chart);
+  const filled = (items) => items.filter((item) => item.k === "path" && item.fill);
+  const texts = (items) => items.filter((item) => item.k === "text").map((item) => item.t);
+
+  assert.equal(filled(radar).length, 3, "a filled radar fills each series");
+  assert.ok(radar.some((item) => item.k === "path" && !item.fill && item.d.split("L").length > 4), "inside polygon gridlines");
+  assert.ok(["North", "East", "South", "West", "Middle"].every((name) => texts(radar).includes(name)), "with its categories round the outside");
+  assert.equal(filled(stock).length, 5, "a stock chart draws a bar from each open to close");
+  assert.ok(texts(stock).includes("1/1/2024"), "and its dates as dates");
+  const diameters = filled(bubble).map((item) => item.d);
+  assert.equal(new Set(diameters).size, 3, "a bubble of its own size per point");
+  assert.ok(texts(ofPie).includes(strings["Chart.Other"] ?? "Other"), "an of-pie chart's legend names the slice it splits out");
+  assert.equal(filled(ofPie).length, 7, "three slices and the rest in the first pie, three in the second");
+  assert.equal(filled(column3D).length, 30, "3D columns show a top and a side each");
+  assert.ok(surface.filter((item) => item.k === "rect").length > 50, "a surface is a map of its value bands");
+  assert.ok(texts(surface).includes("0-10"), "which its legend lists");
+
+  call("select", { shapes: [charts[0].id] });
+  const before = call("inspect").result.shape.chart;
+  assert.equal(before.kind, "radar");
+  assert.equal(before.hasGrouping, false);
+  assert.equal(before.kinds.at(-1).kind, "radar", "the chart's own kind is offered beside those a chart can be made as");
+  call("chart", { set: { series: [{ name: "Apples", values: ["1", "1", "1", "1", "1"] }, { name: "Pears" }, { name: "Plums" }] } });
+  const after = call("inspect").result.shape.chart;
+  assert.equal(after.kind, "radar", "Edit Data keeps the kind");
+  assert.equal(after.series[0].values[0], "1");
+
+  const reopened = call("open", { name: "Again.pptx" }, call("save", { format: "pptx", keep: true }).payload);
+  const again = call("scene", { slide: reopened.state.slides[0].id }).result.shapes.filter((node) => node.kind === "chart");
+  assert.equal(filled(again[0].chart).length, 3, "and saving keeps it");
+  assert.equal(filled(again[4].chart).length, 30);
+});
+
 /**
  * A Keynote deck of two tables: one of 2 × 2 cells as Keynote kept them
  * before 2019, its top row merged, and one with nothing to read its cells from.

@@ -353,7 +353,7 @@ extension InspectorViewController {
 
     private func buildChart(_ chart: Chart) {
         form.section(String(localized: "Panel.Chart.Title"))
-        let kinds = Chart.Kind.allCases
+        let kinds = chart.kind.choices
         let type = form.popup(kinds.map(\.label), get: { [unowned self] in
             self.chart.flatMap { kinds.firstIndex(of: $0.kind) }
         }, set: { [unowned self] index in
@@ -363,7 +363,7 @@ extension InspectorViewController {
             type.item(at: index)?.image = NSImage(systemSymbolName: kind.symbol, accessibilityDescription: nil)
         }
         form.row(String(localized: "Chart.Type"), type)
-        if chart.kind.hasAxes, chart.kind != .scatter {
+        if chart.kind.hasGrouping {
             let groupings = Chart.Grouping.allCases
             let first: String.LocalizationValue = chart.kind == .line || chart.kind == .area
                 ? "Chart.Grouping.Standard" : "Chart.Grouping.Clustered"

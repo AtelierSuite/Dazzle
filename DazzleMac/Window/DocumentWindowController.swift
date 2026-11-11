@@ -176,7 +176,7 @@ extension DocumentWindowController: NSToolbarDelegate {
             return button(identifier, "Menu.Insert.Table", "tablecells", #selector(chooseTableSize(_:)))
         case .insertChart:
             let item = menuItem(identifier, "Menu.Insert.Chart", "chart.bar", nil)
-            for kind in Chart.Kind.allCases {
+            for kind in Chart.Kind.insertable {
                 let entry = NSMenuItem(title: kind.label, action: #selector(insertChart(_:)), keyEquivalent: "")
                 entry.representedObject = kind.rawValue
                 entry.image = NSImage(systemSymbolName: kind.symbol, accessibilityDescription: nil)

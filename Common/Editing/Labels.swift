@@ -136,6 +136,12 @@ extension Chart.Kind {
         case .pie: String(localized: "Chart.Kind.Pie")
         case .doughnut: String(localized: "Chart.Kind.Doughnut")
         case .scatter: String(localized: "Chart.Kind.Scatter")
+        case .radar: String(localized: "Chart.Kind.Radar")
+        case .stock: String(localized: "Chart.Kind.Stock")
+        case .bubble: String(localized: "Chart.Kind.Bubble")
+        case .surface: String(localized: "Chart.Kind.Surface")
+        case .pieOfPie: String(localized: "Chart.Kind.PieOfPie")
+        case .barOfPie: String(localized: "Chart.Kind.BarOfPie")
         }
     }
 
@@ -148,6 +154,12 @@ extension Chart.Kind {
         case .pie: "chart.pie"
         case .doughnut: "circle.circle"
         case .scatter: "chart.dots.scatter"
+        case .radar: "hexagon"
+        case .stock: "chart.line.uptrend.xyaxis"
+        case .bubble: "circle.grid.2x2"
+        case .surface: "square.grid.3x3.fill"
+        case .pieOfPie: "chart.pie.fill"
+        case .barOfPie: "chart.pie.fill"
         }
     }
 }
