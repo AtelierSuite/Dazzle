@@ -9,6 +9,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { basename } from "node:path";
+import { inflateRawSync } from "node:zlib";
 import { strict as assert } from "node:assert";
 import { Engine } from "../engine.js";
 
@@ -160,6 +161,157 @@ test("saves as PowerPoint and reads it back", () => {
   const title = scene.shapes.find((node) => node.ph === "ctrTitle" || node.ph === "title");
   assert.equal(text(title.text), "Hello, the web!");
   assert.equal(title.text.paras[0].runs[0].b, true, "kept the bold");
+});
+
+// MARK: - Drawing as the Apple apps do
+
+/** A ZIP file's entries, by name. */
+function unzip(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let end = bytes.length - 22;
+  while (view.getUint32(end, true) !== 0x06054b50) end--;
+  const entries = new Map();
+  let offset = view.getUint32(end + 16, true);
+  for (let index = 0; index < view.getUint16(end + 10, true); index++) {
+    const method = view.getUint16(offset + 10, true);
+    const size = view.getUint32(offset + 20, true);
+    const nameLength = view.getUint16(offset + 28, true);
+    const skip = nameLength + view.getUint16(offset + 30, true) + view.getUint16(offset + 32, true);
+    const local = view.getUint32(offset + 42, true);
+    const name = new TextDecoder().decode(bytes.subarray(offset + 46, offset + 46 + nameLength));
+    const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+    const data = bytes.subarray(start, start + size);
+    entries.set(name, method === 8 ? new Uint8Array(inflateRawSync(data)) : data);
+    offset += 46 + skip;
+  }
+  return entries;
+}
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (data) => (data.reduce((c, byte) => CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8), 0xffffffff) ^ 0xffffffff) >>> 0;
+
+/** A ZIP file of `entries`, stored uncompressed. */
+function zip(entries) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const [name, data] of entries) {
+    const nameBytes = new TextEncoder().encode(name);
+    const header = (size, signature) => {
+      const buffer = new DataView(new ArrayBuffer(size));
+      buffer.setUint32(0, signature, true);
+      return buffer;
+    };
+    const local = header(30, 0x04034b50);
+    local.setUint16(4, 20, true);
+    local.setUint32(14, crc32(data), true);
+    local.setUint32(18, data.length, true);
+    local.setUint32(22, data.length, true);
+    local.setUint16(26, nameBytes.length, true);
+    const central = header(46, 0x02014b50);
+    central.setUint16(4, 20, true);
+    central.setUint16(6, 20, true);
+    central.setUint32(16, crc32(data), true);
+    central.setUint32(20, data.length, true);
+    central.setUint32(24, data.length, true);
+    central.setUint16(28, nameBytes.length, true);
+    central.setUint32(42, offset, true);
+    locals.push(new Uint8Array(local.buffer), nameBytes, data);
+    centrals.push(new Uint8Array(central.buffer), nameBytes);
+    offset += 30 + nameBytes.length + data.length;
+  }
+  const size = centrals.reduce((sum, part) => sum + part.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.size, true);
+  end.setUint16(10, entries.size, true);
+  end.setUint32(12, size, true);
+  end.setUint32(16, offset, true);
+  return Buffer.concat([...locals, ...centrals, new Uint8Array(end.buffer)]);
+}
+
+// A one-pixel PNG, for a tiled picture fill.
+const PIXEL = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
+
+/** The presentation saved above, with shapes added to its first slide that use what each test checks. */
+function deckWithShapes() {
+  const { payload } = call("save", { format: "pptx" });
+  const entries = unzip(payload);
+  const decode = (name) => new TextDecoder().decode(entries.get(name));
+  const encode = (name, text) => entries.set(name, new TextEncoder().encode(text));
+  const frame = (x) => `<a:xfrm><a:off x="${x}" y="914400"/><a:ext cx="1828800" cy="1371600"/></a:xfrm>`;
+  const shapes = `
+    <p:sp><p:nvSpPr><p:cNvPr id="901" name="Lined"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+        <a:ln w="76200" cap="rnd" cmpd="dbl"><a:gradFill><a:gsLst>
+          <a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs>
+        </a:gsLst><a:lin ang="0"/></a:gradFill><a:bevel/></a:ln></p:spPr>
+      <p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en-US" spc="300"><a:latin typeface="Calibri"/></a:rPr><a:t>Spaced</a:t></a:r></a:p></p:txBody>
+    </p:sp>
+    <p:sp><p:nvSpPr><p:cNvPr id="902" name="Tiled"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(2743200)}<a:prstGeom prst="cloudCallout"><a:avLst/></a:prstGeom>
+        <a:blipFill><a:blip r:embed="rIdTile"/><a:tile tx="12700" ty="25400" sx="50000" sy="25000" flip="xy" algn="ctr"/></a:blipFill>
+        <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
+    </p:sp>`;
+  const slide = decode("ppt/slides/slide1.xml");
+  const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
+  encode("ppt/slides/slide1.xml", root.replace("</p:spTree>", `${shapes}</p:spTree>`));
+  const relsName = "ppt/slides/_rels/slide1.xml.rels";
+  encode(relsName, decode(relsName).replace("</Relationships>",
+    '<Relationship Id="rIdTile" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/tile.png"/></Relationships>'));
+  entries.set("ppt/media/tile.png", PIXEL);
+  const types = decode("[Content_Types].xml");
+  if (!/Extension="png"/i.test(types)) encode("[Content_Types].xml", types.replace("<Default ", '<Default Extension="png" ContentType="image/png"/><Default '));
+  return zip(entries);
+}
+
+const drawn = (() => {
+  try {
+    const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
+    const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
+    return { info: opened.result, lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled") };
+  } catch (error) {
+    return { error };
+  }
+})();
+
+test("strokes a gradient outline with its caps, joins and compound strokes", () => {
+  if (drawn.error) throw drawn.error;
+  const line = drawn.lined.line;
+  assert.equal(line.paint?.t, "linear", "the gradient is laid over the line");
+  assert.equal(line.c, "#ff0000", "its first colour stands in where only one will do");
+  assert.ok(line.box.w > drawn.lined.w, "across the line's bounds");
+  assert.equal(line.cap, "round");
+  assert.equal(line.join, "bevel");
+  assert.equal(line.bands?.length, 2, "a double line is two strokes");
+  assert.ok(line.bands.every((band) => Math.abs(band.w - 2) < 0.01), "each a third of the 6pt width");
+});
+
+test("spaces characters as the run says", () => {
+  if (drawn.error) throw drawn.error;
+  assert.equal(drawn.lined.text.paras[0].runs[0].sp, 3, "spc is hundredths of a point");
+});
+
+test("lays tiles by their scale, offset, flip and alignment", () => {
+  if (drawn.error) throw drawn.error;
+  const tile = drawn.tiled.fill?.tile;
+  assert.ok(tile, "is a tiled picture");
+  assert.deepEqual([tile.sx, tile.sy, tile.tx, tile.ty, tile.flip, tile.ax, tile.ay], [0.5, 0.25, 1, 2, "xy", 0.5, 0.5]);
+});
+
+test("fills a cloud callout as one and strokes its puffs", () => {
+  if (drawn.error) throw drawn.error;
+  assert.equal(drawn.tiled.rule, "nonzero", "bubbles overlapping the cloud don't cut holes");
+  assert.ok(drawn.tiled.strokePath?.length > drawn.tiled.path.length, "the puffs' inner curves are stroked too");
+});
+
+test("names the typefaces the presentation doesn't carry", () => {
+  if (drawn.error) throw drawn.error;
+  assert.ok(drawn.info.typefaces.includes("Calibri"));
 });
 
 for (const path of process.argv.slice(2)) {
