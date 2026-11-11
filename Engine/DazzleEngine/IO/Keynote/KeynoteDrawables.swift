@@ -109,10 +109,7 @@ public struct KeynoteSlideWriter {
         case KeynoteType.image:
             return image(object.message)
         case KeynoteType.movie:
-            skipped.insert(object.type)
-            // The poster frame stands in for the movie.
-            guard let poster = object.message.reference(15) else { return nil }
-            return picture(drawable: object.message.message(1), data: poster, style: object.message.reference(19), mask: nil)
+            return movie(object)
         case KeynoteType.group:
             return group(object.message)
         case KeynoteType.chart:
@@ -141,7 +138,7 @@ public struct KeynoteSlideWriter {
         )
     }
 
-    private mutating func nonVisual(_ drawable: ProtoMessage?, name: String) -> String {
+    private mutating func nonVisual(_ drawable: ProtoMessage?, name: String, playsMedia: Bool = false) -> String {
         let id = takeShapeID()
         var attributes = " id=\"\(id)\" name=\"\(XMLLite.escape(name)) \(id - 1)\""
         if let description = drawable?.string(8), !description.isEmpty {
@@ -149,6 +146,9 @@ public struct KeynoteSlideWriter {
         }
         if let url = drawable?.string(4), let relationship = hyperlinkRelationship(url) {
             return "<p:cNvPr\(attributes)><a:hlinkClick r:id=\"\(relationship)\"/></p:cNvPr>"
+        }
+        if playsMedia {
+            return "<p:cNvPr\(attributes)><a:hlinkClick r:id=\"\" action=\"ppaction://media\"/></p:cNvPr>"
         }
         return "<p:cNvPr\(attributes)/>"
     }
@@ -241,8 +241,13 @@ public struct KeynoteSlideWriter {
         return picture(drawable: image.message(1), data: data, style: image.reference(3), mask: archive[image.reference(5)])
     }
 
-    private mutating func picture(drawable: ProtoMessage?, data: UInt64, style: UInt64?, mask: KeynoteArchive.Object?) -> String? {
-        guard var frame = Frame(drawable?.message(1)), let relationship = imageRelationship(data) else { return nil }
+    /// `media` is what a movie's `p:nvPr` says about the file it plays; a
+    /// movie may have no picture to show until it does.
+    private mutating func picture(
+        drawable: ProtoMessage?, data: UInt64?, style: UInt64?, mask: KeynoteArchive.Object?, media: String? = nil
+    ) -> String? {
+        let relationship = data.flatMap { imageRelationship($0) }
+        guard var frame = Frame(drawable?.message(1)), relationship != nil || media != nil else { return nil }
         var sourceRect = ""
         var geometry = "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>"
         // A mask crops the picture: its frame is in the picture's own space.
@@ -266,12 +271,85 @@ public struct KeynoteSlideWriter {
         let effects = KeynoteStyles.effects(
             styles.drawingProperty(style, .shadow), reflection: styles.drawingProperty(style, .reflection), opacity: opacity
         ) ?? ""
-        let nonVisual = nonVisual(drawable, name: "Picture")
+        let nonVisual = nonVisual(drawable, name: media == nil ? "Picture" : "Movie", playsMedia: media != nil)
+        let blip = relationship.map { "<a:blip r:embed=\"\($0)\">\(alpha)</a:blip>" } ?? ""
         return """
-            <p:pic><p:nvPicPr>\(nonVisual)<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>\
-            <p:blipFill><a:blip r:embed="\(relationship)">\(alpha)</a:blip>\(sourceRect)\
+            <p:pic><p:nvPicPr>\(nonVisual)<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>\
+            <p:nvPr\(media.map { ">\($0)</p:nvPr>" } ?? "/>")</p:nvPicPr><p:blipFill>\(blip)\(sourceRect)\
             <a:stretch><a:fillRect/></a:stretch></p:blipFill>\
             <p:spPr>\(frame.xml())\(geometry)\(line)\(effects)</p:spPr></p:pic>
+            """
+    }
+
+    /// A `TSD.MovieArchive`: its poster frame, or for a sound its icon,
+    /// playing the movie's file, copied into the package as PowerPoint 2010
+    /// and later embed one, or failing that, the address it streams from.
+    /// A movie with neither shows its poster frame and nothing more.
+    private mutating func movie(_ object: KeynoteArchive.Object) -> String? {
+        let movie = object.message
+        let isAudio = movie.bool(9) == true
+        let poster = isAudio ? movie.reference(16) ?? movie.reference(15) : movie.reference(15) ?? movie.reference(16)
+        let linkType = isAudio ? OOXML.RelationshipType.audio : OOXML.RelationshipType.video
+        let file = isAudio ? "audioFile" : "videoFile"
+        var nvPr: String?
+        if let data = movie.reference(14) ?? movie.reference(22), let path = media.mediaPath(for: data) {
+            let target = PackagePath.relativeTarget(to: path, from: partName)
+            let link = addRelationship(type: linkType, target: target)
+            let embed = addRelationship(type: OOXML.RelationshipType.media, target: target)
+            nvPr = """
+                <a:\(file) r:link="\(link)"/><p:extLst><p:ext uri="{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}">\
+                <p14:media xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main" r:embed="\(embed)"/>\
+                </p:ext></p:extLst>
+                """
+        } else if let url = movie.string(17), let scheme = URL(string: url)?.scheme?.lowercased(), ["http", "https"].contains(scheme) {
+            let link = addRelationship(type: linkType, target: url, isExternal: true)
+            nvPr = "<a:\(file) r:link=\"\(link)\"/>"
+        }
+        guard let nvPr else {
+            skipped.insert(object.type)
+            // The poster frame stands in for the movie.
+            return poster.flatMap { picture(drawable: movie.message(1), data: $0, style: movie.reference(19), mask: nil) }
+        }
+        let shapeID = nextShapeID
+        guard let xml = picture(drawable: movie.message(1), data: poster, style: movie.reference(19), mask: nil, media: nvPr)
+        else { return nil }
+        mediaDrawables.insert(object.identifier)
+        // Keynote's volume runs from 0 to 1; PowerPoint's in thousandths of a percent.
+        let volume = Int((min(max(Double(movie.float(7) ?? 1), 0), 1) * 100_000).rounded())
+        let loops = (movie.int(24) ?? movie.int(6) ?? 0) != 0
+        mediaNodes.append((shapeID: shapeID, isAudio: isAudio, volume: volume, loops: loops))
+        return xml
+    }
+
+    private mutating func addRelationship(type: String, target: String, isExternal: Bool = false) -> String {
+        let id = Relationship.unusedID(in: relationships)
+        relationships.append(Relationship(id: id, type: type, target: target, isExternal: isExternal))
+        return id
+    }
+
+    /// The movies and sounds that play, as PowerPoint's timing keeps each:
+    /// how loud, and whether it starts over when it ends. Keynote's back and
+    /// forth plays as a loop.
+    public private(set) var mediaNodes: [(shapeID: Int, isAudio: Bool, volume: Int, loops: Bool)] = []
+    /// The movies brought across as media, which builds can start.
+    public private(set) var mediaDrawables: Set<UInt64> = []
+
+    /// A `p:timing` holding the slide's media nodes, or nothing if it has none.
+    public var mediaTiming: String {
+        guard !mediaNodes.isEmpty else { return "" }
+        var nextID = 2
+        let nodes = mediaNodes.map { node -> String in
+            defer { nextID += 1 }
+            let element = node.isAudio ? "audio" : "video"
+            return """
+                <p:\(element)><p:cMediaNode vol="\(node.volume)"><p:cTn id="\(nextID)" fill="hold" display="0"\
+                \(node.loops ? " repeatCount=\"indefinite\"" : "")><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst>\
+                </p:cTn><p:tgtEl><p:spTgt spid="\(node.shapeID)"/></p:tgtEl></p:cMediaNode></p:\(element)>
+                """
+        }
+        return """
+            <p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>\
+            \(nodes.joined())</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>
             """
     }
 

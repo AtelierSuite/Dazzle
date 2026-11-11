@@ -9,8 +9,8 @@ import ImageIO
 import UniformTypeIdentifiers
 #endif
 
-/// The pictures a converted presentation carries, each written once however
-/// many slides use it.
+/// The pictures, movies and sounds a converted presentation carries, each
+/// written once however many slides use it.
 ///
 /// PNG, JPEG and GIF go in as they are. Other formats Keynote accepts —
 /// PDF, TIFF, HEIC — are drawn into PNG, since PowerPoint readers cannot be
@@ -19,6 +19,7 @@ public final class KeynoteMedia {
     private let archive: KeynoteArchive
     private var paths: [UInt64: String] = [:]
     private var failed: Set<UInt64> = []
+    private var mediaPaths: [UInt64: String] = [:]
     public private(set) var parts: [String: Data] = [:]
     /// Content types for parts their extension does not settle, such as charts.
     public private(set) var contentTypes: [String: String] = [:]
@@ -52,6 +53,17 @@ public final class KeynoteMedia {
         let path = "ppt/media/image\(paths.count + 1).\(ext)"
         paths[identifier] = path
         parts[path] = contents
+        return path
+    }
+
+    /// A movie or sound, copied as it is under the extension Keynote gave it.
+    public func mediaPath(for identifier: UInt64) -> String? {
+        if let path = mediaPaths[identifier] { return path }
+        guard let file = archive.data[identifier], !file.contents.isEmpty else { return nil }
+        let ext = (file.name as NSString).pathExtension.lowercased()
+        let path = "ppt/media/media\(mediaPaths.count + 1).\(ext.isEmpty ? "mov" : ext)"
+        mediaPaths[identifier] = path
+        parts[path] = file.contents
         return path
     }
 

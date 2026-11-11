@@ -273,7 +273,7 @@ public enum KeynoteImporter {
         return """
             <p:sld xmlns:a="\(OOXML.drawingML)" xmlns:r="\(OOXML.relationshipsNS)" xmlns:p="\(OOXML.presentationML)"\(show)>\
             <p:cSld>\(background)\(spTree(shapes))</p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>\
-            \(transitionXML(slide.message.message(4)?.message(2)?.message(8)))</p:sld>
+            \(transitionXML(slide.message.message(4)?.message(2)?.message(8)))\(writer.mediaTiming)</p:sld>
             """
     }
 
