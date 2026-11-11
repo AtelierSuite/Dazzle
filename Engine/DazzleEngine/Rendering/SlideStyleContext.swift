@@ -145,6 +145,28 @@ public struct SlideStyleContext: Sendable {
         return shape
     }
 
+    /// How a shape's camera, lights, bevels and depth are drawn, for a shape
+    /// filling `bounds` whose fill is `fill`. Pictures show their bevel on
+    /// the picture. `nil` for a shape without them, and for an open one.
+    public func threeDLook(
+        for shape: SlideShape, bounds: CGRect, fill: ResolvedFill?, isOpen: Bool = false
+    ) -> Shape3DLook? {
+        guard let shape3D = shape.shape3D, !isOpen else { return nil }
+        let face: RGBAColor? = switch fill?.fill ?? Fill.none {
+        case .solid(let color): self.color(color, placeholder: fill?.placeholderColor)
+        case .gradient(let gradient): gradient.stops.first.map { self.color($0.color, placeholder: fill?.placeholderColor) }
+        case .pattern(let pattern): self.color(pattern.foreground, placeholder: fill?.placeholderColor)
+        case .picture, .tiledPicture: RGBAColor(red: 0.6, green: 0.6, blue: 0.6)
+        case .none, .group:
+            if case .picture = shape.kind { RGBAColor(red: 0.6, green: 0.6, blue: 0.6) } else { nil }
+        }
+        return Shape3DLook(
+            scene: shape.scene3D, shape: shape3D, bounds: bounds, rotation: shape.rotation,
+            flipsHorizontally: shape.flipsHorizontally, flipsVertically: shape.flipsVertically, face: face,
+            color: { self.color($0, placeholder: fill?.placeholderColor) }
+        )
+    }
+
     public func background(of slide: Slide) -> ResolvedFill {
         let background = slide.background ?? layout?.background ?? master?.background
         switch background {
