@@ -180,6 +180,41 @@ public struct TextRun: Equatable, Hashable, Sendable {
     }
 }
 
+/// A tab stop, as `a:tab` gives it.
+public struct TabStop: Equatable, Hashable, Sendable {
+    public enum Alignment: String, CaseIterable, Sendable {
+        case left = "l"
+        case center = "ctr"
+        case right = "r"
+        /// The text's decimal point lines up on the stop.
+        case decimal = "dec"
+    }
+
+    /// EMU, from the left of the text, insets taken off.
+    public var position: Int
+    public var alignment: Alignment
+
+    public init(position: Int, alignment: Alignment = .left) {
+        self.position = position
+        self.alignment = alignment
+    }
+
+    /// The stops an `a:tabLst` lists, in order along the line; none when it lists none.
+    public static func list(in element: XMLElement?) -> [TabStop]? {
+        guard let element else { return nil }
+        let stops = element.children.filter { $0.name == "tab" }.compactMap { tab -> TabStop? in
+            guard let position = tab.attribute("pos").flatMap(Int.init), position >= 0 else { return nil }
+            return TabStop(position: position, alignment: tab.attribute("algn").flatMap(Alignment.init(rawValue:)) ?? .left)
+        }
+        return stops.isEmpty ? nil : stops.sorted { $0.position < $1.position }
+    }
+
+    /// The stops as an `a:tabLst`.
+    public static func xml(_ stops: [TabStop]) -> String {
+        "<a:tabLst>" + stops.map { "<a:tab pos=\"\($0.position)\" algn=\"\($0.alignment.rawValue)\"/>" }.joined() + "</a:tabLst>"
+    }
+}
+
 public enum ParagraphAlignment: String, CaseIterable, Sendable {
     case left = "l"
     case center = "ctr"
@@ -246,6 +281,10 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
     public var lineSpacing: Spacing?
     public var spaceBefore: Spacing?
     public var spaceAfter: Spacing?
+    /// Where tabs stop before the default ones take over.
+    public var tabStops: [TabStop]?
+    /// EMU between the default tab stops.
+    public var defaultTabSize: Int?
     public var defaultRun = RunProperties()
 
     public init() {
@@ -261,6 +300,8 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
         lineSpacing = Spacing(element: element.firstChild(named: "lnSpc"))
         spaceBefore = Spacing(element: element.firstChild(named: "spcBef"))
         spaceAfter = Spacing(element: element.firstChild(named: "spcAft"))
+        tabStops = TabStop.list(in: element.firstChild(named: "tabLst"))
+        defaultTabSize = element.attribute("defTabSz").flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
         if element.firstChild(named: "buNone") != nil {
             bullet = Bullet.none
         } else if let character = element.firstChild(named: "buChar")?.attribute("char") {
@@ -291,6 +332,8 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
         result.lineSpacing = lineSpacing ?? base.lineSpacing
         result.spaceBefore = spaceBefore ?? base.spaceBefore
         result.spaceAfter = spaceAfter ?? base.spaceAfter
+        result.tabStops = tabStops ?? base.tabStops
+        result.defaultTabSize = defaultTabSize ?? base.defaultTabSize
         result.defaultRun = defaultRun.merged(over: base.defaultRun)
         return result
     }
