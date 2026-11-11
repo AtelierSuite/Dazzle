@@ -41,7 +41,7 @@ enum EditableText {
     /// `body` drawn as the slide draws it, at `scale` view points per slide point.
     static func attributedString(
         _ body: TextBody, shape: SlideShape, sources: [SlideShape], style: SlideStyleContext, scale: CGFloat,
-        fontScale: Double, slideNumber: Int
+        fontScale: Double, lineSpacingReduction: Double = 0, slideNumber: Int
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let paragraphs = body.paragraphs.isEmpty ? [Paragraph(runs: [])] : body.paragraphs
@@ -68,7 +68,9 @@ enum EditableText {
             if range.length > 0 {
                 let firstSize = CGFloat((paragraph.runs.first?.properties.merged(over: properties.defaultRun) ?? endRun).size ?? 1_800) / 100
                 result.addAttributes([
-                    .paragraphStyle: paragraphStyle(properties, fontSize: firstSize * scale * fontScale, scale: scale),
+                    .paragraphStyle: paragraphStyle(
+                        properties, fontSize: firstSize * scale * fontScale, scale: scale, lineSpacingReduction: lineSpacingReduction
+                    ),
                     paragraphKey: ParagraphBox(paragraph),
                 ], range: range)
             }
@@ -100,13 +102,16 @@ enum EditableText {
 
     /// What newly typed text looks like where nothing is there yet.
     static func typingAttributes(
-        for body: TextBody, shape: SlideShape, sources: [SlideShape], style: SlideStyleContext, scale: CGFloat, fontScale: Double
+        for body: TextBody, shape: SlideShape, sources: [SlideShape], style: SlideStyleContext, scale: CGFloat, fontScale: Double,
+        lineSpacingReduction: Double = 0
     ) -> [NSAttributedString.Key: Any] {
         let paragraph = body.paragraphs.first ?? Paragraph(runs: [])
         let properties = paragraph.properties.merged(over: style.paragraphBase(for: shape, sources: sources, level: paragraph.properties.level ?? 0))
         let run = (paragraph.endProperties ?? RunProperties()).merged(over: properties.defaultRun)
         var attributes = Self.attributes(for: run, style: style, scale: scale * fontScale)
-        attributes[.paragraphStyle] = paragraphStyle(properties, fontSize: CGFloat(run.size ?? 1_800) / 100 * scale * fontScale, scale: scale)
+        attributes[.paragraphStyle] = paragraphStyle(
+            properties, fontSize: CGFloat(run.size ?? 1_800) / 100 * scale * fontScale, scale: scale, lineSpacingReduction: lineSpacingReduction
+        )
         attributes[paragraphKey] = ParagraphBox(paragraph)
         attributes[runKey] = RunBox(TextRun(text: "", properties: paragraph.endProperties ?? RunProperties()))
         return attributes
@@ -144,7 +149,10 @@ enum EditableText {
         #endif
     }
 
-    static func paragraphStyle(_ properties: ParagraphProperties, fontSize: CGFloat, scale: CGFloat) -> NSParagraphStyle {
+    /// `lineSpacingReduction` closes lines up as text shrunk to fit has them.
+    static func paragraphStyle(
+        _ properties: ParagraphProperties, fontSize: CGFloat, scale: CGFloat, lineSpacingReduction: Double = 0
+    ) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.alignment = switch properties.alignment ?? .left {
         case .left: .left
@@ -177,11 +185,11 @@ enum EditableText {
         }
         style.defaultTabInterval = CGFloat(TabLayout.defaultInterval(properties)) * scale
         switch properties.lineSpacing {
-        case .percent(let value): style.lineHeightMultiple = CGFloat(max(value, 0.5))
+        case .percent(let value): style.lineHeightMultiple = CGFloat(max(value - lineSpacingReduction, 0.5))
         case .points(let value):
             style.minimumLineHeight = CGFloat(value) * scale
             style.maximumLineHeight = CGFloat(value) * scale
-        case nil: break
+        case nil: if lineSpacingReduction > 0 { style.lineHeightMultiple = CGFloat(max(1 - lineSpacingReduction, 0.5)) }
         }
         func spacing(_ value: Spacing?) -> CGFloat {
             switch value {

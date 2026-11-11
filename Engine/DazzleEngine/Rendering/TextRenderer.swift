@@ -438,6 +438,15 @@ public struct TextRenderer {
         return layout.fit.autofit
     }
 
+    /// How far `shape`'s text is shrunk where the slide draws it: as the file
+    /// says, or as far as it takes to fit when the file says nothing.
+    public func drawnShrink(of shape: SlideShape, sources: [SlideShape]) -> BodyProperties.Autofit.ShrinkStep {
+        let unshrunk = BodyProperties.Autofit.ShrinkStep(fontScale: 1, lineSpacingReduction: 0)
+        guard let body = shape.text else { return unshrunk }
+        return layout(body, shape: shape, sources: sources, in: Self.textFrame(of: shape), colorOverride: nil, hidesText: false)?.fit
+            ?? unshrunk
+    }
+
     /// Where a shape's text is laid out, in slide points: the shape's text
     /// rectangle with the insets taken off, and the body properties in force.
     public func textArea(of shape: SlideShape, sources: [SlideShape]) -> (rect: CGRect, properties: BodyProperties) {

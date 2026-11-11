@@ -22,6 +22,8 @@ final class InPlaceTextEditor: NSView, NSTextViewDelegate {
         var style: SlideStyleContext
         var slideNumber: Int
         var fontScale: Double
+        /// How much closer lines are set in text shrunk to fit.
+        var lineSpacingReduction: Double = 0
         var anchor: BodyProperties.Anchor
         /// The shape's frame, which the editor turns with.
         var frame: CGRect
@@ -78,6 +80,7 @@ final class InPlaceTextEditor: NSView, NSTextViewDelegate {
     /// text itself if it was changed other than by typing here.
     func update(_ target: Target, origin: CGPoint) {
         let needsReload = target.body != lastBody || target.fontScale != self.target.fontScale
+            || target.lineSpacingReduction != self.target.lineSpacingReduction
         self.target = target
         frameCenterRotation = 0
         frame = target.frame.offsetBy(dx: origin.x, dy: origin.y)
@@ -92,13 +95,13 @@ final class InPlaceTextEditor: NSView, NSTextViewDelegate {
         let target = target
         let text = EditableText.attributedString(
             target.body, shape: target.shape, sources: target.sources, style: target.style, scale: 1,
-            fontScale: target.fontScale, slideNumber: target.slideNumber
+            fontScale: target.fontScale, lineSpacingReduction: target.lineSpacingReduction, slideNumber: target.slideNumber
         )
         textView.textStorage?.setAttributedString(text)
         if text.length == 0 {
             textView.typingAttributes = EditableText.typingAttributes(
                 for: target.body, shape: target.shape, sources: target.sources, style: target.style, scale: 1,
-                fontScale: target.fontScale
+                fontScale: target.fontScale, lineSpacingReduction: target.lineSpacingReduction
             )
         }
         let length = text.length
