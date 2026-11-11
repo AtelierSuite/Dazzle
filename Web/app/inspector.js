@@ -195,8 +195,13 @@ export class Inspector extends EventTarget {
     const t = this.t;
     return this.row(t("Fill.Gradient.Start"), this.color(`${prefix}Start`, t("Fill.Gradient.Start"), fill.start ?? "#ffffff"))
       + this.row(t("Fill.Gradient.End"), this.color(`${prefix}End`, t("Fill.Gradient.End"), fill.end ?? "#000000"))
-      + this.row(t("Fill.Gradient.Direction"), this.stepper(`${prefix}Angle`, t("Fill.Gradient.Direction"), fill.angle ?? 90, { step: 15, min: 0, max: 359, unit: "°" }))
-      + this.row("", this.check(`${prefix}Radial`, t("Fill.Gradient.Radial"), fill.radial));
+      + this.row(t("Fill.Gradient.Style"), this.popup(`${prefix}Path`, t("Fill.Gradient.Style"), [
+        ["linear", t("Fill.Gradient.Linear")], ["circle", t("Fill.Gradient.Radial")],
+        ["rect", t("Fill.Gradient.Rectangular")], ["shape", t("Fill.Gradient.Path")],
+      ], fill.path ?? "linear"))
+      + ((fill.path ?? "linear") === "linear"
+        ? this.row(t("Fill.Gradient.Direction"), this.stepper(`${prefix}Angle`, t("Fill.Gradient.Direction"), fill.angle ?? 90, { step: 15, min: 0, max: 359, unit: "°" }))
+        : "");
   }
 
   /** A pattern fill's two colours. Patterns come from files; they're kept and recoloured, not made here. */
@@ -576,14 +581,15 @@ export class Inspector extends EventTarget {
         if (value === "solid") return engine.call("setFill", { fill: { kind: "solid", color: shape?.fill?.color ?? "scheme:accent1" } });
         return engine.call("setFill", { fill: { kind: "gradient", start: shape?.fill?.color ?? "scheme:accent1", end: "scheme:bg1", angle: 90 } });
       case "fillColor": { const color = colorValue(); return color && engine.call("setFill", { fill: { kind: "solid", color } }); }
-      case "fillStart": case "fillEnd": case "fillAngle": case "fillRadial": {
+      case "fillStart": case "fillEnd": case "fillAngle": case "fillPath": {
         const fill = { ...shape.fill };
         const color = name === "fillStart" || name === "fillEnd" ? colorValue() : null;
         if (name === "fillStart") fill.start = color ?? fill.start;
         if (name === "fillEnd") fill.end = color ?? fill.end;
         if (name === "fillAngle") fill.angle = Number(value);
-        if (name === "fillRadial") fill.radial = value;
-        return engine.call("setFill", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, radial: fill.radial } });
+        if (name === "fillPath") fill.path = value;
+        // Where it starts, the box it spans and whether it is scaled carry over as they were.
+        return engine.call("setFill", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, path: fill.path, focus: fill.focus, tile: fill.tile, scaled: fill.scaled } });
       }
       case "fillPatternFg": case "fillPatternBg": {
         const color = colorValue();
@@ -600,14 +606,14 @@ export class Inspector extends EventTarget {
         if (value === "solid") return engine.call("setBackground", { fill: { kind: "solid", color: data.slide.background.color ?? "#ffffff" } });
         return engine.call("setBackground", { fill: { kind: "gradient", start: data.slide.background.color ?? "#ffffff", end: "scheme:accent1", angle: 90 } });
       case "bgColor": { const color = colorValue(); return color && engine.call("setBackground", { fill: { kind: "solid", color } }); }
-      case "bgStart": case "bgEnd": case "bgAngle": case "bgRadial": {
+      case "bgStart": case "bgEnd": case "bgAngle": case "bgPath": {
         const fill = { ...data.slide.background };
         const color = name === "bgStart" || name === "bgEnd" ? colorValue() : null;
         if (name === "bgStart") fill.start = color ?? fill.start;
         if (name === "bgEnd") fill.end = color ?? fill.end;
         if (name === "bgAngle") fill.angle = Number(value);
-        if (name === "bgRadial") fill.radial = value;
-        return engine.call("setBackground", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, radial: fill.radial } });
+        if (name === "bgPath") fill.path = value;
+        return engine.call("setBackground", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, path: fill.path, focus: fill.focus, tile: fill.tile, scaled: fill.scaled } });
       }
       case "bgPatternFg": case "bgPatternBg": {
         const color = colorValue();

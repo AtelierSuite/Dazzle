@@ -196,6 +196,9 @@ struct WebRenderer {
 
     // MARK: - Paint
 
+    /// How many copies of the outline a shape gradient is drawn with, less one.
+    static let shapeGradientSteps = 64
+
     private func paint(_ fill: Fill, placeholder: RGBAColor?, style: SlideStyleContext) -> [String: Any]? {
         switch fill {
         case .none, .group:
@@ -204,10 +207,34 @@ struct WebRenderer {
             return ["t": "solid", "c": css(style.color(color, placeholder: placeholder))]
         case .gradient(let gradient):
             let stops = gradient.stops.map { [n(CGFloat($0.position)), css(style.color($0.color, placeholder: placeholder))] as [Any] }
-            if gradient.isRadial {
-                return ["t": "radial", "fx": gradient.focusX, "fy": gradient.focusY, "stops": stops]
+            // Where a path gradient starts, and the box it spans, as insets from
+            // each edge of the area by fractions of its size.
+            func insets(_ box: Fill.Gradient.Insets) -> [Double] { [box.left, box.top, box.right, box.bottom] }
+            var json: [String: Any] = ["stops": stops]
+            if gradient.tileRect != .zero { json["tile"] = insets(gradient.tileRect) }
+            guard let path = gradient.path else {
+                json["t"] = "linear"
+                json["angle"] = gradient.angle
+                if gradient.isScaled { json["scaled"] = true }
+                return json
             }
-            return ["t": "linear", "angle": gradient.angle, "stops": stops]
+            json["focus"] = insets(gradient.fillToRect)
+            let resolve = { (color: DrawingColor) in style.color(color, placeholder: placeholder) }
+            switch path {
+            case .circle:
+                json["t"] = "radial"
+            case .rect:
+                json["t"] = "rect"
+                json["from"] = css(gradient.color(at: 0, resolve: resolve))
+                json["to"] = css(gradient.color(at: 1, resolve: resolve))
+            case .shape:
+                // Copies of the outline, from the tile in to the start, each a colour.
+                json["t"] = "shape"
+                json["rings"] = (0...Self.shapeGradientSteps).reversed().map {
+                    css(gradient.color(at: Double($0) / Double(Self.shapeGradientSteps), resolve: resolve))
+                }
+            }
+            return json
         case .pattern(let pattern):
             // Its eight rows of cells, top first, each a byte with the
             // leftmost cell its highest bit; set cells are the foreground.

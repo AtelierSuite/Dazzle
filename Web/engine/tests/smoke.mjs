@@ -275,7 +275,8 @@ function deckWithShapes() {
       <p:spPr>${frame(457200 + index * 2286000)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>
         <a:solidFill><a:srgbClr val="3366CC"/></a:solidFill>
         <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
-    </p:sp>`).join("")}`;
+    </p:sp>`).join("")}
+    ${gradientShapes(frame)}`;
   const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
@@ -290,6 +291,22 @@ function deckWithShapes() {
   return zip(entries);
 }
 
+/** Shapes filled with each kind of path gradient, and a scaled linear one, named for what they hold. */
+function gradientShapes(frame) {
+  const stops = '<a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst>';
+  const fills = {
+    "Rect gradient": `<a:path path="rect"><a:fillToRect l="25000" t="25000" r="25000" b="25000"/></a:path>`,
+    "Shape gradient": `<a:path path="shape"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path>`,
+    "Circle gradient": `<a:path path="circle"><a:fillToRect r="100000" b="100000"/></a:path><a:tileRect l="-100000" t="-100000"/>`,
+    "Scaled gradient": `<a:lin ang="2700000" scaled="1"/>`,
+  };
+  return Object.entries(fills).map(([name, shade], index) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${910 + index}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200 + 2286000 * index)}<a:prstGeom prst="${name === "Shape gradient" ? "ellipse" : "rect"}"><a:avLst/></a:prstGeom>
+        <a:gradFill rotWithShape="1">${stops}${shade}</a:gradFill></p:spPr>
+    </p:sp>`).join("");
+}
+
 const drawn = (() => {
   try {
     const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
@@ -297,7 +314,7 @@ const drawn = (() => {
     const shapes = scene.shapes;
     const named = (name) => shapes.find((node) => node.name === name);
     return {
-      info: opened.result, slide: opened.state.slides[0].id, scene,
+      info: opened.result, shapes, slide: opened.state.slides[0].id, scene,
       lined: named("Lined"), tiled: named("Tiled"), patterned: named("Patterned"), grid: named("Grid"),
       cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
     };
@@ -378,6 +395,41 @@ test("draws the presets ECMA-376 defines rather than their frames", () => {
 test("names the typefaces the presentation doesn't carry", () => {
   if (drawn.error) throw drawn.error;
   assert.ok(drawn.info.typefaces.includes("Calibri"));
+});
+
+test("draws path gradients from fillToRect to their tile, and scaled linear ones", () => {
+  if (drawn.error) throw drawn.error;
+  const fill = (name) => drawn.shapes.find((node) => node.name === name)?.fill;
+  const rect = fill("Rect gradient");
+  assert.equal(rect?.t, "rect");
+  assert.deepEqual(rect.focus, [0.25, 0.25, 0.25, 0.25]);
+  assert.deepEqual([rect.from, rect.to], ["#ff0000", "#0000ff"], "from its first colour inside fillToRect to its last at the edges");
+  const shape = fill("Shape gradient");
+  assert.equal(shape?.t, "shape");
+  assert.deepEqual([shape.rings[0], shape.rings.at(-1)], ["#0000ff", "#ff0000"], "outline copies from the edge in to the centre");
+  const circle = fill("Circle gradient");
+  assert.equal(circle?.t, "radial");
+  assert.deepEqual([circle.focus, circle.tile], [[0, 0, 1, 1], [-1, -1, 0, 0]], "from the top-left corner");
+  const scaled = fill("Scaled gradient");
+  assert.deepEqual([scaled?.t, scaled?.angle, scaled?.scaled], ["linear", 45, true]);
+});
+
+test("keeps path gradients when saved and when the inspector changes their colours or style", () => {
+  if (drawn.error) throw drawn.error;
+  const reopened = call("open", { name: "Saved.pptx" }, call("save", { format: "pptx", keep: true }).payload);
+  const slide = reopened.state.slides[0].id;
+  const shapes = call("scene", { slide }).result.shapes;
+  const circle = shapes.find((node) => node.name === "Circle gradient");
+  assert.deepEqual([circle.fill.t, circle.fill.focus, circle.fill.tile], ["radial", [0, 0, 1, 1], [-1, -1, 0, 0]]);
+  assert.equal(shapes.find((node) => node.name === "Scaled gradient").fill.scaled, true);
+
+  // The inspector sends back what it was told, with one thing changed, as inspector.js does.
+  call("select", { slide, shapes: [circle.id] });
+  const told = call("inspect").result.shape.fill;
+  assert.deepEqual([told.path, told.focus, told.tile, told.scaled], ["circle", [0, 0, 1, 1], [-1, -1, 0, 0], false]);
+  call("setFill", { fill: { ...told, kind: "gradient", end: "#00ff00", path: "rect" } });
+  const changed = call("scene", { slide }).result.shapes.find((node) => node.name === "Circle gradient").fill;
+  assert.deepEqual([changed.t, changed.focus, changed.tile, changed.to], ["rect", [0, 0, 1, 1], [-1, -1, 0, 0], "#00ff00"]);
 });
 
 for (const path of process.argv.slice(2)) {

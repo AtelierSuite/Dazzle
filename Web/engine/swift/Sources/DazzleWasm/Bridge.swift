@@ -613,7 +613,7 @@ final class Bridge {
         return color
     }
 
-    /// A fill the inspector describes: `{ kind, color, start, end, angle, radial }`,
+    /// A fill the inspector describes: `{ kind, color, start, end, angle, path, focus, tile, scaled }`,
     /// or for a pattern `{ kind, preset, color, background }`.
     private func fill(_ value: Any?) throws -> Fill? {
         guard let json = value as? [String: Any] else { return nil }
@@ -626,9 +626,20 @@ final class Bridge {
         case "gradient":
             let start = (json["start"] as? String).flatMap(Self.color) ?? .scheme("accent1")
             let end = (json["end"] as? String).flatMap(Self.color) ?? .scheme("bg1")
+            // `path` is "circle", "rect" or "shape", or "linear"; `focus` and
+            // `tile` are the fillToRect and tileRect insets, `[l, t, r, b]`.
+            func insets(_ value: Any?) -> Fill.Gradient.Insets? {
+                guard let values = value as? [Any], values.count == 4 else { return nil }
+                let fractions = values.compactMap { ($0 as? NSNumber)?.doubleValue }
+                guard fractions.count == 4 else { return nil }
+                return .init(left: fractions[0], top: fractions[1], right: fractions[2], bottom: fractions[3])
+            }
+            let path = (json["path"] as? String).flatMap(Fill.Gradient.Path.init(rawValue:))
+                ?? (json["path"] == nil && json["radial"] as? Bool == true ? .circle : nil)
             return .gradient(Fill.Gradient(
                 stops: [.init(position: 0, color: start), .init(position: 1, color: end)],
-                angle: json["angle"] as? Double ?? 90, isRadial: json["radial"] as? Bool ?? false
+                angle: json["angle"] as? Double ?? 90, path: path, isScaled: json["scaled"] as? Bool ?? false,
+                fillToRect: insets(json["focus"]) ?? .center, tileRect: insets(json["tile"]) ?? .zero
             ))
         case "pattern":
             return .pattern(Fill.Pattern(
@@ -1168,7 +1179,10 @@ final class Bridge {
             json["start"] = gradient.stops.first.map { css(style.color($0.color, placeholder: placeholder)) } ?? "#ffffff"
             json["end"] = gradient.stops.last.map { css(style.color($0.color, placeholder: placeholder)) } ?? "#000000"
             json["angle"] = gradient.angle
-            json["radial"] = gradient.isRadial
+            json["path"] = gradient.path?.rawValue ?? "linear"
+            json["focus"] = [gradient.fillToRect.left, gradient.fillToRect.top, gradient.fillToRect.right, gradient.fillToRect.bottom]
+            json["tile"] = [gradient.tileRect.left, gradient.tileRect.top, gradient.tileRect.right, gradient.tileRect.bottom]
+            json["scaled"] = gradient.isScaled
         case .pattern(let pattern):
             // Its foreground is its colour, carried over to a solid fill.
             json["kind"] = "pattern"
