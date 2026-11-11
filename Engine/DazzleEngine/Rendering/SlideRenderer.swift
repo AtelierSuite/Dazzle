@@ -488,29 +488,52 @@ public struct SlideRenderer {
             context.clip(using: rule)
             drawImage(image, in: bounds, context: context)
             context.restoreGState()
-        case .tiledPicture(let imagePath, let effects):
+        case .tiledPicture(let imagePath, let effects, let layout):
             guard let image = image(at: imagePath, effects: effects, placeholderColor: placeholderColor, style: style) else {
                 return
             }
-            // A tile is laid at its own size: pixels at 96 to the inch.
-            let tile = CGSize(width: CGFloat(image.width) * 0.75, height: CGFloat(image.height) * 0.75)
+            // At 100% a tile is the picture's own size: pixels at 96 to the inch.
+            let tile = CGSize(
+                width: CGFloat(image.width) * 0.75 * abs(layout.scaleX), height: CGFloat(image.height) * 0.75 * abs(layout.scaleY)
+            )
             guard tile.width >= 1, tile.height >= 1 else { return }
-            let columns = Int((bounds.width / tile.width).rounded(.up))
-            let rows = Int((bounds.height / tile.height).rounded(.up))
+            // One tile sits against the alignment point, moved by the offset; the rest repeat from it both ways.
+            let anchor = layout.alignment.fractions
+            let origin = CGPoint(
+                x: bounds.minX + (bounds.width - tile.width) * anchor.x + EMU.points(layout.offsetX),
+                y: bounds.minY + (bounds.height - tile.height) * anchor.y + EMU.points(layout.offsetY)
+            )
+            let columns = Int(((bounds.minX - origin.x) / tile.width).rounded(.down))..<Int(((bounds.maxX - origin.x) / tile.width).rounded(.up))
+            let rows = Int(((bounds.minY - origin.y) / tile.height).rounded(.down))..<Int(((bounds.maxY - origin.y) / tile.height).rounded(.up))
             context.saveGState()
             context.setAlpha(effects.opacity)
             context.addPath(path)
             context.clip(using: rule)
-            if columns * rows > 4_000 {
+            if columns.count * rows.count > 4_000 {
                 // Too fine a tile to lay one by one: stretching looks the same.
                 drawImage(image, in: bounds, context: context)
             } else {
-                for row in 0..<rows {
-                    for column in 0..<columns {
-                        drawImage(image, in: CGRect(
-                            origin: CGPoint(x: bounds.minX + CGFloat(column) * tile.width, y: bounds.minY + CGFloat(row) * tile.height),
+                // Flipping mirrors every other tile; a negative scale mirrors them all.
+                let flipsAcross = layout.flip == .x || layout.flip == .xy
+                let flipsDown = layout.flip == .y || layout.flip == .xy
+                // Tiles meet at fractions of a point; softened edges would show as seams between them.
+                context.setShouldAntialias(false)
+                for row in rows {
+                    for column in columns {
+                        let rect = CGRect(
+                            origin: CGPoint(x: origin.x + CGFloat(column) * tile.width, y: origin.y + CGFloat(row) * tile.height),
                             size: tile
-                        ), context: context)
+                        )
+                        let mirrorsX = (flipsAcross && !column.isMultiple(of: 2)) != (layout.scaleX < 0)
+                        let mirrorsY = (flipsDown && !row.isMultiple(of: 2)) != (layout.scaleY < 0)
+                        context.saveGState()
+                        if mirrorsX || mirrorsY {
+                            context.translateBy(x: rect.midX, y: rect.midY)
+                            context.scaleBy(x: mirrorsX ? -1 : 1, y: mirrorsY ? -1 : 1)
+                            context.translateBy(x: -rect.midX, y: -rect.midY)
+                        }
+                        drawImage(image, in: rect, context: context)
+                        context.restoreGState()
                     }
                 }
             }

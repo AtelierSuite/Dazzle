@@ -248,10 +248,10 @@ public struct ShapeWriter {
     /// relationship of the slide's, added if the slide has none to it.
     public mutating func fillXML(_ fill: Fill) -> String {
         switch fill {
-        case .picture(let path, let effects), .tiledPicture(let path, let effects):
+        case .picture(let path, let effects), .tiledPicture(let path, let effects, _):
             let reference = relationshipID(forImage: path)
-            let layout = if case .tiledPicture = fill {
-                "<a:tile tx=\"0\" ty=\"0\" sx=\"100000\" sy=\"100000\" flip=\"none\" algn=\"tl\"/>"
+            let layout = if case .tiledPicture(_, _, let tile) = fill {
+                tile.xml
             } else {
                 "<a:stretch><a:fillRect/></a:stretch>"
             }

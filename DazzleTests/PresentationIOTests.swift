@@ -312,6 +312,13 @@ struct RenderingFidelityTests {
             <blipFill xmlns:r="r"><blip r:embed="rId1"><alphaModFix amt="50000"/></blip><tile/></blipFill>
             """.utf8))
         #expect(Fill.parse(element: tiled, image: { _ in "ppt/media/a.png" }) == .tiledPicture(path: "ppt/media/a.png", effects: { var e = BlipEffects(); e.opacity = 0.5; return e }()))
+
+        let laidOut = try XMLLite.parse(Data("""
+            <blipFill xmlns:r="r"><blip r:embed="rId1"/><tile tx="12700" ty="-25400" sx="50000" sy="150%" flip="xy" algn="br"/></blipFill>
+            """.utf8))
+        let tile = Fill.Tile(offsetX: 12_700, offsetY: -25_400, scaleX: 0.5, scaleY: 1.5, flip: .xy, alignment: .bottomRight)
+        #expect(Fill.parse(element: laidOut, image: { _ in "ppt/media/a.png" }) == .tiledPicture(path: "ppt/media/a.png", tile: tile))
+        #expect(Fill.Tile(element: try #require(XMLLite.fragment(tile.xml, namespaces: OOXML.namespaces))) == tile)
     }
 }
 
@@ -749,7 +756,7 @@ struct FillTests {
         state.setBackground(.gradient(gradient), in: &presentation)
 
         let copy = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
-        guard case .tiledPicture(let path, _)? = copy.slides[0].shapes.last?.fill else {
+        guard case .tiledPicture(let path, _, _)? = copy.slides[0].shapes.last?.fill else {
             Issue.record("Expected a tiled picture fill")
             return
         }
@@ -766,6 +773,35 @@ struct FillTests {
             return
         }
         #expect(final.data(at: backgroundPath) == png)
+    }
+
+    @Test("Tile settings on shape and background picture fills survive saving")
+    func tileSettings() throws {
+        var presentation = Presentation.blank
+        let state = EditorState()
+        state.selectSlide(presentation.slides[0].id)
+        let png = try #require(SlideExporter.image(of: presentation.slides[0], in: presentation, width: 16, format: .png))
+        state.insertShape("rect", in: &presentation)
+        state.setFillPicture(PreparedMedia(png: png, size: CGSize(width: 16, height: 9)), tiled: true, in: &presentation)
+        state.setBackgroundPicture(PreparedMedia(png: png, size: CGSize(width: 16, height: 9)), tiled: true, in: &presentation)
+        let shapeTile = Fill.Tile(offsetX: 63_500, offsetY: -12_700, scaleX: 0.5, scaleY: 2, flip: .x, alignment: .center)
+        let backgroundTile = Fill.Tile(scaleX: 1.25, scaleY: 0.75, flip: .xy, alignment: .bottomRight)
+        guard case .tiledPicture(let shapePath, let effects, _)? = presentation.slides[0].shapes.last?.fill,
+              case .fill(.tiledPicture(let backgroundPath, _, _))? = presentation.slides[0].background else {
+            Issue.record("Expected tiled picture fills")
+            return
+        }
+        state.setFill(.tiledPicture(path: shapePath, effects: effects, tile: shapeTile), in: &presentation)
+        state.setBackground(.tiledPicture(path: backgroundPath, tile: backgroundTile), in: &presentation)
+
+        let copy = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        guard case .tiledPicture(_, _, let readShapeTile)? = copy.slides[0].shapes.last?.fill,
+              case .fill(.tiledPicture(_, _, let readBackgroundTile))? = copy.slides[0].background else {
+            Issue.record("Expected tiled picture fills")
+            return
+        }
+        #expect(readShapeTile == shapeTile)
+        #expect(readBackgroundTile == backgroundTile)
     }
 }
 

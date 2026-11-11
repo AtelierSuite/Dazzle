@@ -264,7 +264,7 @@ extension Fill {
     public func remapped(path: (String) -> String) -> Fill {
         switch self {
         case .picture(let old, let effects): .picture(path: path(old), effects: effects)
-        case .tiledPicture(let old, let effects): .tiledPicture(path: path(old), effects: effects)
+        case .tiledPicture(let old, let effects, let tile): .tiledPicture(path: path(old), effects: effects, tile: tile)
         default: self
         }
     }

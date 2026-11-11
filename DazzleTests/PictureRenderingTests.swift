@@ -2,6 +2,7 @@ import CoreGraphics
 @testable import Dazzle
 @testable import DazzleEngine
 import Foundation
+import ImageIO
 import Testing
 
 @Suite("Picture rendering regressions")
@@ -72,5 +73,81 @@ struct PictureRenderingTests {
             .draw(in: canvas, size: CGSize(width: 10, height: 1))
         let pixels = try #require(canvas.makeImage()?.dataProvider?.data as Data?)
         #expect(pixels.allSatisfy { $0 == 0 })
+    }
+
+    /// A 40 × 40 pixel picture in quarters: red, blue over green, white.
+    private func quarters() throws -> Data {
+        let canvas = try #require(CGContext(data: nil, width: 40, height: 40, bitsPerComponent: 8, bytesPerRow: 160,
+                                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        // The bitmap's origin is its bottom left.
+        for (rect, rgb) in [(CGRect(x: 0, y: 20, width: 20, height: 20), (1.0, 0.0, 0.0)), (CGRect(x: 20, y: 20, width: 20, height: 20), (0, 0, 1)),
+                            (CGRect(x: 0, y: 0, width: 20, height: 20), (0, 1, 0)), (CGRect(x: 20, y: 0, width: 20, height: 20), (1, 1, 1))] {
+            canvas.setFillColor(CGColor(srgbRed: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1))
+            canvas.fill(rect)
+        }
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try #require(canvas.makeImage()), nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    /// The slide drawn one pixel to the point, with its background a tile of `quarters`, as the colour at each point asked for.
+    @MainActor
+    private func tiledBackground(_ tile: Fill.Tile, at points: [(Int, Int)]) throws -> [String] {
+        var presentation = Presentation.blank
+        presentation.slides[0].shapes = []
+        let state = EditorState()
+        state.selectSlide(presentation.slides[0].id)
+        state.setBackgroundPicture(PreparedMedia(png: try quarters(), size: CGSize(width: 40, height: 40)), tiled: true, in: &presentation)
+        guard case .fill(.tiledPicture(let path, let effects, _))? = presentation.slides[0].background else {
+            Issue.record("Expected a tiled background")
+            return []
+        }
+        presentation.slides[0].background = .fill(.tiledPicture(path: path, effects: effects, tile: tile))
+        let size = presentation.slideSize.points
+        let width = Int(size.width), height = Int(size.height)
+        let canvas = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        canvas.translateBy(x: 0, y: CGFloat(height))
+        canvas.scaleBy(x: 1, y: -1)
+        SlideRenderer(presentation: presentation, slide: presentation.slides[0]).draw(in: canvas, size: CGSize(width: width, height: height))
+        let pixels = try #require(canvas.makeImage()?.dataProvider?.data as Data?)
+        return points.map { x, y in
+            let offset = (y * width + x) * 4
+            switch (pixels[offset] > 128, pixels[offset + 1] > 128, pixels[offset + 2] > 128) {
+            case (true, false, false): return "red"
+            case (false, false, true): return "blue"
+            case (false, true, false): return "green"
+            case (true, true, true): return "white"
+            default: return "other"
+            }
+        }
+    }
+
+    @Test("Tiled picture fills honour their scale, offset, flip and alignment") @MainActor
+    func tileLayout() throws {
+        // At 100% the 40 pixel picture is a 30 point tile, laid from the top left.
+        #expect(try tiledBackground(Fill.Tile(), at: [(5, 5), (25, 5), (5, 25), (35, 5), (5, 35)])
+            == ["red", "blue", "green", "red", "red"])
+        // Twice the size: 60 points.
+        #expect(try tiledBackground(Fill.Tile(scaleX: 2, scaleY: 2), at: [(25, 25), (35, 5), (5, 35), (65, 5)])
+            == ["red", "blue", "green", "red"])
+        // Moved 10 points right and down: the corner shows the tile before's far side.
+        #expect(try tiledBackground(Fill.Tile(offsetX: 127_000, offsetY: 127_000), at: [(5, 15), (15, 5), (15, 15), (5, 5)])
+            == ["blue", "green", "red", "white"])
+        // Every other tile mirrored across, down, or both.
+        #expect(try tiledBackground(Fill.Tile(flip: .x), at: [(5, 5), (35, 5), (55, 5), (5, 35)]) == ["red", "blue", "red", "red"])
+        #expect(try tiledBackground(Fill.Tile(flip: .y), at: [(5, 5), (35, 5), (5, 35), (5, 55)]) == ["red", "red", "green", "red"])
+        #expect(try tiledBackground(Fill.Tile(flip: .xy), at: [(35, 35), (35, 5), (5, 35)]) == ["white", "blue", "green"])
+        // Anchored elsewhere, a tile sits against that point of the area.
+        let size = Presentation.blank.slideSize.points
+        let right = Int(size.width), bottom = Int(size.height), middle = Int(size.width / 2), centre = Int(size.height / 2)
+        // A 35 point tile, so the slide's far edges don't fall between tiles laid from the top left.
+        let bottomRight = Fill.Tile(scaleX: 7.0 / 6, scaleY: 7.0 / 6, alignment: .bottomRight)
+        #expect(try tiledBackground(bottomRight, at: [(right - 5, bottom - 5), (right - 25, bottom - 25)]) == ["white", "red"])
+        #expect(try tiledBackground(Fill.Tile(alignment: .center), at: [(middle - 10, centre - 10), (middle + 10, centre + 10)])
+            == ["red", "white"])
+        #expect(try tiledBackground(Fill.Tile(alignment: .top), at: [(middle - 10, 5), (middle + 10, 25)]) == ["red", "white"])
     }
 }
