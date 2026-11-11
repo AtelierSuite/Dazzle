@@ -5,18 +5,83 @@ import Foundation
 
 /// Outlines for DrawingML's preset shapes.
 ///
-/// Covers the shapes decks are actually built from; anything else is drawn
-/// as its bounding rectangle, which keeps it in place and the right size.
+/// The shapes decks are most often built from are drawn by hand here; every
+/// other preset is drawn from ECMA-376's definition (PresetShapeDefinition).
+/// An unknown name is drawn as its bounding rectangle, which keeps it in
+/// place and the right size.
 public enum PresetGeometry {
     /// Whether the preset is a line rather than an area, so is never filled.
     public static func isOpen(_ name: String) -> Bool {
         name == "line" || name == "arc" || name.hasSuffix("Connector1") || name.hasSuffix("Connector2")
             || name.hasSuffix("Connector3") || name.hasSuffix("Connector4") || name.hasSuffix("Connector5")
             || name == "leftBracket" || name == "rightBracket" || name == "leftBrace" || name == "rightBrace"
-            || name == "bracketPair" || name == "bracePair"
+            || name == "bracketPair" || name == "bracePair" || PresetShapeDefinition.named(name)?.isOpen == true
     }
 
+    /// A part of a preset filled darker or lighter than the rest, such as a
+    /// cube's sides: filled with the shape's fill, then `tone` over it.
+    public struct Shade {
+        public enum Tone: Sendable {
+            case darken, darkenLess, lighten, lightenLess
+
+            /// The colour laid over the fill: white when lightening, and how opaque.
+            public var isLighter: Bool { self == .lighten || self == .lightenLess }
+            public var opacity: CGFloat { self == .darken || self == .lighten ? 0.4 : 0.2 }
+        }
+
+        public var path: CGPath
+        public var tone: Tone
+    }
+
+    /// A preset's outline: what is filled, what is stroked (which may hold
+    /// lines drawn over the fill, or leave out parts that are only filled),
+    /// and its shaded parts.
+    public struct Outline {
+        public var fill: CGPath
+        public var stroke: CGPath
+        public var shades: [Shade] = []
+    }
+
+    public static func outline(_ name: String, adjustments: [String: Int], in rect: CGRect) -> Outline {
+        if let path = handWrittenPath(name, adjustments: adjustments, in: rect) {
+            guard let details = detailPath(name, adjustments: adjustments, in: rect) else {
+                return Outline(fill: path, stroke: path)
+            }
+            let stroke = CGMutablePath()
+            stroke.addPath(path)
+            stroke.addPath(details)
+            return Outline(fill: path, stroke: stroke)
+        }
+        guard let definition = PresetShapeDefinition.named(name) else {
+            let path = CGMutablePath()
+            path.addRect(rect)
+            return Outline(fill: path, stroke: path)
+        }
+        let fill = CGMutablePath()
+        let stroke = CGMutablePath()
+        var shades: [Shade] = []
+        for (path, outline) in definition.draw(adjustments: adjustments, in: rect) {
+            switch path.fill {
+            case .norm: fill.addPath(outline)
+            case .none: break
+            case .darken: shades.append(Shade(path: outline, tone: .darken))
+            case .darkenLess: shades.append(Shade(path: outline, tone: .darkenLess))
+            case .lighten: shades.append(Shade(path: outline, tone: .lighten))
+            case .lightenLess: shades.append(Shade(path: outline, tone: .lightenLess))
+            }
+            if path.isStroked { stroke.addPath(outline) }
+        }
+        // A line has nothing filled; its outline is what is stroked.
+        return Outline(fill: definition.isOpen ? stroke : fill, stroke: stroke, shades: shades)
+    }
+
+    /// The area the preset fills (for a line, the line itself).
     public static func path(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath {
+        outline(name, adjustments: adjustments, in: rect).fill
+    }
+
+    /// The presets drawn by hand, or nil for the rest.
+    private static func handWrittenPath(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath? {
         let path = CGMutablePath()
         let w = rect.width
         let h = rect.height
@@ -151,13 +216,14 @@ public enum PresetGeometry {
         case "cloudCallout":
             return cloudCallout(adjustments: adjustments, in: rect)
         default:
-            path.addRect(rect)
+            return nil
         }
         return path
     }
 
-    /// Lines some presets draw over their fill, with the outline's stroke but
-    /// never filled: a ribbon's folds and the inner curves of a cloud's puffs.
+    /// Lines some hand-drawn presets draw over their fill, with the outline's
+    /// stroke but never filled: a ribbon's folds and the inner curves of a
+    /// cloud's puffs. `outline` includes them in its stroke.
     public static func detailPath(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath? {
         switch name {
         case "ellipseRibbon":
@@ -232,7 +298,7 @@ public enum PresetGeometry {
             let tip = min(shortSide * adjust("adj", 50_000), w) * 0.5
             return inset(left: name == "chevron" ? tip : 0, top: 0, right: tip, bottom: 0)
         default:
-            return rect
+            return PresetShapeDefinition.named(name)?.textRect(adjustments: adjustments, in: rect) ?? rect
         }
     }
 
