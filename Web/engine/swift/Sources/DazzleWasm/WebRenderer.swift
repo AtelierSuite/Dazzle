@@ -121,16 +121,17 @@ struct WebRenderer {
         return node
     }
 
-    /// The outline, in the shape's own space.
-    private func outline(of shape: SlideShape, size: CGSize) -> (fill: String, stroke: String, isOpen: Bool) {
+    /// The outline, in the shape's own space, as SVG and as the path its stroke follows.
+    private func outline(of shape: SlideShape, size: CGSize) -> (fill: String, stroke: String, isOpen: Bool, strokePath: CGPath) {
         let rect = CGRect(origin: .zero, size: size)
         switch shape.geometry {
         case .preset(let name, let adjustments):
-            let path = PresetGeometry.path(name, adjustments: adjustments, in: rect).svgData
-            return (path, path, PresetGeometry.isOpen(name) || shape.kind == .connector)
+            let path = PresetGeometry.path(name, adjustments: adjustments, in: rect)
+            let svg = path.svgData
+            return (svg, svg, PresetGeometry.isOpen(name) || shape.kind == .connector, path)
         case .custom(let paths):
             let (fill, stroke) = PresetGeometry.path(paths, in: rect)
-            return (fill.svgData, stroke.svgData, false)
+            return (fill.svgData, stroke.svgData, false, stroke)
         }
     }
 
@@ -138,7 +139,7 @@ struct WebRenderer {
         _ shape: SlideShape, sources: [SlideShape], frame: CGRect, style: SlideStyleContext,
         groupFill: SlideStyleContext.ResolvedFill?, into node: inout [String: Any]
     ) {
-        let (fillPath, strokePath, isOpen) = outline(of: shape, size: frame.size)
+        let (fillPath, strokePath, isOpen, strokeShape) = outline(of: shape, size: frame.size)
         node["path"] = fillPath
         if strokePath != fillPath { node["strokePath"] = strokePath }
         if isOpen { node["open"] = true }
@@ -148,7 +149,7 @@ struct WebRenderer {
             if case .solid(let color) = fill.fill { node["fillColor"] = css(style.color(color, placeholder: fill.placeholderColor)) }
         }
         if let (line, placeholder) = style.line(for: shape, sources: sources),
-           let stroke = stroke(line, path: Self.elements(strokePath), placeholder: placeholder, style: style) {
+           let stroke = stroke(line, path: Self.elements(strokePath), shape: strokeShape, placeholder: placeholder, style: style) {
             node["line"] = stroke
         }
 
@@ -219,8 +220,11 @@ struct WebRenderer {
         ]
     }
 
-    /// An outline's look, with its arrowheads drawn at the ends of `path`.
-    private func stroke(_ line: LineStyle, path: [CGPoint], placeholder: RGBAColor?, style: SlideStyleContext) -> [String: Any]? {
+    /// An outline's look, with its arrowheads drawn at the ends of `path`,
+    /// and a compound line's strokes set off to either side of `shape`.
+    private func stroke(
+        _ line: LineStyle, path: [CGPoint], shape: CGPath? = nil, placeholder: RGBAColor?, style: SlideStyleContext
+    ) -> [String: Any]? {
         let fill = line.fill ?? .none
         if fill == .none || fill == .group { return nil }
         let width = max(EMU.points(line.width ?? 9_525), 0.25)
@@ -253,6 +257,21 @@ struct WebRenderer {
         default: nil
         }
         if let dashes { json["dash"] = dashes.map { n(CGFloat($0 * width)) } }
+        switch line.cap {
+        case "rnd": json["cap"] = "round"
+        case "sq": json["cap"] = "square"
+        default: break
+        }
+        switch line.join {
+        case .bevel: json["join"] = "bevel"
+        case .miter: json["join"] = "miter"
+            json["miter"] = n(line.miterLimit)
+        case .round, nil: break
+        }
+        if let shape {
+            let bands = line.compoundStrokes(of: shape, width: CGFloat(width))
+            if bands.count > 1 { json["bands"] = bands.map { ["d": $0.path.svgData, "w": n($0.width)] } }
+        }
         if line.head != nil || line.tail != nil, path.count >= 2 {
             var heads: [[String: Any]] = []
             if let tail = line.tail { heads.append(arrowhead(tail, at: path[path.count - 1], from: path[path.count - 2], width: width)) }
@@ -330,7 +349,7 @@ struct WebRenderer {
     private func picturePart(
         _ picture: SlideShape.Picture, shape: SlideShape, frame: CGRect, style: SlideStyleContext, into node: inout [String: Any]
     ) {
-        let (outlinePath, _, _) = outline(of: shape, size: frame.size)
+        let (outlinePath, _, _, outlineShape) = outline(of: shape, size: frame.size)
         node["path"] = outlinePath
         if let path = picture.imagePath, presentation.data(at: path) != nil {
             let image = SlideShape.Picture.imageRect(frame: CGRect(origin: .zero, size: frame.size), picture: picture)
@@ -342,7 +361,7 @@ struct WebRenderer {
             node["label"] = String(localized: "Object.Picture", bundle: .engine)
         }
         if let (line, placeholder) = style.line(for: shape, sources: []),
-           let stroke = stroke(line, path: Self.elements(outlinePath), placeholder: placeholder, style: style) {
+           let stroke = stroke(line, path: Self.elements(outlinePath), shape: outlineShape, placeholder: placeholder, style: style) {
             node["line"] = stroke
         }
         if let media = picture.media {

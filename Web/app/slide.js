@@ -242,14 +242,21 @@ export class SlideDrawer {
     }
   }
 
-  /** Strokes an outline: in its colour, or with a gradient or picture laid across the line's bounds. */
+  /**
+   * Strokes an outline: in its colour, or with a gradient or picture laid across the line's bounds,
+   * with its caps and joins, and a compound line as its parallel strokes.
+   */
   stroke(d, line, parent, context, node) {
-    const path = svg("path", {
-      d, fill: "none", stroke: line.c, "stroke-width": line.w, "stroke-linejoin": "round",
-      "stroke-dasharray": line.dash?.join(" "), class: "shape__line",
-    }, parent);
     const box = line.box ?? { x: 0, y: 0, w: node.w, h: node.h };
-    if (line.paint) this.paint(path, line.paint, box, context, parent, "stroke");
+    let path;
+    for (const band of line.bands ?? [{ d, w: line.w }]) {
+      const element = svg("path", {
+        d: band.d, fill: "none", stroke: line.c, "stroke-width": band.w, "stroke-linejoin": line.join ?? "round",
+        "stroke-linecap": line.cap, "stroke-miterlimit": line.miter, "stroke-dasharray": line.dash?.join(" "), class: "shape__line",
+      }, parent);
+      if (line.paint) this.paint(element, line.paint, box, context, parent, "stroke");
+      path ??= element;
+    }
     for (const head of line.heads ?? []) {
       const element = svg("path", {
         d: head.d, fill: head.filled ? line.c : "none", stroke: line.c, "stroke-width": line.w, "stroke-linejoin": "round",
