@@ -106,6 +106,8 @@ enum MainMenu {
             entry.representedObject = [size.rows, size.columns]
             tables.addItem(entry)
         }
+        tables.addItem(.separator())
+        tables.addItem(item(String(localized: "Table.Other"), #selector(Commands.chooseTableSize(_:))))
         menu.addItem(submenu(tables))
         let charts = NSMenu(title: String(localized: "Menu.Insert.Chart"))
         for kind in Chart.Kind.allCases {

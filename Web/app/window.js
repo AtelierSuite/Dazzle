@@ -14,6 +14,7 @@ import { SlideCanvas } from "./canvas.js";
 import { SlideNavigator } from "./navigator.js";
 import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js";
 import { Slideshow, hasSecondDisplay } from "./slideshow.js";
+import { closeTablePicker, openTablePicker } from "./table-picker.js";
 
 const isApple = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 /** Dazzle for iPhone, iPad and Mac: one App Store listing, opened in the visitor's own storefront. */
@@ -770,9 +771,14 @@ export class PresentationWindow {
     await this.engine.call("selectAll");
   }
 
-  async insertTable() {
-    const size = await this.askTableSize();
-    if (size) await this.insert("insertTable", size);
+  /** Opens the table size picker under the toolbar's table button, or closes it when it is open. */
+  insertTable() {
+    if (closeTablePicker()) return;
+    const toolbar = this.root.querySelector("#toolbar");
+    const button = toolbar.querySelector('[data-command="insertTable"]');
+    // When the button has moved into the toolbar's » menu, the picker hangs from the toolbar.
+    const anchor = button && !button.hidden && button.getClientRects().length > 0 ? button : toolbar;
+    openTablePicker(this.root, anchor, { icon, onInsert: (size) => this.insert("insertTable", size) });
   }
 
   async pickPicture(use) {
@@ -1546,37 +1552,6 @@ export class PresentationWindow {
   }
 
   /** Asks how many rows and columns a new table has. */
-  askTableSize() {
-    return new Promise((resolve) => {
-      const backdrop = this.sheet(`
-        <form class="ds-sheet" role="dialog" aria-labelledby="table-title">
-          <div class="ds-sheet__body">
-            <h2 class="ds-sheet__title" id="table-title">${escapeHTML(t("Menu.Insert.Table").replace("…", ""))}</h2>
-            <div class="ds-form">
-              <label class="ds-form__label" for="table-rows">${escapeHTML(t("Web.Table.Rows"))}</label>
-              <span class="ds-form__control"><input class="ds-text-input ds-text-input--xs app__table-size" id="table-rows" type="number" min="1" max="50" value="3"></span>
-              <label class="ds-form__label" for="table-columns">${escapeHTML(t("Web.Table.Columns"))}</label>
-              <span class="ds-form__control"><input class="ds-text-input ds-text-input--xs app__table-size" id="table-columns" type="number" min="1" max="30" value="3"></span>
-            </div>
-          </div>
-          <div class="ds-sheet__buttons">
-            <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
-            <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Web.Table.Insert"))}</button>
-          </div>
-        </form>`);
-      backdrop.querySelector("[data-cancel]").addEventListener("click", () => resolve(null));
-      backdrop.querySelector("form").addEventListener("submit", (event) => {
-        event.preventDefault();
-        dismissSheet(backdrop);
-        resolve({
-          rows: Math.min(50, Math.max(1, Number(backdrop.querySelector("#table-rows").value) || 1)),
-          columns: Math.min(30, Math.max(1, Number(backdrop.querySelector("#table-columns").value) || 1)),
-        });
-      });
-      backdrop.querySelector("#table-rows").select();
-    });
-  }
-
   applyAppearance(value) {
     if (value) document.documentElement.dataset.theme = value;
     else delete document.documentElement.dataset.theme;

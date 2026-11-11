@@ -285,8 +285,61 @@ body {
   white-space: pre-wrap;
 }
 
-.app__table-size {
-  width: 80px;
+/* The table size picker: a popover under the toolbar's table button. */
+.app__table-picker {
+  position: fixed;
+  z-index: 100;
+  width: auto;
+}
+
+.app__table-picker-size {
+  text-align: center;
+}
+
+/* Room for the largest grid, so the popover keeps its size as the grid grows. */
+.app__table-grid {
+  --app-table-cell: 18px;
+  display: grid;
+  grid-template-columns: repeat(var(--app-table-columns, 10), var(--app-table-cell));
+  grid-auto-rows: var(--app-table-cell);
+  gap: 3px;
+  width: max-content;
+  margin: 0 auto;
+  padding: var(--ds-spacing-02);
+  touch-action: none;
+}
+
+.app__table-grid:focus { outline: none; }
+
+.app__table-grid:focus-visible {
+  outline: 2px solid var(--ds-focus);
+  outline-offset: -2px;
+}
+
+/* Cells past the grid so far are a faint hint of where it can grow. */
+.app__table-cell {
+  background: var(--ds-layer-01);
+  border: 1px solid transparent;
+}
+
+.app__table-cell.is-shown {
+  background: var(--ds-field-02);
+  border-color: var(--ds-border-subtle-01);
+}
+
+.app__table-cell.is-selected {
+  background: var(--ds-highlight);
+  border-color: var(--ds-interactive);
+}
+
+.app__table-picker-form {
+  margin-top: var(--ds-spacing-05);
+}
+
+.app__table-picker-buttons {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--ds-spacing-05);
 }
 
 /* The disclosure triangle points down when open; the design system rotates a right-pointing one. */

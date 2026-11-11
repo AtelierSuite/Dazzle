@@ -12,6 +12,7 @@ import { basename } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { strict as assert } from "node:assert";
 import { Engine } from "../engine.js";
+import { COLUMN_LIMIT, INITIAL_GRID, LARGEST_GRID, ROW_LIMIT, TableSizeSelection, cellAt } from "../../app/table-size.js";
 
 const web = new URL("../../", import.meta.url);
 const engine = await Engine.load(readFile(fileURLToPath(new URL("build/dazzle-engine.wasm", web))));
@@ -93,6 +94,30 @@ test("types into the title and undoes it", () => {
 test("formats the whole of the selected text", () => {
   const look = call("format", { set: { bold: true } }).result;
   assert.equal(look.bold, true);
+});
+
+test("the table size picker keeps sizes within limits and grows its grid", () => {
+  const size = new TableSizeSelection();
+  assert.deepEqual([size.rows, size.columns, size.gridRows, size.gridColumns], [3, 3, INITIAL_GRID.rows, INITIAL_GRID.columns]);
+  size.select(1, 3);
+  assert.deepEqual([size.rows, size.columns], [2, 4]);
+  assert.ok(size.contains(1, 3) && !size.contains(2, 3) && !size.contains(1, 4));
+  size.select(4, 5);
+  assert.deepEqual([size.gridRows, size.gridColumns], [6, 7], "keeps a spare row and column");
+  size.select(0, 0);
+  assert.deepEqual([size.gridRows, size.gridColumns], [6, 7], "doesn't shrink back");
+  size.select(40, 40);
+  assert.deepEqual([size.rows, size.columns, size.gridRows], [LARGEST_GRID.rows, LARGEST_GRID.columns, LARGEST_GRID.rows]);
+  size.set({ rows: 500, columns: "500" }).move("down").move("right");
+  assert.deepEqual([size.rows, size.columns], [ROW_LIMIT.max, COLUMN_LIMIT.max]);
+  size.set({ rows: 0, columns: "" }).move("up").move("left");
+  assert.deepEqual([size.rows, size.columns], [1, 1]);
+  assert.equal(cellAt(-1, 4, 20), null);
+  assert.deepEqual(cellAt(45, 5, 20), { row: 0, column: 2 });
+  assert.deepEqual(cellAt(5000, 5000, 20), { row: LARGEST_GRID.rows - 1, column: LARGEST_GRID.columns - 1 });
+  for (const key of ["Table.Size", "Table.Size.Spoken", "Table.Columns", "Table.Rows", "Table.Insert", "Table.Picker.Grid", "Table.Picker.Hint"]) {
+    assert.ok(strings[key], `has the string ${key}`);
+  }
 });
 
 test("adds slides, shapes, tables, charts and moves them", () => {
