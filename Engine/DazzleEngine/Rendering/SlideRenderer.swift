@@ -517,21 +517,17 @@ public struct SlideRenderer {
         shape.placed(from: child, into: frame)
     }
 
-    private func outline(of shape: SlideShape, in frame: CGRect) -> (fill: CGPath, stroke: CGPath, isOpen: Bool) {
+    private func outline(
+        of shape: SlideShape, in frame: CGRect
+    ) -> (fill: CGPath, stroke: CGPath, isOpen: Bool, shades: [PresetGeometry.Shade]) {
         switch shape.geometry {
         case .preset(let name, let adjustments):
-            let path = PresetGeometry.path(name, adjustments: adjustments, in: frame)
-            var stroke = path
-            if let details = PresetGeometry.detailPath(name, adjustments: adjustments, in: frame) {
-                let combined = CGMutablePath()
-                combined.addPath(path)
-                combined.addPath(details)
-                stroke = combined
-            }
-            return (path, stroke, PresetGeometry.isOpen(name) || shape.kind == .connector)
+            // The stroke may add lines over the fill (a ribbon's folds) or leave out parts only filled.
+            let outline = PresetGeometry.outline(name, adjustments: adjustments, in: frame)
+            return (outline.fill, outline.stroke, PresetGeometry.isOpen(name) || shape.kind == .connector, outline.shades)
         case .custom(let paths):
             let (fill, stroke) = PresetGeometry.path(paths, in: frame)
-            return (fill, stroke, false)
+            return (fill, stroke, false, [])
         }
     }
 
@@ -540,7 +536,7 @@ public struct SlideRenderer {
         groupFill: SlideStyleContext.ResolvedFill?, paragraphAppearances: [Int: AnimatedAppearance] = [:],
         colorChanges: [AnimationColorChange.Target: [AnimationColorChange.Value]] = [:]
     ) {
-        let (fillPath, strokePath, isOpen) = outline(of: shape, in: frame)
+        let (fillPath, strokePath, isOpen, shades) = outline(of: shape, in: frame)
         if !isOpen, var fill = style.fill(for: shape, sources: sources) {
             if fill.fill == .group, let groupFill { fill = groupFill }
             if let changes = colorChanges[.fill], !changes.isEmpty {
@@ -549,6 +545,15 @@ public struct SlideRenderer {
                 fill.fill = .solid(DrawingColor(base: .rgb(color.hexValue), transforms: [.init(name: "alpha", value: Int(color.alpha*100_000))]))
             }
             paint(fill.fill, in: fillPath, bounds: frame, placeholderColor: fill.placeholderColor, style: style, context: context)
+            // A cube's sides and a scroll's curls: the fill, darkened or lightened.
+            if fill.fill != .none {
+                for shade in shades {
+                    paint(fill.fill, in: shade.path, bounds: frame, placeholderColor: fill.placeholderColor, style: style, context: context)
+                    context.addPath(shade.path)
+                    context.setFillColor(CGColor(gray: shade.tone.isLighter ? 1 : 0, alpha: shade.tone.opacity))
+                    context.fillPath(using: .evenOdd)
+                }
+            }
         }
         if let (original, placeholderColor) = style.line(for: shape, sources: sources) {
             var line = original
@@ -626,29 +631,19 @@ public struct SlideRenderer {
             context.saveGState()
             context.addPath(path)
             context.clip(using: rule)
-            if gradient.isRadial {
-                let center = CGPoint(
-                    x: bounds.minX + bounds.width * gradient.focusX, y: bounds.minY + bounds.height * gradient.focusY
-                )
-                // Far enough to reach the corner furthest from the focus.
-                let radius = [bounds.minX, bounds.maxX].flatMap { x in
-                    [bounds.minY, bounds.maxY].map { y in hypot(x - center.x, y - center.y) }
-                }.max() ?? 0
-                context.drawRadialGradient(
-                    cgGradient, startCenter: center, startRadius: 0, endCenter: center, endRadius: radius,
-                    options: [.drawsAfterEndLocation]
-                )
-            } else {
-                let angle = gradient.angle * .pi / 180
-                let half = (abs(cos(angle)) * bounds.width + abs(sin(angle)) * bounds.height) / 2
-                let center = CGPoint(x: bounds.midX, y: bounds.midY)
-                let delta = CGPoint(x: cos(angle) * half, y: sin(angle) * half)
-                context.drawLinearGradient(
-                    cgGradient, start: CGPoint(x: center.x - delta.x, y: center.y - delta.y),
-                    end: CGPoint(x: center.x + delta.x, y: center.y + delta.y),
-                    options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-                )
-            }
+            drawGradient(
+                gradient, cgGradient, outline: path, rule: rule, bounds: bounds, context: context,
+                color: { style.color($0, placeholder: placeholderColor) }
+            )
+            context.restoreGState()
+        case .pattern(let pattern):
+            context.saveGState()
+            context.addPath(path)
+            context.clip(using: rule)
+            PatternFill.draw(
+                pattern, foreground: style.color(pattern.foreground, placeholder: placeholderColor),
+                background: style.color(pattern.background, placeholder: placeholderColor), in: bounds, context: context
+            )
             context.restoreGState()
         case .picture(let imagePath, let effects):
             guard let image = image(at: imagePath, effects: effects, placeholderColor: placeholderColor, style: style) else {
@@ -710,6 +705,71 @@ public struct SlideRenderer {
                 }
             }
             context.restoreGState()
+        }
+    }
+
+    /// Draws a gradient over `bounds`, already clipped to the area it fills,
+    /// the way PowerPoint does: along a line, or outward from `fillToRect`
+    /// in circles, rectangles or copies of `outline`. Beyond its tile, it
+    /// carries on in its end colours.
+    private func drawGradient(
+        _ gradient: Fill.Gradient, _ cgGradient: CGGradient, outline: CGPath, rule: CGPathFillRule, bounds: CGRect,
+        context: CGContext,
+        color: (DrawingColor) -> RGBAColor
+    ) {
+        switch gradient.path {
+        case nil:
+            let axis = gradient.linearAxis(in: bounds)
+            guard axis.scaleX != 0, axis.scaleY != 0 else { return }
+            context.translateBy(x: axis.center.x, y: axis.center.y)
+            context.scaleBy(x: axis.scaleX, y: axis.scaleY)
+            context.drawLinearGradient(
+                cgGradient, start: axis.start, end: axis.end, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+            )
+        case .circle:
+            let circles = gradient.circles(in: bounds)
+            context.drawRadialGradient(
+                cgGradient, startCenter: circles.start, startRadius: circles.startRadius,
+                endCenter: circles.end, endRadius: max(circles.endRadius, circles.startRadius),
+                options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+            )
+        case .rect:
+            // The bands meet each other and `fillToRect`; softened edges would show there as seams.
+            context.setShouldAntialias(false)
+            context.setFillColor(gradient.color(at: 1, resolve: color).cgColor)
+            context.fill(bounds.union(gradient.tileRect.rect(in: bounds)))
+            context.setFillColor(gradient.color(at: 0, resolve: color).cgColor)
+            context.fill(gradient.fillToRect.rect(in: bounds))
+            for band in gradient.rectangleBands(in: bounds) {
+                context.saveGState()
+                context.addLines(between: band.outline)
+                context.closePath()
+                context.clip()
+                context.drawLinearGradient(cgGradient, start: band.start, end: band.end, options: [])
+                context.restoreGState()
+            }
+        case .shape:
+            // Copies of the outline from the tile in to `fillToRect`, each
+            // in its colour, replacing what is under it rather than showing
+            // through: drawn on a layer of their own, then laid down at once.
+            let steps = gradient.outlineSteps(in: bounds)
+            guard bounds.width > 0, bounds.height > 0 else { return }
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            context.setBlendMode(.copy)
+            context.setFillColor(gradient.color(at: 1, resolve: color).cgColor)
+            context.fill(bounds.union(gradient.tileRect.rect(in: bounds)))
+            for step in stride(from: steps, through: 0, by: -1) {
+                let position = Double(step) / Double(steps)
+                let box = gradient.outlineBox(at: position, in: bounds)
+                var transform = CGAffineTransform(translationX: box.minX, y: box.minY)
+                    .scaledBy(x: box.width / bounds.width, y: box.height / bounds.height)
+                    .translatedBy(x: -bounds.minX, y: -bounds.minY)
+                guard let copy = outline.copy(using: &transform) else { continue }
+                context.addPath(copy)
+                context.setFillColor(gradient.color(at: position, resolve: color).cgColor)
+                context.fillPath(using: rule)
+            }
+            context.endTransparencyLayer()
         }
     }
 
@@ -857,7 +917,7 @@ public struct SlideRenderer {
                 y: frame.minY - imageRect.height * picture.cropTop
             )
         }
-        let (outlinePath, _, _) = outline(of: shape, in: frame)
+        let (outlinePath, _, _, _) = outline(of: shape, in: frame)
         context.saveGState()
         context.setAlpha(picture.effects.opacity)
         context.addPath(outlinePath)

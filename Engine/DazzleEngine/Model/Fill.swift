@@ -1,3 +1,6 @@
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 import Foundation
 
 /// How the inside of a shape, or a background, is painted.
@@ -9,6 +12,8 @@ public enum Fill: Equatable, Hashable, Sendable {
     case picture(path: String, effects: BlipEffects = BlipEffects())
     /// A picture repeated across the area, laid out as `tile` says.
     case tiledPicture(path: String, effects: BlipEffects = BlipEffects(), tile: Tile = Tile())
+    /// One of DrawingML's preset patterns, in two colours.
+    case pattern(Pattern)
     /// Whatever the enclosing group is filled with.
     case group
 
@@ -24,20 +29,191 @@ public enum Fill: Equatable, Hashable, Sendable {
             }
         }
 
+        /// `a:path`: how a gradient grows outward from its starting area,
+        /// rather than running along a line.
+        public enum Path: String, Sendable, CaseIterable {
+            /// Circles, from around the starting area to around the tile.
+            case circle
+            /// Rectangles, from the starting area's edges to the tile's.
+            case rect
+            /// Copies of the shape's own outline, from the starting area to the tile.
+            case shape
+        }
+
+        /// `a:fillToRect` or `a:tileRect`: a box set in from each edge of an
+        /// area by fractions of its size. Negative values reach outside it.
+        public struct Insets: Equatable, Hashable, Sendable {
+            public var left: Double
+            public var top: Double
+            public var right: Double
+            public var bottom: Double
+
+            /// The whole area.
+            public static let zero = Insets(left: 0, top: 0, right: 0, bottom: 0)
+            /// The point at the area's centre.
+            public static let center = Insets(left: 0.5, top: 0.5, right: 0.5, bottom: 0.5)
+
+            public init(left: Double, top: Double, right: Double, bottom: Double) {
+                self.left = left
+                self.top = top
+                self.right = right
+                self.bottom = bottom
+            }
+
+            /// Values the element leaves out are 0. Fractions come as
+            /// thousandths of a percent, or in strict files as "50%".
+            public init(element: XMLElement) {
+                func fraction(_ key: String) -> Double {
+                    guard let value = element.attribute(key) else { return 0 }
+                    if value.hasSuffix("%") { return Double(value.dropLast()).map { $0 / 100 } ?? 0 }
+                    return Double(value).map { $0 / 100_000 } ?? 0
+                }
+                self.init(left: fraction("l"), top: fraction("t"), right: fraction("r"), bottom: fraction("b"))
+            }
+
+            /// The box within `area`.
+            public func rect(in area: CGRect) -> CGRect {
+                CGRect(
+                    x: area.minX + area.width * left, y: area.minY + area.height * top,
+                    width: area.width * (1 - left - right), height: area.height * (1 - top - bottom)
+                )
+            }
+
+            func xml(_ name: String) -> String {
+                func value(_ fraction: Double) -> Int { Int((fraction * 100_000).rounded()) }
+                return "<a:\(name) l=\"\(value(left))\" t=\"\(value(top))\" r=\"\(value(right))\" b=\"\(value(bottom))\"/>"
+            }
+        }
+
         public var stops: [Stop]
         /// Degrees clockwise from left-to-right, for a linear gradient.
         public var angle: Double
-        public var isRadial: Bool
-        /// Where a radial gradient starts, as fractions of the area.
-        public var focusX = 0.5
-        public var focusY = 0.5
+        /// `nil` for a linear gradient.
+        public var path: Path?
+        /// `scaled`: whether a linear gradient's angle is set for a square
+        /// and stretched with the area, rather than kept as it is.
+        public var isScaled = false
+        /// Where a path gradient starts, within the area: its first colour fills this box.
+        public var fillToRect = Insets.center
+        /// The box the gradient spans, against the area: a path gradient ends
+        /// at its edges, and a linear one runs across it.
+        public var tileRect = Insets.zero
 
-        public init(stops: [Stop], angle: Double, isRadial: Bool, focusX: Double = 0.5, focusY: Double = 0.5) {
+        public init(
+            stops: [Stop], angle: Double, path: Path? = nil, isScaled: Bool = false,
+            fillToRect: Insets = .center, tileRect: Insets = .zero
+        ) {
             self.stops = stops
             self.angle = angle
-            self.isRadial = isRadial
-            self.focusX = focusX
-            self.focusY = focusY
+            self.path = path
+            self.isScaled = isScaled
+            self.fillToRect = fillToRect
+            self.tileRect = tileRect
+        }
+
+        public init(stops: [Stop], angle: Double, isRadial: Bool) {
+            self.init(stops: stops, angle: angle, path: isRadial ? .circle : nil)
+        }
+
+        /// Whether the gradient grows outward from an area, rather than
+        /// running along a line. Turning it on makes it circular.
+        public var isRadial: Bool {
+            get { path != nil }
+            set { path = newValue ? path ?? .circle : nil }
+        }
+
+        /// The gradient's colour `position` of the way along it, 0…1, with
+        /// `resolve` turning each stop's colour into components.
+        public func color(at position: Double, resolve: (DrawingColor) -> RGBAColor) -> RGBAColor {
+            guard let first = stops.first, let last = stops.last else { return .black }
+            if position <= first.position { return resolve(first.color) }
+            if position >= last.position { return resolve(last.color) }
+            let after = stops.firstIndex { $0.position >= position } ?? stops.count - 1
+            let start = stops[after - 1], end = stops[after]
+            let span = end.position - start.position
+            let fraction = span > 0 ? (position - start.position) / span : 1
+            let from = resolve(start.color), to = resolve(end.color)
+            func mix(_ a: Double, _ b: Double) -> Double { a + (b - a) * fraction }
+            return RGBAColor(
+                red: mix(from.red, to.red), green: mix(from.green, to.green), blue: mix(from.blue, to.blue),
+                alpha: mix(from.alpha, to.alpha)
+            )
+        }
+
+        /// A linear gradient's line, across the tile within `bounds`: its ends
+        /// around the tile's centre, and how far to stretch them across and
+        /// down. A scaled gradient's angle is set for a unit square, then
+        /// stretched to the tile; otherwise it is as it is, unstretched.
+        public func linearAxis(in bounds: CGRect) -> (center: CGPoint, start: CGPoint, end: CGPoint, scaleX: CGFloat, scaleY: CGFloat) {
+            let tile = tileRect.rect(in: bounds)
+            let size = isScaled ? CGSize(width: 1, height: 1) : tile.size
+            let radians = angle * .pi / 180
+            // Half the gradient's length: far enough to reach the corners either way.
+            let half = (abs(cos(radians)) * size.width + abs(sin(radians)) * size.height) / 2
+            let delta = CGPoint(x: cos(radians) * half, y: sin(radians) * half)
+            return (
+                CGPoint(x: tile.midX, y: tile.midY), CGPoint(x: -delta.x, y: -delta.y), delta,
+                isScaled ? tile.width : 1, isScaled ? tile.height : 1
+            )
+        }
+
+        /// A circular gradient's circles within `bounds`: it starts around
+        /// `fillToRect` and ends around the tile.
+        public func circles(in bounds: CGRect) -> (start: CGPoint, startRadius: CGFloat, end: CGPoint, endRadius: CGFloat) {
+            let focus = fillToRect.rect(in: bounds).standardized, tile = tileRect.rect(in: bounds).standardized
+            return (
+                CGPoint(x: focus.midX, y: focus.midY), hypot(focus.width, focus.height) / 2,
+                CGPoint(x: tile.midX, y: tile.midY), hypot(tile.width, tile.height) / 2
+            )
+        }
+
+        /// A rectangular gradient within `bounds`, as the four bands between
+        /// the edges of `fillToRect` and of the tile: each band's outline,
+        /// and the line its colours run along, from the starting edge to the
+        /// tile's. Inside `fillToRect` it is the first colour throughout.
+        public func rectangleBands(in bounds: CGRect) -> [(outline: [CGPoint], start: CGPoint, end: CGPoint)] {
+            let focus = fillToRect.rect(in: bounds).standardized, tile = tileRect.rect(in: bounds).standardized
+            let corners = (
+                tile: [CGPoint(x: tile.minX, y: tile.minY), CGPoint(x: tile.maxX, y: tile.minY),
+                       CGPoint(x: tile.maxX, y: tile.maxY), CGPoint(x: tile.minX, y: tile.maxY)],
+                focus: [CGPoint(x: focus.minX, y: focus.minY), CGPoint(x: focus.maxX, y: focus.minY),
+                        CGPoint(x: focus.maxX, y: focus.maxY), CGPoint(x: focus.minX, y: focus.maxY)]
+            )
+            // Top, right, bottom, left: each from its two tile corners in to the focus's.
+            let lines = [
+                (CGPoint(x: focus.midX, y: focus.minY), CGPoint(x: focus.midX, y: tile.minY)),
+                (CGPoint(x: focus.maxX, y: focus.midY), CGPoint(x: tile.maxX, y: focus.midY)),
+                (CGPoint(x: focus.midX, y: focus.maxY), CGPoint(x: focus.midX, y: tile.maxY)),
+                (CGPoint(x: focus.minX, y: focus.midY), CGPoint(x: tile.minX, y: focus.midY)),
+            ]
+            return (0..<4).compactMap { side in
+                let (start, end) = lines[side]
+                guard hypot(end.x - start.x, end.y - start.y) > 0.001 else { return nil }
+                let next = (side + 1) % 4
+                return ([corners.tile[side], corners.tile[next], corners.focus[next], corners.focus[side]], start, end)
+            }
+        }
+
+        /// Where a shape gradient puts a copy of the outline `position` of the
+        /// way along it: the box `bounds` is shrunk or grown into, from
+        /// `fillToRect` at 0 to the tile at 1.
+        public func outlineBox(at position: Double, in bounds: CGRect) -> CGRect {
+            let focus = fillToRect.rect(in: bounds), tile = tileRect.rect(in: bounds)
+            func mix(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * position }
+            return CGRect(
+                x: mix(focus.minX, tile.minX), y: mix(focus.minY, tile.minY),
+                width: mix(focus.width, tile.width), height: mix(focus.height, tile.height)
+            )
+        }
+
+        /// How many copies of the outline a shape gradient within `bounds`
+        /// needs to look smooth: about one a point, within reason.
+        public func outlineSteps(in bounds: CGRect) -> Int {
+            let focus = fillToRect.rect(in: bounds), tile = tileRect.rect(in: bounds)
+            let reach = max(
+                abs(focus.minX - tile.minX), abs(focus.minY - tile.minY), abs(focus.maxX - tile.maxX), abs(focus.maxY - tile.maxY)
+            )
+            return min(max(Int(reach.rounded(.up)), 8), 256)
         }
     }
 
@@ -140,14 +316,16 @@ public enum Fill: Equatable, Hashable, Sendable {
                 }
             }.sorted { $0.position < $1.position }
             guard !stops.isEmpty else { return Fill.none }
-            let angle = Double(element.firstChild(named: "lin")?.attribute("ang").flatMap(Int.init) ?? 0) / 60_000
-            var gradient = Gradient(stops: stops, angle: angle, isRadial: element.firstChild(named: "path") != nil)
-            // `fillToRect` insets the focus from each edge; its centre is where the gradient starts.
-            if let focus = element.firstChild(named: "path")?.firstChild(named: "fillToRect") {
-                func inset(_ key: String) -> Double { Double(focus.attribute(key).flatMap(Int.init) ?? 0) / 100_000 }
-                gradient.focusX = (inset("l") + 1 - inset("r")) / 2
-                gradient.focusY = (inset("t") + 1 - inset("b")) / 2
+            var gradient = Gradient(stops: stops, angle: 0)
+            if let line = element.firstChild(named: "lin") {
+                gradient.angle = Double(line.attribute("ang").flatMap(Int.init) ?? 0) / 60_000
+                gradient.isScaled = line.attribute("scaled").map { $0 == "1" || $0 == "true" } ?? false
+            } else if let path = element.firstChild(named: "path") {
+                gradient.path = path.attribute("path").flatMap(Gradient.Path.init(rawValue:)) ?? .circle
+                // Without a `fillToRect`, the gradient starts from the centre.
+                if let focus = path.firstChild(named: "fillToRect") { gradient.fillToRect = Gradient.Insets(element: focus) }
             }
+            if let tile = element.firstChild(named: "tileRect") { gradient.tileRect = Gradient.Insets(element: tile) }
             return .gradient(gradient)
         case "blipFill":
             guard let reference = element.firstChild(named: "blip")?.attribute("embed"),
@@ -158,8 +336,7 @@ public enum Fill: Equatable, Hashable, Sendable {
             }
             return .picture(path: path, effects: effects)
         case "pattFill":
-            // A pattern is drawn as its foreground, which is what it reads as at a distance.
-            return DrawingColor.first(in: element.firstChild(named: "fgClr")).map(Fill.solid) ?? Fill.none
+            return .pattern(Pattern(element: element))
         case "grpFill":
             return .group
         default:
@@ -174,12 +351,13 @@ public enum Fill: Equatable, Hashable, Sendable {
         case .none, .picture, .tiledPicture: return "<a:noFill/>"
         case .group: return "<a:grpFill/>"
         case .solid(let color): return "<a:solidFill>\(color.xml)</a:solidFill>"
+        case .pattern(let pattern): return pattern.xml
         case .gradient(let gradient):
             let stops = gradient.stops.map { "<a:gs pos=\"\(Int($0.position * 100_000))\">\($0.color.xml)</a:gs>" }
-            let shade = gradient.isRadial
-                ? "<a:path path=\"circle\"><a:fillToRect l=\"50000\" t=\"50000\" r=\"50000\" b=\"50000\"/></a:path>"
-                : "<a:lin ang=\"\(Int(gradient.angle * 60_000))\" scaled=\"0\"/>"
-            return "<a:gradFill rotWithShape=\"1\"><a:gsLst>\(stops.joined())</a:gsLst>\(shade)</a:gradFill>"
+            let shade = gradient.path.map { "<a:path path=\"\($0.rawValue)\">\(gradient.fillToRect.xml("fillToRect"))</a:path>" }
+                ?? "<a:lin ang=\"\(Int((gradient.angle * 60_000).rounded()))\" scaled=\"\(gradient.isScaled ? 1 : 0)\"/>"
+            let tile = gradient.tileRect == .zero ? "" : gradient.tileRect.xml("tileRect")
+            return "<a:gradFill rotWithShape=\"1\"><a:gsLst>\(stops.joined())</a:gsLst>\(shade)\(tile)</a:gradFill>"
         }
     }
 }

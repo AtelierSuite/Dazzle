@@ -10,6 +10,20 @@ const SVG = "http://www.w3.org/2000/svg";
 let uniqueId = 0;
 const nextId = (prefix) => `${prefix}${++uniqueId}`;
 
+/** `box` set in from each edge by `[l, t, r, b]`, fractions of its size; the whole box without them. */
+const insetBox = (box, insets) => {
+  const [l, t, r, b] = insets ?? [0, 0, 0, 0];
+  return { x: box.x + box.w * l, y: box.y + box.h * t, w: box.w * (1 - l - r), h: box.h * (1 - t - b) };
+};
+
+/** The outline an SVG path or rectangle draws, as path data. */
+const outlineOf = (element) => {
+  if (element.localName === "path") return element.getAttribute("d");
+  if (element.localName !== "rect") return null;
+  const [x, y, w, h] = ["x", "y", "width", "height"].map((name) => Number(element.getAttribute(name) ?? 0));
+  return `M${x} ${y}H${x + w}V${y + h}H${x}Z`;
+};
+
 /** Text turned a quarter, letters and all, by how far. Other vertical text is set in vertical lines (app.css). */
 const TURNED_TEXT = { vert: 90, vert270: -90 };
 
@@ -94,6 +108,33 @@ function svg(name, attributes = {}, parent = null) {
   }
   parent?.append(element);
   return element;
+}
+
+/**
+ * A preset pattern's tile, `cell` × 8 slide points square: the background, then a rectangle for each run of
+ * foreground cells along a row. `rows` are the eight rows, top first, each a byte with the leftmost cell its highest bit.
+ */
+function patternRects({ rows, cell, fg, bg }) {
+  const size = cell * 8;
+  const rects = [{ x: 0, y: 0, width: size, height: size, fill: bg }];
+  rows.forEach((bits, row) => {
+    for (let column = 0; column < 8; column++) {
+      if (!(bits & (0x80 >> column))) continue;
+      let end = column;
+      while (end + 1 < 8 && bits & (0x80 >> (end + 1))) end++;
+      rects.push({ x: column * cell, y: row * cell, width: (end - column + 1) * cell, height: cell, fill: fg });
+      column = end;
+    }
+  });
+  return rects;
+}
+
+/** A preset pattern as a CSS background, for a table cell: an SVG tile repeated from the top left. */
+function patternBackground(paint) {
+  const size = paint.cell * 8;
+  const rects = patternRects(paint).map((r) => `<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="${r.fill}"/>`);
+  const markup = `<svg xmlns="${SVG}" width="${size}" height="${size}" shape-rendering="crispEdges">${rects.join("")}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(markup)}") 0 0 / ${size}px ${size}px repeat`;
 }
 
 function html(name, className, parent = null) {
@@ -258,6 +299,13 @@ export class SlideDrawer {
       const fill = svg("path", { d: node.path, "fill-rule": node.rule ?? "evenodd" }, geometry);
       this.paint(fill, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
       fill.classList.add("shape__fill");
+      // Shaded parts (a cube's sides, a scroll's curls): the fill again, with black or white over it.
+      for (const shade of node.shades ?? []) {
+        const base = svg("path", { d: shade.d, "fill-rule": "evenodd" }, geometry);
+        this.paint(base, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
+        base.classList.add("shape__fill");
+        svg("path", { d: shade.d, "fill-rule": "evenodd", fill: shade.c, "fill-opacity": shade.o, class: "shape__shade" }, geometry);
+      }
     }
     if (node.line && (node.strokePath ?? node.path)) this.stroke(node.strokePath ?? node.path, node.line, geometry, context, node);
     if (node.text && !(node.prompt && isEmptyText(node.text))) {
@@ -298,7 +346,7 @@ export class SlideDrawer {
     return path;
   }
 
-  /** Fills `element` with a scene's paint, or strokes it when `attribute` is "stroke": a colour, a gradient or a picture. */
+  /** Fills `element` with a scene's paint, or strokes it when `attribute` is "stroke": a colour, a gradient, a pattern or a picture. */
   paint(element, paint, box, context, owner, attribute = "fill") {
     if (!paint) {
       element.setAttribute(attribute, "none");
@@ -310,24 +358,98 @@ export class SlideDrawer {
     }
     if (paint.t === "linear" || paint.t === "radial") {
       const id = nextId("g");
+      const tile = insetBox(box, paint.tile);
       let gradient;
       if (paint.t === "radial") {
-        const cx = box.x + box.w * paint.fx;
-        const cy = box.y + box.h * paint.fy;
-        const r = Math.max(...[[box.x, box.y], [box.x + box.w, box.y], [box.x, box.y + box.h], [box.x + box.w, box.y + box.h]]
-          .map(([x, y]) => Math.hypot(x - cx, y - cy)));
-        gradient = svg("radialGradient", { id, gradientUnits: "userSpaceOnUse", cx, cy, r }, context.defs);
-      } else {
-        const angle = (paint.angle * Math.PI) / 180;
-        const half = (Math.abs(Math.cos(angle)) * box.w + Math.abs(Math.sin(angle)) * box.h) / 2;
-        const cx = box.x + box.w / 2;
-        const cy = box.y + box.h / 2;
-        gradient = svg("linearGradient", {
+        // From a circle around `focus` (fillToRect) to one around the tile.
+        const focus = insetBox(box, paint.focus);
+        gradient = svg("radialGradient", {
           id, gradientUnits: "userSpaceOnUse",
-          x1: cx - Math.cos(angle) * half, y1: cy - Math.sin(angle) * half, x2: cx + Math.cos(angle) * half, y2: cy + Math.sin(angle) * half,
+          cx: tile.x + tile.w / 2, cy: tile.y + tile.h / 2, r: Math.hypot(tile.w, tile.h) / 2,
+          fx: focus.x + focus.w / 2, fy: focus.y + focus.h / 2, fr: Math.hypot(focus.w, focus.h) / 2,
+        }, context.defs);
+      } else {
+        // Across the tile; a scaled gradient's angle is set for a unit square, then stretched to the tile.
+        const angle = (paint.angle * Math.PI) / 180;
+        const w = paint.scaled ? 1 : tile.w;
+        const h = paint.scaled ? 1 : tile.h;
+        const half = (Math.abs(Math.cos(angle)) * w + Math.abs(Math.sin(angle)) * h) / 2;
+        const dx = Math.cos(angle) * half;
+        const dy = Math.sin(angle) * half;
+        gradient = svg("linearGradient", {
+          id, gradientUnits: "userSpaceOnUse", x1: -dx, y1: -dy, x2: dx, y2: dy,
+          gradientTransform: `translate(${tile.x + tile.w / 2} ${tile.y + tile.h / 2})${paint.scaled ? ` scale(${tile.w} ${tile.h})` : ""}`,
         }, context.defs);
       }
       for (const [offset, color] of paint.stops) svg("stop", { offset, "stop-color": color }, gradient);
+      element.setAttribute(attribute, `url(#${id})`);
+      return;
+    }
+    if (paint.t === "rect" || paint.t === "shape") {
+      // Drawn as a pattern of one tile over the area: its end colour throughout, then on top
+      // either the four bands from the start rectangle (fillToRect) out to the tile's edges,
+      // each its own linear gradient, or copies of the outline from the tile in to the start.
+      const id = nextId("p");
+      const pattern = svg("pattern", { id, patternUnits: "userSpaceOnUse", x: box.x, y: box.y, width: box.w, height: box.h }, context.defs);
+      const layer = svg("g", { transform: `translate(${-box.x} ${-box.y})` }, pattern);
+      const focus = insetBox(box, paint.focus);
+      const tile = insetBox(box, paint.tile);
+      const outline = paint.t === "shape" && attribute === "fill" ? outlineOf(element) : null;
+      if (outline) {
+        const rule = element.getAttribute("fill-rule") ?? "nonzero";
+        const steps = paint.rings.length - 1;
+        svg("rect", { x: box.x, y: box.y, width: box.w, height: box.h, fill: paint.rings[0] }, layer);
+        paint.rings.forEach((color, index) => {
+          const position = 1 - index / steps;
+          const x = focus.x + (tile.x - focus.x) * position;
+          const y = focus.y + (tile.y - focus.y) * position;
+          const w = focus.w + (tile.w - focus.w) * position;
+          const h = focus.h + (tile.h - focus.h) * position;
+          if (w <= 0 || h <= 0 || box.w <= 0 || box.h <= 0) return;
+          svg("path", {
+            d: outline, fill: color, "fill-rule": rule,
+            transform: `translate(${x} ${y}) scale(${w / box.w} ${h / box.h}) translate(${-box.x} ${-box.y})`,
+          }, layer);
+        });
+      } else {
+        const from = paint.from ?? paint.rings?.[paint.rings.length - 1];
+        const to = paint.to ?? paint.rings?.[0];
+        const stops = paint.stops;
+        svg("rect", { x: box.x, y: box.y, width: box.w, height: box.h, fill: to }, layer);
+        svg("rect", { x: focus.x, y: focus.y, width: Math.max(focus.w, 0), height: Math.max(focus.h, 0), fill: from }, layer);
+        const outer = [[tile.x, tile.y], [tile.x + tile.w, tile.y], [tile.x + tile.w, tile.y + tile.h], [tile.x, tile.y + tile.h]];
+        const inner = [[focus.x, focus.y], [focus.x + focus.w, focus.y], [focus.x + focus.w, focus.y + focus.h], [focus.x, focus.y + focus.h]];
+        const midX = focus.x + focus.w / 2;
+        const midY = focus.y + focus.h / 2;
+        // Top, right, bottom, left: each running from the start rectangle's edge to the tile's.
+        const lines = [
+          [midX, focus.y, midX, tile.y], [focus.x + focus.w, midY, tile.x + tile.w, midY],
+          [midX, focus.y + focus.h, midX, tile.y + tile.h], [focus.x, midY, tile.x, midY],
+        ];
+        lines.forEach(([x1, y1, x2, y2], side) => {
+          if (Math.hypot(x2 - x1, y2 - y1) < 0.001) return;
+          const next = (side + 1) % 4;
+          const band = nextId("g");
+          const gradient = svg("linearGradient", { id: band, gradientUnits: "userSpaceOnUse", x1, y1, x2, y2 }, context.defs);
+          for (const [offset, color] of stops) svg("stop", { offset, "stop-color": color }, gradient);
+          // Bands meet along the diagonals; softened edges would show there as seams.
+          svg("polygon", {
+            points: [outer[side], outer[next], inner[next], inner[side]].map((point) => point.join(",")).join(" "),
+            fill: `url(#${band})`, "shape-rendering": "crispEdges",
+          }, layer);
+        });
+      }
+      element.setAttribute(attribute, `url(#${id})`);
+      return;
+    }
+    if (paint.t === "pattern") {
+      // Two colours in a grid of eight by eight cells, repeated from the top left of the area.
+      const id = nextId("p");
+      const size = paint.cell * 8;
+      const pattern = svg("pattern", {
+        id, patternUnits: "userSpaceOnUse", x: box.x, y: box.y, width: size, height: size, "shape-rendering": "crispEdges",
+      }, context.defs);
+      for (const rect of patternRects(paint)) svg("rect", rect, pattern);
       element.setAttribute(attribute, `url(#${id})`);
       return;
     }
@@ -502,6 +624,7 @@ export class SlideDrawer {
       if (cell.fill) {
         if (cell.fill.t === "solid") element.style.background = cell.fill.c;
         else if (cell.fill.t === "linear") element.style.background = `linear-gradient(${cell.fill.angle + 90}deg, ${cell.fill.stops.map(([o, c]) => `${c} ${o * 100}%`).join(", ")})`;
+        else if (cell.fill.t === "pattern") element.style.background = patternBackground(cell.fill);
       }
       if (cell.borders) element.dataset.borders = JSON.stringify(cell.borders);
       if (cell.text) element.append(this.text(cell.text, null, { cell: true }));
