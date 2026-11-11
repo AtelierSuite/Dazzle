@@ -276,7 +276,7 @@ public struct ShapeWriter {
     private func writeEffects(of shape: SlideShape, into element: XMLElement) {
         guard let properties = properties(of: element) else { return }
         for child in properties.children where child.name == "effectDag" { properties.removeChild(child) }
-        // Effects we do not model, such as a glow or soft edges, stay as they were.
+        // Effects Dazzle draws but does not edit, such as a glow or soft edges, stay as they were.
         guard let effects = properties.firstChild(named: "effectLst") ?? fragment("<a:effectLst/>") else { return }
         if effects.parent !== properties {
             let before = properties.children.firstIndex { ["scene3d", "sp3d", "extLst"].contains($0.name) }

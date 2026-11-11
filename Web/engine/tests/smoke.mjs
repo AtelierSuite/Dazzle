@@ -432,6 +432,71 @@ test("keeps path gradients when saved and when the inspector changes their colou
   assert.deepEqual([changed.t, changed.focus, changed.tile, changed.to], ["rect", [0, 0, 1, 1], [-1, -1, 0, 0], "#00ff00"]);
 });
 
+/**
+ * The presentation as saved, with shapes that glow, fade at their edges, cast inner and preset shadows and blur,
+ * and one that takes a glow from the theme's second effect style.
+ */
+function deckWithEffects() {
+  const { payload } = call("save", { format: "pptx" });
+  const entries = unzip(payload);
+  const decode = (name) => new TextDecoder().decode(entries.get(name));
+  const encode = (name, text) => entries.set(name, new TextEncoder().encode(text));
+  const shape = (id, name, effects, style = "") => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>${effects}</p:spPr>${style}
+    </p:sp>`;
+  const shapes = shape(911, "Glowing", `<a:effectLst><a:glow rad="127000"><a:srgbClr val="00FF00"/></a:glow>
+      <a:innerShdw blurRad="25400" dist="50800" dir="2700000"><a:srgbClr val="0000FF"/></a:innerShdw>
+      <a:softEdge rad="63500"/></a:effectLst>`)
+    + shape(912, "Blurred", `<a:effectLst><a:blur rad="38100" grow="0"/>
+      <a:prstShdw prst="shdw13" dist="25400" dir="2700000"><a:srgbClr val="000000"/></a:prstShdw></a:effectLst>`)
+    + shape(913, "Boxed", `<a:effectLst><a:prstShdw prst="shdw18" dist="25400" dir="2700000"><a:srgbClr val="000000"/></a:prstShdw></a:effectLst>`)
+    + shape(914, "Themed", "", `<p:style><a:lnRef idx="0"><a:schemeClr val="accent1"/></a:lnRef>
+      <a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef><a:effectRef idx="2"><a:srgbClr val="FFFF00"/></a:effectRef>
+      <a:fontRef idx="minor"/></p:style>`);
+  encode("ppt/slides/slide1.xml", decode("ppt/slides/slide1.xml").replace("</p:spTree>", `${shapes}</p:spTree>`));
+  const theme = decode("ppt/theme/theme1.xml");
+  const empty = "<a:effectStyle><a:effectLst/></a:effectStyle>";
+  const second = theme.indexOf(empty, theme.indexOf(empty) + empty.length);
+  assert.ok(second > 0, "the theme has an empty second effect style");
+  const glow = '<a:effectStyle><a:effectLst><a:glow rad="63500"><a:schemeClr val="phClr"><a:alpha val="50000"/></a:schemeClr></a:glow></a:effectLst></a:effectStyle>';
+  encode("ppt/theme/theme1.xml", theme.slice(0, second) + glow + theme.slice(second + empty.length));
+  return zip(entries);
+}
+
+test("draws glows, soft edges, inner, preset and themed shadows and blurs, and saves them as they were", () => {
+  const opened = call("open", { name: "Effects.pptx" }, deckWithEffects());
+  const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
+  const named = (name) => shapes.find((node) => node.name === name)?.effects;
+
+  const glowing = named("Glowing");
+  assert.deepEqual(glowing.glow, { r: 10, c: "#00ff00" });
+  assert.equal(glowing.soft, 5);
+  assert.deepEqual([glowing.inner.dx, glowing.inner.dy, glowing.inner.blur, glowing.inner.c], [2.83, 2.83, 2, "#0000ff"]);
+
+  const blurred = named("Blurred");
+  assert.deepEqual(blurred.blur, { r: 3, grow: false });
+  assert.equal(blurred.preset.casts.length, 2, "a double shadow is cast twice");
+  const [far, near] = blurred.preset.casts;
+  assert.ok(far[4] > near[4] && far[5] > near[5], "the farther copy first, twice as far");
+  assert.ok(Math.abs(near[4] - 1.41) < 0.01 && Math.abs(near[5] - 1.41) < 0.01);
+
+  const boxed = named("Boxed");
+  assert.equal(boxed.preset, undefined, "the inner box preset falls inside");
+  assert.ok(boxed.inner && boxed.inner.blur === 0, "as a hard inner shadow");
+
+  const themed = named("Themed");
+  assert.equal(themed?.glow?.r, 5, "the glow comes from the theme's effect style");
+  assert.match(themed.glow.c, /^rgba\(255, ?255, ?0, ?0\.5\)$/, "in the reference's colour, at the style's alpha");
+
+  const saved = unzip(call("save", { format: "pptx" }).payload);
+  const slide = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
+  for (const element of ["<a:glow ", "<a:innerShdw ", "<a:softEdge ", "<a:blur ", 'prst="shdw13"', 'prst="shdw18"']) {
+    assert.ok(slide.includes(element), `keeps ${element}`);
+  }
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));

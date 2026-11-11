@@ -112,6 +112,8 @@ public struct SlideRenderer {
         paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
         guard !shape.isHidden else { return }
+        // Effects its style gives it, drawn as though its own.
+        let shape = style.resolvingEffects(of: shape, sources: sources)
         if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
         if let reflection = shape.reflection {
             // The reflection goes wherever an animation moves, sizes or turns
@@ -152,13 +154,35 @@ public struct SlideRenderer {
             context.translateBy(x: -frame.midX, y: -frame.midY)
         }
 
+        func content(_ context: CGContext) {
+            drawContent(
+                of: shape, sources: sources, frame: frame, style: style, context: context, groupFill: groupFill,
+                appearance: appearance, paragraphAppearances: paragraphAppearances
+            )
+        }
+        // A glow, soft edges, inner, preset shadows and blur are worked from
+        // a picture of the shape; without them, it is drawn as it is.
+        if !shape.effects.isEmpty,
+           drawWithEffects(shape.effects, shadow: shape.shadow, frame: frame, style: style, context: context, content: content) {
+            return
+        }
+
         // A shadow falls from everything the shape draws, taken as one.
         if let shadow = shape.shadow {
             Self.setShadow(shadow, color: style.color(shadow.color).cgColor, space: context.ctm, context: context)
             context.beginTransparencyLayer(auxiliaryInfo: nil)
         }
         defer { if shape.shadow != nil { context.endTransparencyLayer() } }
+        content(context)
+    }
 
+    /// What the shape itself draws: its fill, outline, text or picture, its
+    /// members, table or chart.
+    private func drawContent(
+        of shape: SlideShape, sources: [SlideShape], frame: CGRect, style: SlideStyleContext, context: CGContext,
+        groupFill: SlideStyleContext.ResolvedFill?, appearance: AnimatedAppearance?,
+        paragraphAppearances: [Int: AnimatedAppearance]
+    ) {
         switch shape.kind {
         case .group(let group):
             // Children are placed in slide space rather than by scaling the
@@ -213,6 +237,154 @@ public struct SlideRenderer {
             offset: CGSize(width: offset.width - displacement.width, height: offset.height - displacement.height),
             blur: EMU.points(shadow.blur) * scale, color: color
         )
+    }
+
+    // MARK: - Effects
+
+    /// Draws what `content` draws with a glow, soft edges, an inner or
+    /// preset shadow or a blur, as PowerPoint does: preset shadows beneath,
+    /// then the outer shadow, cast by the glow and the shape as one; the glow
+    /// round the shape; the shape, its edges feathered or blurred; and the
+    /// inner shadow over it. Works from a picture of the shape, as fine as the
+    /// context draws, with room round it for the effects to spread. Returns
+    /// `false`, having drawn nothing, if there is no room for the picture.
+    private func drawWithEffects(
+        _ effects: ShapeEffects, shadow: Shadow?, frame: CGRect, style: SlideStyleContext, context: CGContext,
+        content: (CGContext) -> Void
+    ) -> Bool {
+        let glowRadius = effects.glow.map { EMU.points($0.radius) } ?? 0
+        let blurRadius = effects.blur.map { EMU.points($0.radius) } ?? 0
+        let presetCast = effects.presetShadow?.cast
+        var innerShadow: (blur: CGFloat, offset: CGSize, color: CGColor)?
+        if let inner = effects.innerShadow {
+            let radians = inner.direction * .pi / 180, distance = EMU.points(inner.distance)
+            let offset = CGSize(width: cos(radians) * distance, height: sin(radians) * distance)
+            innerShadow = (blur: EMU.points(inner.blur), offset: offset, color: style.color(inner.color).cgColor)
+        }
+        // The inner box preset is a hard inner shadow.
+        if let preset = effects.presetShadow, presetCast?.isInner == true, innerShadow == nil {
+            innerShadow = (blur: 0, offset: preset.offset, color: style.color(preset.color).cgColor)
+        }
+        let innerReach = innerShadow.map { hypot($0.offset.width, $0.offset.height) + $0.blur * 2 } ?? 0
+        // Outlines, arrowheads and text can stand out past the frame.
+        let margin = max(glowRadius * 1.5, blurRadius * 2, innerReach) + 12 + max(frame.width, frame.height) * 0.1
+        let region = frame.insetBy(dx: -margin, dy: -margin)
+        let ctm = context.ctm
+        // A context drawing to the screen in points, as SwiftUI's canvas does, is
+        // shown up to three pixels to the point; the picture is drawn as finely.
+        let resolution = sqrt(abs(ctm.a * ctm.d - ctm.b * ctm.c))
+        let scale = min(max(resolution, min(resolution * 3, 3)), 4_096 / max(region.width, region.height, 1))
+        let width = Int((region.width * scale).rounded(.up)), height = Int((region.height * scale).rounded(.up))
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard scale > 0, width > 0, height > 0, let layer = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+        layer.translateBy(x: 0, y: CGFloat(height))
+        layer.scaleBy(x: scale, y: -scale)
+        layer.translateBy(x: -region.minX, y: -region.minY)
+        content(layer)
+        guard let picture = layer.makeImage() else { return false }
+
+        // Core Image works in pixels, with y pointing up.
+        let source = CIImage(cgImage: picture)
+        let extent = source.extent
+        func pixels(_ size: CGSize) -> CGSize { CGSize(width: size.width * scale, height: -size.height * scale) }
+        func tinted(_ mask: CIImage, _ color: CGColor) -> CIImage {
+            CIImage(color: CIColor(cgColor: color)).cropped(to: extent)
+                .applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: mask])
+        }
+        func spread(_ image: CIImage, by radius: CGFloat, growing: Bool) -> CIImage {
+            guard radius >= 0.5 else { return image }
+            return image.applyingFilter(
+                growing ? "CIMorphologyMaximum" : "CIMorphologyMinimum", parameters: [kCIInputRadiusKey: radius]
+            ).cropped(to: extent)
+        }
+        func blurred(_ image: CIImage, sigma: CGFloat) -> CIImage {
+            sigma >= 0.25 ? image.applyingGaussianBlur(sigma: Double(sigma)).cropped(to: extent) : image
+        }
+        func render(_ image: CIImage) -> CGImage? { Self.blurContext.createCGImage(image, from: extent) }
+        func place(_ image: CGImage, in target: CGContext) {
+            // Images are drawn bottom row first; the region's top is its smallest y.
+            target.saveGState()
+            target.translateBy(x: 0, y: region.minY + region.maxY)
+            target.scaleBy(x: 1, y: -1)
+            target.interpolationQuality = .high
+            target.draw(image, in: region)
+            target.restoreGState()
+        }
+
+        // Preset shadows: the shape's silhouette, hard-edged, cast and shaped by the preset.
+        if let preset = effects.presetShadow, let cast = presetCast, !cast.isInner,
+           let silhouette = render(tinted(source, style.color(preset.color).cgColor)) {
+            for transform in preset.transforms(in: frame, stepsPerPoint: scale) {
+                context.saveGState()
+                context.concatenate(transform)
+                place(silhouette, in: context)
+                context.restoreGState()
+            }
+        }
+
+        // The glow: the silhouette grown by half the radius and softened over the rest.
+        var glow: CGImage?
+        if let effect = effects.glow, glowRadius > 0 {
+            let radius = glowRadius * scale
+            let halo = blurred(spread(source, by: radius / 2, growing: true), sigma: radius / 4)
+            glow = render(tinted(halo, style.color(effect.color).cgColor))
+        }
+
+        // The shape: soft edges fade it out from a little in from its edge to
+        // its edge; a blur blurs all of it; an inner shadow falls on what is left.
+        var body: CGImage?
+        if effects.softEdge != nil || effects.blur != nil || innerShadow != nil {
+            var image = source
+            if let softEdge = effects.softEdge {
+                let radius = EMU.points(softEdge) * scale
+                let mask = blurred(spread(source, by: radius / 2, growing: false), sigma: radius / 4)
+                image = image.applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: mask])
+            }
+            if let blur = effects.blur {
+                image = blurred(image, sigma: blurRadius * scale / 2)
+                if !blur.grows {
+                    let bounds = CGRect(
+                        x: (frame.minX - region.minX) * scale, y: (region.maxY - frame.maxY) * scale,
+                        width: frame.width * scale, height: frame.height * scale
+                    )
+                    image = image.cropped(to: bounds)
+                }
+            }
+            if let inner = innerShadow {
+                // What lies outside the shape, set off and softened, falls inside it.
+                let outside = source.applyingFilter("CIColorMatrix", parameters: [
+                    "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+                    "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: -1),
+                    "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+                ]).cropped(to: extent)
+                let shift = pixels(inner.offset)
+                let cast = blurred(
+                    outside.clampedToExtent().transformed(by: CGAffineTransform(translationX: shift.width, y: shift.height))
+                        .cropped(to: extent),
+                    sigma: inner.blur * scale / 2
+                )
+                let shadow = tinted(cast, inner.color)
+                    .applyingFilter("CISourceInCompositing", parameters: [kCIInputBackgroundImageKey: image])
+                image = shadow.composited(over: image)
+            }
+            body = render(image)
+        }
+
+        if let shadow {
+            Self.setShadow(shadow, color: style.color(shadow.color).cgColor, space: context.ctm, context: context)
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+        }
+        if let glow { place(glow, in: context) }
+        if let body {
+            place(body, in: context)
+        } else {
+            content(context)
+        }
+        if shadow != nil { context.endTransparencyLayer() }
+        return true
     }
 
     /// The shape again, turned upside down below its bottom edge and faded

@@ -242,7 +242,9 @@ public enum PPTXReader {
             minorEastAsianFont: fonts?.firstChild(named: "minorFont")?.firstChild(named: "ea")?.attribute("typeface")?.nilIfEmpty,
             fillStyles: fills("fillStyleLst"),
             backgroundFillStyles: fills("bgFillStyleLst"),
-            lineStyles: format?.firstChild(named: "lnStyleLst")?.children(named: "ln").map(LineStyle.init(element:)) ?? []
+            lineStyles: format?.firstChild(named: "lnStyleLst")?.children(named: "ln").map(LineStyle.init(element:)) ?? [],
+            effectStyles: format?.firstChild(named: "effectStyleLst")?.children(named: "effectStyle")
+                .map(EffectStyle.init(element:)) ?? []
         )
     }
 

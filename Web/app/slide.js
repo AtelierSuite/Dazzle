@@ -282,6 +282,7 @@ export class SlideDrawer {
       default:
         this.shape(node, inner, context);
     }
+    if (node.effects) this.applyEffects(node, outer, inner, context);
     if (node.reflection) this.reflect(node, outer, inner);
     if (node.link && context.interactive) {
       outer.dataset.link = JSON.stringify(node.link);
@@ -729,6 +730,84 @@ export class SlideDrawer {
     return element;
   }
 
+  // MARK: - Effects
+
+  /**
+   * A preset shadow, as copies of the shape's silhouette beneath it; and a glow, soft edges, an inner shadow and a
+   * blur, as an SVG filter on the shape itself: the glow round it, its edges feathered or blurred, the inner shadow
+   * over it. The outer shadow falls from all of it, as the engine draws it.
+   */
+  applyEffects(node, outer, inner, context) {
+    const fx = node.effects;
+    if (fx.preset) {
+      const flood = nextId("f");
+      const filter = svg("filter", {
+        id: flood, x: "-50%", y: "-50%", width: "200%", height: "200%", "color-interpolation-filters": "sRGB",
+      }, context.defs);
+      svg("feFlood", { "flood-color": fx.preset.c, result: "colour" }, filter);
+      svg("feComposite", { in: "colour", in2: "SourceAlpha", operator: "in" }, filter);
+      const turn = inner.style.transform;
+      for (const [a, b, c, d, e, f] of fx.preset.casts) {
+        const copy = inner.cloneNode(true);
+        // Not a body, so the shape's own is the one found by what looks for it.
+        copy.classList.replace("shape__body", "shape__preset-shadow");
+        copy.setAttribute("aria-hidden", "true");
+        copy.style.filter = `url(#${flood})`;
+        // Cast in the shape's own space, from its top left, then turned with it about its middle.
+        copy.style.transform = `${turn} translate(${-node.w / 2}px, ${-node.h / 2}px) matrix(${a}, ${b}, ${c}, ${d}, ${e}, ${f}) translate(${node.w / 2}px, ${node.h / 2}px)`;
+        outer.insertBefore(copy, inner);
+      }
+    }
+    if (!fx.glow && fx.soft === undefined && !fx.blur && !fx.inner) return;
+    // Room round the shape for the effects to spread, and for outlines and text that stand out past it.
+    const reach = Math.max((fx.glow?.r ?? 0) * 1.5, (fx.blur?.r ?? 0) * 2, fx.inner ? Math.hypot(fx.inner.dx, fx.inner.dy) + fx.inner.blur * 2 : 0);
+    const margin = reach + 12 + Math.max(node.w, node.h) * 0.1;
+    const id = nextId("f");
+    const filter = svg("filter", {
+      id, filterUnits: "userSpaceOnUse", x: -margin, y: -margin, width: node.w + 2 * margin, height: node.h + 2 * margin,
+      "color-interpolation-filters": "sRGB",
+    }, context.defs);
+    let body = "SourceGraphic";
+    if (fx.soft !== undefined) {
+      // Faded out from a little in from the edge to the edge.
+      svg("feMorphology", { in: "SourceAlpha", operator: "erode", radius: fx.soft / 2, result: "inset" }, filter);
+      svg("feGaussianBlur", { in: "inset", stdDeviation: fx.soft / 4, result: "feather" }, filter);
+      svg("feComposite", { in: body, in2: "feather", operator: "in", result: "soft" }, filter);
+      body = "soft";
+    }
+    if (fx.blur) {
+      // Cut off at the shape's bounds, unless the blur may grow past them.
+      const bounds = fx.blur.grow ? {} : { x: 0, y: 0, width: node.w, height: node.h };
+      svg("feGaussianBlur", { in: body, stdDeviation: fx.blur.r / 2, result: "blurred", ...bounds }, filter);
+      body = "blurred";
+    }
+    if (fx.inner) {
+      // What lies outside the shape, set off and softened, falls inside it.
+      const outside = svg("feComponentTransfer", { in: "SourceAlpha", result: "outside" }, filter);
+      svg("feFuncA", { type: "table", tableValues: "1 0" }, outside);
+      svg("feOffset", { in: "outside", dx: fx.inner.dx, dy: fx.inner.dy, result: "cast" }, filter);
+      svg("feGaussianBlur", { in: "cast", stdDeviation: fx.inner.blur / 2, result: "falling" }, filter);
+      svg("feFlood", { "flood-color": fx.inner.c, result: "inner-colour" }, filter);
+      svg("feComposite", { in: "inner-colour", in2: "falling", operator: "in", result: "inner-shadow" }, filter);
+      svg("feComposite", { in: "inner-shadow", in2: body, operator: "in", result: "inner-inside" }, filter);
+      const merge = svg("feMerge", { result: "shaded" }, filter);
+      svg("feMergeNode", { in: body }, merge);
+      svg("feMergeNode", { in: "inner-inside" }, merge);
+      body = "shaded";
+    }
+    if (fx.glow) {
+      // Grown by half the radius and softened over the rest, beneath the shape.
+      svg("feMorphology", { in: "SourceAlpha", operator: "dilate", radius: fx.glow.r / 2, result: "grown" }, filter);
+      svg("feGaussianBlur", { in: "grown", stdDeviation: fx.glow.r / 4, result: "halo" }, filter);
+      svg("feFlood", { "flood-color": fx.glow.c, result: "glow-colour" }, filter);
+      svg("feComposite", { in: "glow-colour", in2: "halo", operator: "in", result: "glow" }, filter);
+      const merge = svg("feMerge", {}, filter);
+      svg("feMergeNode", { in: "glow" }, merge);
+      svg("feMergeNode", { in: body }, merge);
+    }
+    inner.style.filter = `url(#${id})`;
+  }
+
   // MARK: - Reflections
 
   /**
@@ -758,7 +837,8 @@ export class SlideDrawer {
     const mask = `linear-gradient(to top, rgba(0,0,0,${reflection.start}) 0%, rgba(0,0,0,${reflection.end}) ${end}%, transparent ${Math.min(end + 0.1, 100)}%)`;
     copy.style.maskImage = mask;
     copy.style.webkitMaskImage = mask;
-    if (reflection.blur > 0) copy.style.filter = `blur(${reflection.blur / 2}px)`;
+    // Glows, soft edges and the like come across with the copy; a blur goes after them.
+    if (reflection.blur > 0) copy.style.filter = [inner.style.filter, `blur(${reflection.blur / 2}px)`].filter(Boolean).join(" ");
     outer.append(copy);
   }
 }
