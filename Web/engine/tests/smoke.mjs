@@ -12,6 +12,7 @@ import { basename } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { strict as assert } from "node:assert";
 import { Engine } from "../engine.js";
+import { bandForLine, letterTransform, placement, warpBands, warpPoint } from "../../app/warp.js";
 import { COLUMN_LIMIT, INITIAL_GRID, LARGEST_GRID, ROW_LIMIT, TableSizeSelection, cellAt } from "../../app/table-size.js";
 
 const web = new URL("../../", import.meta.url);
@@ -669,6 +670,29 @@ test("passes WordArt warps to the page as the paths its letters are laid along",
 
   assert.equal(drawn.unwarped.text.warp, undefined, "textNoShape leaves the text flat");
   assert.equal(drawn.lined.text.warp, undefined);
+});
+
+test("places letters on a warp as the Apple apps do", () => {
+  if (drawn.error) throw drawn.error;
+  const bands = warpBands(drawn.waved.text.warp);
+  assert.deepEqual([0, 1].map((index) => bandForLine(bands, index, 2)), [0, 0], "both lines share the one band");
+  const place = placement(bands, 0, 10, 50, 40);
+  // The text's corners land on the paths' ends; its middle half way between them.
+  const [top, bottom] = [bands[0].top.points, bands[0].bottom.points];
+  const topLeft = warpPoint(bands, place, 0, 100, 10);
+  const bottomRight = warpPoint(bands, place, 100, 100, 50);
+  assert.ok(Math.hypot(topLeft.x - top[0].x, topLeft.y - top[0].y) < 0.01);
+  assert.ok(Math.hypot(bottomRight.x - bottom.at(-1).x, bottomRight.y - bottom.at(-1).y) < 0.01);
+  // A letter stands upright, from its baseline towards the top path.
+  const [a, , c, d] = letterTransform(bands, place, 45, 55, 100, 50, 40);
+  assert.ok(a > 0 && d < 0 && Math.abs(c) < Math.abs(d), "runs right, and up is up the page");
+
+  const arch = warpBands(drawn.arched.text.warp);
+  const hanging = placement(arch, 0, 10, 50, 40);
+  assert.equal(hanging.baseline, 10, "letters hang from the arch by their tops");
+  const [width, , , , e, f] = letterTransform(arch, hanging, 0, 10, 30, 40, 36);
+  assert.ok(Math.abs(width) <= 1.0001, "a letter on a path keeps its width");
+  assert.ok(Number.isFinite(e) && Number.isFinite(f));
 });
 
 test("draws glows, soft edges, inner, preset and themed shadows and blurs, and saves them as they were", () => {
