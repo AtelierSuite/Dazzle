@@ -660,6 +660,59 @@ test("draws glows, soft edges, inner, preset and themed shadows and blurs, and s
   }
 });
 
+/** A deck of shapes in 3D: bevelled, set in depth, contoured, and one with none. */
+function deckWithDepth() {
+  const { payload } = call("save", { format: "pptx" });
+  const entries = unzip(payload);
+  const decode = (name) => new TextDecoder().decode(entries.get(name));
+  const encode = (name, text) => entries.set(name, new TextEncoder().encode(text));
+  const shape = (id, name, extra) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/></a:xfrm>
+        <a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="3366CC"/></a:solidFill>${extra}</p:spPr>
+    </p:sp>`;
+  const scene = (camera, light) => `<a:scene3d><a:camera prst="${camera}"/><a:lightRig rig="threePt" dir="${light}"/></a:scene3d>`;
+  const shapes = shape(941, "Bevelled", `${scene("orthographicFront", "t")}<a:sp3d prstMaterial="metal"><a:bevelT w="127000" h="63500" prst="cross"/></a:sp3d>`)
+    + shape(942, "Deep", `${scene("obliqueTopLeft", "tl")}<a:sp3d extrusionH="381000"><a:extrusionClr><a:srgbClr val="00FF00"/></a:extrusionClr></a:sp3d>`)
+    + shape(943, "Contoured", `${scene("orthographicFront", "t")}<a:sp3d contourW="25400"><a:contourClr><a:srgbClr val="FF0000"/></a:contourClr></a:sp3d>`)
+    + shape(944, "Flat", "");
+  encode("ppt/slides/slide1.xml", decode("ppt/slides/slide1.xml").replace("</p:spTree>", `${shapes}</p:spTree>`));
+  return zip(entries);
+}
+
+test("draws bevels, depth and contours in 3D, and saves them as they were", () => {
+  const opened = call("open", { name: "Depth.pptx" }, deckWithDepth());
+  const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
+  const named = (name) => shapes.find((node) => node.name === name);
+
+  const bands = named("Bevelled").look3d?.bands;
+  assert.ok(bands?.length > 0, "a bevel is drawn as bands over the face");
+  // Lit from the top: the bands kept by moving the outline down are the top edge's.
+  const top = bands.filter((band) => band.xy > 0);
+  const bottom = bands.filter((band) => band.xy < 0);
+  assert.ok(top.length && bottom.length && bands.every((band) => band.xx === 0 && band.kx === 0), "along the top and bottom edges only");
+  assert.equal(top.find((band) => band.ky === 0)?.c, "#fff", "the top edge's outer band catches the light");
+  assert.equal(bottom.find((band) => band.ky === 0)?.c, "#000", "the bottom edge's is in shade");
+  assert.ok(top.some((band) => band.c === "#000"), "a cross turns away from the light further in");
+  assert.ok(bands.every((band) => band.o > 0 && band.o < 1));
+
+  const sides = named("Deep").look3d?.sides;
+  assert.ok(sides?.casts.length > 1 && sides.casts.length === sides.cs.length, "the sides are copies of the outline, each its colour");
+  const [far] = sides.casts;
+  assert.ok(far[4] < 0 && far[5] < 0, "seen from the top left, they stand out up and to the left");
+  assert.match(sides.cs[0], /^#00[0-9a-f]{2}00$/, "in the extrusion colour, darkened");
+  assert.equal(named("Deep").look3d.bands, undefined, "no bevel, no bands");
+
+  assert.deepEqual(named("Contoured").look3d?.contour, { w: 4, c: "#ff0000" }, "the contour straddles the edge");
+  assert.equal(named("Flat").look3d, undefined, "a shape without 3D draws as before");
+
+  const saved = unzip(call("save", { format: "pptx" }).payload);
+  const slide = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
+  for (const element of ['<a:camera prst="obliqueTopLeft"/>', 'prst="cross"', 'extrusionH="381000"', 'contourW="25400"', 'prstMaterial="metal"']) {
+    assert.ok(slide.includes(element), `keeps ${element}`);
+  }
+});
+
 /** Protocol buffer fields, for building a Keynote archive. */
 class Proto {
   bytes = [];
