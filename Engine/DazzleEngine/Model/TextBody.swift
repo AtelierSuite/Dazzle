@@ -52,6 +52,37 @@ public struct TextBody: Equatable, Hashable, Sendable {
     }
 }
 
+/// `a:prstTxWarp`: a WordArt warp, the text laid along the preset's paths.
+public struct TextWarp: Equatable, Hashable, Sendable {
+    /// The preset's name, such as `textArchUp`; `textNoShape` leaves the text flat.
+    public var preset: String
+    /// `avLst`'s adjust values, by name.
+    public var adjustments: [String: Int]
+
+    public init(preset: String, adjustments: [String: Int] = [:]) {
+        self.preset = preset
+        self.adjustments = adjustments
+    }
+
+    public init?(element: XMLElement?) {
+        guard let element, let preset = element.attribute("prst") else { return nil }
+        var adjustments: [String: Int] = [:]
+        for guide in element.firstChild(named: "avLst")?.children(named: "gd") ?? [] {
+            if let name = guide.attribute("name"), let formula = guide.attribute("fmla"), formula.hasPrefix("val "),
+               let value = Int(String(formula.dropFirst(4)).trimmed) {
+                adjustments[name] = value
+            }
+        }
+        self.init(preset: preset, adjustments: adjustments)
+    }
+
+    /// The warp as `a:prstTxWarp`.
+    public var xml: String {
+        let guides = adjustments.keys.sorted().map { "<a:gd name=\"\(XMLLite.escape($0))\" fmla=\"val \(adjustments[$0] ?? 0)\"/>" }
+        return "<a:prstTxWarp prst=\"\(XMLLite.escape(preset))\"><a:avLst>\(guides.joined())</a:avLst></a:prstTxWarp>"
+    }
+}
+
 /// `a:bodyPr`: insets, anchoring and fitting.
 public struct BodyProperties: Equatable, Hashable, Sendable {
     public enum Anchor: String, Sendable {
@@ -83,6 +114,8 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
     public var columnSpacing: Int?
     /// `rtlCol`: whether the columns run from right to left.
     public var columnsRightToLeft: Bool?
+    /// `prstTxWarp`: the WordArt warp the text is laid along.
+    public var warp: TextWarp?
 
     public init() {
         // Every property unsaid: inherited.
@@ -100,6 +133,7 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
         columnCount = element.attribute("numCol").flatMap(Int.init).map { min(max($0, 1), 16) }
         columnSpacing = element.attribute("spcCol").flatMap(Int.init).map { max($0, 0) }
         columnsRightToLeft = element.attribute("rtlCol").map { $0 == "1" || $0 == "true" }
+        warp = TextWarp(element: element.firstChild(named: "prstTxWarp"))
         if let normal = element.firstChild(named: "normAutofit") {
             autofit = .normal(
                 fontScale: Double(normal.attribute("fontScale").flatMap(Int.init) ?? 100_000) / 100_000,
@@ -126,6 +160,7 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
         result.columnCount = columnCount ?? base.columnCount
         result.columnSpacing = columnSpacing ?? base.columnSpacing
         result.columnsRightToLeft = columnsRightToLeft ?? base.columnsRightToLeft
+        result.warp = warp ?? base.warp
         return result
     }
 
