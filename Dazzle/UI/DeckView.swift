@@ -17,6 +17,8 @@ struct DeckView: View {
     @State private var editorID = UUID()
     /// Flipped to put the quick Paste button back in the bar; see `quickPasteToolbar`.
     @State private var quickPasteGeneration = 0
+    /// The pending `restoreQuickPaste()` flip, so a burst of events flips once.
+    @State private var quickPasteRestore: Task<Void, Never>?
     @Environment(\.undoManager) private var undoManager
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -310,8 +312,13 @@ struct DeckView: View {
     /// Puts the quick Paste button back once the bar has settled.
     private func restoreQuickPaste() {
         guard pasteboard.kind != nil else { return }
-        Task {
+        // Several events often come together (a paste edits the document and
+        // starts and ends text editing). Flipping once per event could land
+        // back on the same branch, which SwiftUI wouldn't see as a change.
+        quickPasteRestore?.cancel()
+        quickPasteRestore = Task {
             try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
             quickPasteGeneration &+= 1
         }
     }
