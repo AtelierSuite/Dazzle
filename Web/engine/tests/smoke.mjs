@@ -269,7 +269,13 @@ function deckWithShapes() {
         <a:tr h="370332"><a:tc><a:txBody><a:bodyPr/><a:p><a:endParaRPr lang="en-US"/></a:p></a:txBody>
           <a:tcPr><a:pattFill prst="lgGrid"><a:fgClr><a:srgbClr val="0000FF"/></a:fgClr><a:bgClr><a:srgbClr val="FFFFFF"/></a:bgClr></a:pattFill></a:tcPr></a:tc>
           <a:tc><a:txBody><a:bodyPr/><a:p><a:endParaRPr lang="en-US"/></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
-      </a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
+      </a:tbl></a:graphicData></a:graphic></p:graphicFrame>
+    ${["cube", "gear6", "bracePair"].map((prst, index) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${905 + index}" name="${prst}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200 + index * 2286000)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>
+        <a:solidFill><a:srgbClr val="3366CC"/></a:solidFill>
+        <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
+    </p:sp>`).join("")}`;
   const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
@@ -289,10 +295,11 @@ const drawn = (() => {
     const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
     const scene = call("scene", { slide: opened.state.slides[0].id }).result;
     const shapes = scene.shapes;
+    const named = (name) => shapes.find((node) => node.name === name);
     return {
       info: opened.result, slide: opened.state.slides[0].id, scene,
-      lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled"),
-      patterned: shapes.find((node) => node.name === "Patterned"), grid: shapes.find((node) => node.name === "Grid"),
+      lined: named("Lined"), tiled: named("Tiled"), patterned: named("Patterned"), grid: named("Grid"),
+      cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
     };
   } catch (error) {
     return { error };
@@ -354,6 +361,18 @@ test("draws pattern fills on shapes, outlines, table cells and the background, a
   const slide = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
   assert.ok(/<a:pattFill prst="dkUpDiag"><a:fgClr><a:srgbClr val="00FF00"\/><\/a:fgClr><a:bgClr><a:srgbClr val="FFFF00"\/>/.test(slide), "the recoloured shape");
   for (const preset of ["smCheck", "lgGrid", "pct20"]) assert.ok(slide.includes(`<a:pattFill prst="${preset}">`), `keeps ${preset}`);
+});
+
+test("draws the presets ECMA-376 defines rather than their frames", () => {
+  if (drawn.error) throw drawn.error;
+  assert.ok(drawn.gear.path.split("L").length > 20, "a gear has teeth");
+  assert.ok(!drawn.gear.path.startsWith("M0 0L"), "not the frame's rectangle");
+  assert.deepEqual(drawn.cube.shades?.map((shade) => shade.c), ["#000", "#fff"], "the side darkened, the top lightened");
+  assert.ok(drawn.cube.shades.every((shade) => shade.d.length > 0 && shade.o > 0 && shade.o < 1));
+  assert.ok(drawn.cube.strokePath?.length > 0, "the outline and edges are stroked apart from the faces");
+  assert.equal(drawn.braces.open, true, "a brace pair is never filled");
+  assert.equal(drawn.braces.fill, undefined);
+  assert.ok(drawn.braces.path.includes("C"), "its braces curve");
 });
 
 test("names the typefaces the presentation doesn't carry", () => {
