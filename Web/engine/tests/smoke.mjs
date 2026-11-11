@@ -12,6 +12,7 @@ import { basename } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { strict as assert } from "node:assert";
 import { Engine } from "../engine.js";
+import { bandForLine, letterTransform, placement, warpBands, warpPoint } from "../../app/warp.js";
 import { COLUMN_LIMIT, INITIAL_GRID, LARGEST_GRID, ROW_LIMIT, TableSizeSelection, cellAt } from "../../app/table-size.js";
 
 const web = new URL("../../", import.meta.url);
@@ -340,7 +341,8 @@ function deckWithShapes() {
     <p:sp><p:nvSpPr><p:cNvPr id="932" name="Vertical"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
       <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
       <p:txBody><a:bodyPr vert="eaVert"><a:spAutoFit/></a:bodyPr><a:p><a:r><a:rPr lang="ja-JP"/><a:t>縦書きText</a:t></a:r></a:p></p:txBody>
-    </p:sp>`;
+    </p:sp>
+    ${wordArtShapes(frame)}`;
   const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
@@ -353,6 +355,21 @@ function deckWithShapes() {
   const types = decode("[Content_Types].xml");
   if (!/Extension="png"/i.test(types)) encode("[Content_Types].xml", types.replace("<Default ", '<Default Extension="png" ContentType="image/png"/><Default '));
   return zip(entries);
+}
+
+/** WordArt warped along an arch and a wave, and text that says it has no warp. */
+function wordArtShapes(frame) {
+  const warps = {
+    Arched: '<a:prstTxWarp prst="textArchUp"><a:avLst><a:gd name="adj" fmla="val 12000000"/></a:avLst></a:prstTxWarp>',
+    Waved: '<a:prstTxWarp prst="textWave1"><a:avLst><a:gd name="adj1" fmla="val 20000"/><a:gd name="adj2" fmla="val 0"/></a:avLst></a:prstTxWarp>',
+    Unwarped: '<a:prstTxWarp prst="textNoShape"><a:avLst/></a:prstTxWarp>',
+  };
+  return Object.entries(warps).map(([name, warp], index) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${940 + index}" name="${name}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200 + 2286000 * index)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
+      <p:txBody><a:bodyPr wrap="none">${warp}</a:bodyPr><a:lstStyle/>
+        <a:p><a:r><a:rPr lang="en-US" sz="3600"/><a:t>${name}</a:t></a:r></a:p><a:p><a:r><a:rPr lang="en-US" sz="3600"/><a:t>Two</a:t></a:r></a:p></p:txBody>
+    </p:sp>`).join("");
 }
 
 /** Shapes filled with each kind of path gradient, and a scaled linear one, named for what they hold. */
@@ -383,6 +400,7 @@ const drawn = (() => {
       cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
       recoloured: named("Recoloured"), stylised: named("Stylised"),
       columned: named("Columned"), tabbed: named("Tabbed"), vertical: named("Vertical"),
+      arched: named("Arched"), waved: named("Waved"), unwarped: named("Unwarped"),
     };
   } catch (error) {
     return { error };
@@ -627,6 +645,55 @@ function deckWithEffects() {
   encode("ppt/theme/theme1.xml", theme.slice(0, second) + glow + theme.slice(second + empty.length));
   return zip(entries);
 }
+
+test("passes WordArt warps to the page as the paths its letters are laid along", () => {
+  if (drawn.error) throw drawn.error;
+  // The text's inset rectangle in the 144 × 108 point shape: 7.2 points in at the sides, 3.6 at the top and bottom.
+  const inner = { x: 7.2, y: 3.6, w: 129.6, h: 100.8 };
+  const inside = (flat) => flat.every((value, index) => (index % 2
+    ? value >= inner.y - 0.01 && value <= inner.y + inner.h + 0.01
+    : value >= inner.x - 0.01 && value <= inner.x + inner.w + 0.01));
+
+  const arch = drawn.arched.text.warp;
+  assert.equal(arch.length, 1, "an arch is one path to follow");
+  assert.ok(arch[0].along.length > 20 && inside(arch[0].along), "an arc cut into short pieces, inside the text's box");
+  assert.equal(arch[0].out, true, "its letters would stand out of the top, so they hang inside it");
+  // adj moves where the arch starts: 200° clockwise from the right, a little above the middle on the left.
+  const [startX, startY] = arch[0].along;
+  assert.ok(startX < inner.x + inner.w * 0.1 && startY < inner.y + inner.h / 2 && startY > inner.y + inner.h * 0.25);
+
+  const wave = drawn.waved.text.warp;
+  assert.equal(wave.length, 1, "a wave is one band, between two paths");
+  assert.ok(inside(wave[0].top) && inside(wave[0].bottom));
+  const tops = wave[0].top.filter((_, index) => index % 2);
+  assert.ok(Math.max(...tops) - Math.min(...tops) > 10, "its top edge waves");
+
+  assert.equal(drawn.unwarped.text.warp, undefined, "textNoShape leaves the text flat");
+  assert.equal(drawn.lined.text.warp, undefined);
+});
+
+test("places letters on a warp as the Apple apps do", () => {
+  if (drawn.error) throw drawn.error;
+  const bands = warpBands(drawn.waved.text.warp);
+  assert.deepEqual([0, 1].map((index) => bandForLine(bands, index, 2)), [0, 0], "both lines share the one band");
+  const place = placement(bands, 0, 10, 50, 40);
+  // The text's corners land on the paths' ends; its middle half way between them.
+  const [top, bottom] = [bands[0].top.points, bands[0].bottom.points];
+  const topLeft = warpPoint(bands, place, 0, 100, 10);
+  const bottomRight = warpPoint(bands, place, 100, 100, 50);
+  assert.ok(Math.hypot(topLeft.x - top[0].x, topLeft.y - top[0].y) < 0.01);
+  assert.ok(Math.hypot(bottomRight.x - bottom.at(-1).x, bottomRight.y - bottom.at(-1).y) < 0.01);
+  // A letter stands upright, from its baseline towards the top path.
+  const [a, , c, d] = letterTransform(bands, place, 45, 55, 100, 50, 40);
+  assert.ok(a > 0 && d < 0 && Math.abs(c) < Math.abs(d), "runs right, and up is up the page");
+
+  const arch = warpBands(drawn.arched.text.warp);
+  const hanging = placement(arch, 0, 10, 50, 40);
+  assert.equal(hanging.baseline, 10, "letters hang from the arch by their tops");
+  const [width, , , , e, f] = letterTransform(arch, hanging, 0, 10, 30, 40, 36);
+  assert.ok(Math.abs(width) <= 1.0001, "a letter on a path keeps its width");
+  assert.ok(Number.isFinite(e) && Number.isFinite(f));
+});
 
 test("draws glows, soft edges, inner, preset and themed shadows and blurs, and saves them as they were", () => {
   const opened = call("open", { name: "Effects.pptx" }, deckWithEffects());
@@ -972,6 +1039,29 @@ test("plays a Keynote movie as the slide appears and its sound on a tap, and sav
   const media = [...saved.keys()].filter((name) => name.startsWith("ppt/media/media"));
   assert.deepEqual(media.map((name) => new TextDecoder().decode(saved.get(name))).sort(), ["movie", "sound"]);
   assert.match(new TextDecoder().decode(saved.get("ppt/slides/slide1.xml")), /p14:media/);
+});
+
+test("keeps WordArt warps when the text is typed into, saved and reopened", () => {
+  call("new", { name: "Untitled.pptx" });
+  const opened = call("open", { name: "WordArt.pptx" }, deckWithShapes());
+  const slide = opened.state.slides[0].id;
+  const waved = call("scene", { slide }).result.shapes.find((node) => node.name === "Waved");
+  call("select", { slide, shapes: [waved.id] });
+  call("beginText", { shape: waved.id });
+  call("setText", { paras: [{ src: 0, runs: [{ src: [0, 0], t: "Typed" }] }, { src: 1, runs: [{ src: [1, 0], t: "Over" }] }] });
+  call("endText");
+  const saved = call("save", { format: "pptx" }).payload;
+  const xml = new TextDecoder().decode(unzip(saved).get("ppt/slides/slide1.xml"));
+  const shape = xml.slice(xml.indexOf('name="Waved"'));
+  assert.match(shape, /<a:bodyPr[^>]*><a:prstTxWarp prst="textWave1"><a:avLst><a:gd fmla="val 20000" name="adj1"\/><a:gd fmla="val 0" name="adj2"\/><\/a:avLst><\/a:prstTxWarp>/, "kept as it was");
+  assert.match(shape, /<a:t>Typed<\/a:t>/);
+
+  const reopened = call("open", { name: "WordArt again.pptx" }, saved);
+  const again = call("scene", { slide: reopened.state.slides[0].id }).result.shapes;
+  const wave = again.find((node) => node.name === "Waved").text;
+  assert.equal(text(wave), "Typed\nOver");
+  assert.deepEqual(wave.warp, waved.text.warp, "warped just as before");
+  assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
 for (const path of process.argv.slice(2)) {

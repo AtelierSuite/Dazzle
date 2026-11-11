@@ -672,6 +672,19 @@ struct WebRenderer {
             json["colGap"] = n(CGFloat(EMU.points(properties.columnSpacing ?? 0)))
             if properties.columnsRightToLeft == true { json["rtlCols"] = true }
         }
+        // A WordArt warp over horizontal text in one column: the paths its
+        // letters are laid along, which the page places them on (slide.js).
+        let columns = (properties.wraps ?? true) ? (properties.columnCount ?? 1) : 1
+        if json["vert"] == nil, columns <= 1, let warp = TextWarpGeometry(properties.warp, in: inner) {
+            var bands: [[String: Any]] = []
+            for band in warp.bands {
+                switch band {
+                case .between(let top, let bottom): bands.append(["top": points(top), "bottom": points(bottom)])
+                case .along(let guide): bands.append(["along": points(guide), "out": warp.standsOut(guide)])
+                }
+            }
+            json["warp"] = bands
+        }
         switch properties.autofit {
         case .normal(let scale, let reduction)?:
             json["fit"] = "shrink"
@@ -836,6 +849,13 @@ struct WebRenderer {
     // MARK: - Numbers
 
     private func n(_ value: CGFloat) -> Double { (Double(value) * 100).rounded() / 100 }
+
+    /// A warp's path as `[x0, y0, x1, y1, …]`.
+    private func points(_ guide: TextWarpGeometry.Guide) -> [Double] {
+        var flat: [Double] = []
+        for point in guide.points { flat += [n(point.x), n(point.y)] }
+        return flat
+    }
 
     private func rect(_ rect: CGRect) -> [String: Any] {
         ["x": n(rect.minX), "y": n(rect.minY), "w": n(rect.width), "h": n(rect.height)]

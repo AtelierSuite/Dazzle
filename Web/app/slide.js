@@ -6,6 +6,8 @@
 // The same drawing serves the editor's canvas, the navigator's thumbnails, the
 // presenter view and the audience window.
 
+import { bandForLine, letterTransform, placement, warpBands } from "./warp.js";
+
 const SVG = "http://www.w3.org/2000/svg";
 let uniqueId = 0;
 const nextId = (prefix) => `${prefix}${++uniqueId}`;
@@ -242,6 +244,7 @@ export class SlideDrawer {
     for (const flow of root.querySelectorAll(".text__flow[data-columns]")) layoutColumns(flow.parentElement);
     alignTabs(root);
     for (const box of root.querySelectorAll(".text[data-fit='shrink']")) fitText(box);
+    for (const box of root.querySelectorAll(".text[data-warp]")) warpText(box);
     for (const table of root.querySelectorAll(".table")) drawTableBorders(table);
   }
 
@@ -796,6 +799,8 @@ export class SlideDrawer {
       box.dataset.vertical = body.vert;
     }
     box.textBody = body;
+    // WordArt: laid out flat, then each letter placed along the warp once the slide is on the page (warpText).
+    if (body.warp && !prompt) box.dataset.warp = "1";
     const flow = html("div", "text__flow", box);
     if (!body.wrap) {
       flow.style.inlineSize = "max-content";
@@ -1140,6 +1145,127 @@ function channels(color) {
   if (color.startsWith("#")) return [1, 3, 5].map((index) => parseInt(color.slice(index, index + 2), 16) / 255);
   const values = color.match(/[\d.]+/g)?.map(Number) ?? [0, 0, 0];
   return values.slice(0, 3).map((value) => value / 255);
+}
+
+/** Measures letters' ink and fonts' ascent, as a canvas sets them. */
+let measuring = null;
+function fontMetrics(font, text) {
+  measuring ??= document.createElement("canvas").getContext("2d");
+  measuring.font = font;
+  const metrics = measuring.measureText(text);
+  return {
+    ascent: metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent,
+    descent: metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent,
+    inkAscent: metrics.actualBoundingBoxAscent, inkDescent: metrics.actualBoundingBoxDescent,
+  };
+}
+
+/**
+ * Lays a WordArt box's letters along its warp, as the Apple apps do: the text
+ * stays laid out flat, unseen, and each letter is measured there (offsets,
+ * which zoom and turned shapes leave alone) and drawn again in SVG where the
+ * warp puts it. Text being typed stays flat, and shows its own letters.
+ */
+export function warpText(box) {
+  const body = box.textBody;
+  const flow = box.querySelector(":scope > .text__flow");
+  box.querySelector(":scope > .text__warp")?.remove();
+  delete box.dataset.warped;
+  if (!body?.warp || !flow || box.classList.contains("is-editing")) return;
+  // Every letter in a span of its own, so it can be measured where it lies, none joined to the next.
+  flow.style.fontVariantLigatures = "none";
+  flow.style.fontKerning = "none";
+  const segmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+  for (const run of flow.querySelectorAll(".text__run, .text__bullet")) {
+    if (run.querySelector(".text__glyph") || !run.textContent) continue;
+    const text = run.textContent;
+    const letters = segmenter ? Array.from(segmenter.segment(text), (part) => part.segment) : Array.from(text);
+    run.replaceChildren(...letters.map((letter) => {
+      const span = html("span", "text__glyph");
+      span.textContent = letter;
+      return span;
+    }));
+  }
+  // The letters line by line: a line ends at a break, a new paragraph, or where the text wraps back.
+  const lines = [];
+  let line = null;
+  let paragraph = null;
+  for (const element of flow.querySelectorAll(".text__glyph, br")) {
+    const inParagraph = element.closest(".text__p");
+    if (element.localName === "br") {
+      line = null;
+      continue;
+    }
+    const style = getComputedStyle(element);
+    const size = parseFloat(style.fontSize) || 0;
+    const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const metrics = fontMetrics(font, element.textContent);
+    const letter = {
+      element, style, font, size, text: element.textContent, left: element.offsetLeft, right: element.offsetLeft + element.offsetWidth,
+      baseline: element.offsetTop + metrics.ascent, metrics, blank: !element.textContent.trim(),
+    };
+    if (!line || inParagraph !== paragraph || letter.left < line.letters[line.letters.length - 1].left - 1) {
+      line = { letters: [] };
+      lines.push(line);
+      paragraph = inParagraph;
+    }
+    line.letters.push(letter);
+  }
+  for (const each of lines) {
+    const inked = each.letters.filter((letter) => !letter.blank);
+    each.start = Math.min(...each.letters.map((letter) => letter.left));
+    each.width = Math.max(...(inked.length ? inked : each.letters).map((letter) => letter.right)) - each.start;
+    each.baseline = Math.max(...each.letters.map((letter) => letter.baseline));
+    each.top = Math.min(...each.letters.map((letter) => (letter.blank ? letter.baseline - letter.metrics.ascent : letter.baseline - letter.metrics.inkAscent)));
+    each.bottom = Math.max(...each.letters.map((letter) => (letter.blank ? letter.baseline + letter.metrics.descent : letter.baseline + letter.metrics.inkDescent)));
+  }
+  const bands = warpBands(body.warp);
+  // Each band's lines: how high and low their letters reach, and the first one's baseline.
+  const reaches = new Map();
+  lines.forEach((each, index) => {
+    const band = bandForLine(bands, index, lines.length);
+    const reach = reaches.get(band);
+    reaches.set(band, reach
+      ? { top: Math.min(reach.top, each.top), bottom: Math.max(reach.bottom, each.bottom), baseline: reach.baseline }
+      : { top: each.top, bottom: each.bottom, baseline: each.baseline });
+  });
+  // Drawn in the shape's own space, which the box sits in at the text's inset rectangle.
+  const drawing = svg("svg", { class: "text__warp", width: 1, height: 1, overflow: "visible", "aria-hidden": "true" });
+  Object.assign(drawing.style, { left: `${-body.x}px`, top: `${-body.y}px` });
+  lines.forEach((each, index) => {
+    const band = bandForLine(bands, index, lines.length);
+    const reach = reaches.get(band);
+    const place = placement(bands, band, reach.top, reach.bottom, reach.baseline);
+    for (const letter of each.letters) {
+      if (letter.blank) continue;
+      const [a, b, c, d, e, f] = letterTransform(
+        bands, place, letter.left - each.start, letter.right - each.start, each.width, letter.baseline, letter.size,
+      );
+      // SVG letters stand on a y axis pointing down.
+      const glyph = svg("text", { transform: `matrix(${a} ${b} ${-c} ${-d} ${e} ${f})` }, drawing);
+      glyph.textContent = letter.text;
+      Object.assign(glyph.style, {
+        font: letter.font, fill: letter.style.color, fontKerning: "none",
+      });
+      const stroke = letter.style.webkitTextStrokeWidth;
+      if (stroke && parseFloat(stroke) > 0) {
+        Object.assign(glyph.style, { stroke: letter.style.webkitTextStrokeColor, strokeWidth: stroke, paintOrder: "stroke fill" });
+      }
+      if (letter.style.textShadow && letter.style.textShadow !== "none") {
+        const [color, dx, dy, blur] = parseShadow(letter.style.textShadow);
+        if (color) glyph.style.filter = `drop-shadow(${dx} ${dy} ${blur} ${color})`;
+      }
+    }
+  });
+  box.append(drawing);
+  box.dataset.warped = "1";
+}
+
+/** A computed `text-shadow`'s colour and offsets, as `drop-shadow()` takes them. */
+function parseShadow(shadow) {
+  const color = shadow.match(/rgba?\([^)]*\)|#[0-9a-f]+/i)?.[0];
+  const lengths = shadow.replace(color ?? "", "").trim().split(/\s+/).filter(Boolean);
+  return [color, lengths[0] ?? "0px", lengths[1] ?? "0px", lengths[2] ?? "0px"];
 }
 
 /**

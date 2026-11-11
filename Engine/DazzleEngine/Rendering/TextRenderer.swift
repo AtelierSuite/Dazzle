@@ -38,6 +38,8 @@ public struct TextRenderer {
         /// Whether the lines follow each other the other way across the
         /// turned box, so vertical lines run left to right.
         var reversesLines = false
+        /// The WordArt warp the letters are laid along, if any.
+        var warp: TextWarpGeometry?
     }
 
     /// How text is set in columns: how many, how wide, and how far apart.
@@ -129,6 +131,9 @@ public struct TextRenderer {
             inner = CGRect(x: -inner.height / 2, y: -inner.width / 2, width: inner.height, height: inner.width)
         }
         let reversesLines = properties.runsVertically && !properties.linesStartAtRight && properties.vertical != "vert270"
+        // WordArt warps horizontal text in one column, over the box inside its insets.
+        let warp = properties.runsVertically || ColumnSet(properties, width: inner.width).count > 1
+            ? nil : TextWarpGeometry(properties.warp, in: inner)
         func shaped(_ string: NSAttributedString) -> NSAttributedString { Self.shaped(string, vertical: properties.vertical) }
 
         var fontScale = 1.0
@@ -217,7 +222,7 @@ public struct TextRenderer {
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
         return Layout(
             columns: [Layout.Column(frame: frame, origin: CGPoint(x: originX, y: inner.minY + offset), height: frameHeight)],
-            turn: turn, reversesLines: reversesLines
+            turn: turn, reversesLines: reversesLines, warp: warp
         )
     }
 
@@ -255,6 +260,11 @@ public struct TextRenderer {
         if let turn = layout.turn {
             context.translateBy(x: turn.center.x, y: turn.center.y)
             context.rotate(by: turn.angle)
+        }
+        // Text laid out unseen, around what is being typed, stays flat as it is typed.
+        if let warp = layout.warp, !hidesText {
+            drawWarped(layout, warp: warp, appearances: paragraphAppearances, context: context)
+            return
         }
         if !paragraphAppearances.isEmpty {
             drawParagraphs(layout, appearances: paragraphAppearances, context: context)
@@ -378,6 +388,132 @@ public struct TextRenderer {
                 drawStackedLetters(in: entry.line, at: .zero, context: context)
                 drawStrikethroughs(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
+            }
+        }
+    }
+
+    // MARK: - Warped text
+
+    /// One run's letters, laid along a warp.
+    private struct WarpedRun {
+        var paragraph: Int
+        var outline: CGPath
+        var color: CGColor?
+        /// CoreText's stroke width, a percentage of the font size, negative when the letters are filled too.
+        var strokeWidth: CGFloat
+        var strokeColor: CGColor?
+        var shadow: ShadowBox?
+    }
+
+    /// Each line's letters as outlines, every one laid along the warp where
+    /// its place in the line puts it. Underlines and strikethroughs are left out.
+    private func warpedRuns(_ layout: Layout, warp: TextWarpGeometry) -> [WarpedRun] {
+        let placed = lines(of: layout)
+        let measured = placed.map { line, origin, column in
+            let baseline = column.origin.y + column.height - origin.y
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            let width = CGFloat(CTLineGetTypographicBounds(line, &ascent, &descent, nil) - CTLineGetTrailingWhitespaceWidth(line))
+            // How high and low the letters themselves reach, or the line's own height when it has none.
+            let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+            let reach = ink.isNull || ink.isEmpty ? (top: baseline - ascent, bottom: baseline + descent)
+                : (top: baseline - ink.maxY, bottom: baseline - ink.minY)
+            return (line: line, baseline: baseline, width: width, top: reach.top, bottom: reach.bottom)
+        }
+        // Each band's lines: how high and low their letters reach, and the first one's baseline.
+        var reaches: [Int: (top: CGFloat, bottom: CGFloat, baseline: CGFloat)] = [:]
+        for (index, line) in measured.enumerated() {
+            let band = warp.band(forLine: index, of: measured.count)
+            let reach = reaches[band] ?? (line.top, line.bottom, line.baseline)
+            reaches[band] = (min(reach.top, line.top), max(reach.bottom, line.bottom), reach.baseline)
+        }
+        var placements: [Int: TextWarpGeometry.Placement] = [:]
+        for (band, reach) in reaches {
+            placements[band] = warp.placement(band: band, top: reach.top, bottom: reach.bottom, baseline: reach.baseline)
+        }
+        var result: [WarpedRun] = []
+        for (index, line) in measured.enumerated() {
+            guard let placement = placements[warp.band(forLine: index, of: measured.count)] else { continue }
+            for run in CTLineGetGlyphRuns(line.line) as? [CTRun] ?? [] {
+                let count = CTRunGetGlyphCount(run)
+                let attributes = CTRunGetAttributes(run) as NSDictionary
+                guard count > 0, let font = attributes[kCTFontAttributeName as String].map({ $0 as! CTFont }) else { // swiftlint:disable:this force_cast
+                    continue
+                }
+                var glyphs = [CGGlyph](repeating: 0, count: count)
+                var positions = [CGPoint](repeating: .zero, count: count)
+                var advances = [CGSize](repeating: .zero, count: count)
+                CTRunGetGlyphs(run, CFRange(location: 0, length: 0), &glyphs)
+                CTRunGetPositions(run, CFRange(location: 0, length: 0), &positions)
+                CTRunGetAdvances(run, CFRange(location: 0, length: 0), &advances)
+                let outline = CGMutablePath()
+                for index in 0..<count {
+                    var transform = warp.letterTransform(
+                        placement, from: positions[index].x, to: positions[index].x + advances[index].width,
+                        lineWidth: line.width, baseline: line.baseline - positions[index].y, ascent: CTFontGetSize(font)
+                    )
+                    if let letter = CTFontCreatePathForGlyph(font, glyphs[index], &transform) { outline.addPath(letter) }
+                }
+                guard !outline.isEmpty else { continue }
+                let color = attributes[Self.colorKey.rawValue].map { $0 as! CGColor } // swiftlint:disable:this force_cast
+                let strokePercent = (attributes[Self.strokeWidthKey.rawValue] as? NSNumber)?.doubleValue ?? 0
+                result.append(WarpedRun(
+                    paragraph: attributes[Self.paragraphIndexKey.rawValue] as? Int ?? 0, outline: outline, color: color,
+                    strokeWidth: CGFloat(strokePercent) / 100 * CTFontGetSize(font),
+                    strokeColor: attributes[Self.strokeColorKey.rawValue].map { $0 as! CGColor }, // swiftlint:disable:this force_cast
+                    shadow: attributes[Self.shadowKey.rawValue] as? ShadowBox
+                ))
+            }
+        }
+        return result
+    }
+
+    /// Draws text laid along its warp: every shadow first, then the letters,
+    /// each paragraph moved and faded as `appearances` says.
+    private func drawWarped(_ layout: Layout, warp: TextWarpGeometry, appearances: [Int: AnimatedAppearance], context: CGContext) {
+        let runs = warpedRuns(layout, warp: warp)
+        let paragraphs = Dictionary(grouping: runs, by: \.paragraph)
+        func each(_ draw: (WarpedRun) -> Void) {
+            for index in paragraphs.keys.sorted() {
+                guard let paragraph = paragraphs[index] else { continue }
+                let appearance = appearances[index] ?? AnimatedAppearance()
+                guard appearance.opacity > 0.001, appearance.axisScale.width != 0, appearance.axisScale.height != 0 else { continue }
+                context.saveGState()
+                let bounds = paragraph.reduce(CGRect.null) { $0.union($1.outline.boundingBoxOfPath) }
+                let faded = appearances[index].map { SlideRenderer.apply($0, to: bounds, context: context) } ?? false
+                paragraph.forEach(draw)
+                if faded { context.endTransparencyLayer() }
+                context.restoreGState()
+            }
+        }
+        let space = context.ctm
+        each { run in
+            guard let box = run.shadow else { return }
+            context.saveGState()
+            // The letters are drawn far off to one side, and their shadow brought back by as much.
+            let away = CGSize(width: 100_000, height: 0)
+            let ctm = context.ctm
+            let displacement = away.applying(CGAffineTransform(a: ctm.a, b: ctm.b, c: ctm.c, d: ctm.d, tx: 0, ty: 0))
+            let color = box.color.copy(alpha: box.color.alpha * (run.color?.alpha ?? 1)) ?? box.color
+            SlideRenderer.setShadow(box.shadow, color: color, space: space, context: context, displacement: displacement)
+            context.translateBy(x: away.width, y: away.height)
+            context.addPath(run.outline)
+            context.setFillColor(run.color ?? CGColor(gray: 0, alpha: 1))
+            context.fillPath()
+            context.restoreGState()
+        }
+        each { run in
+            if run.strokeWidth <= 0, let color = run.color {
+                context.addPath(run.outline)
+                context.setFillColor(color)
+                context.fillPath()
+            }
+            if run.strokeWidth != 0, let color = run.strokeColor {
+                context.addPath(run.outline)
+                context.setStrokeColor(color)
+                context.setLineWidth(abs(run.strokeWidth))
+                context.setLineJoin(.round)
+                context.strokePath()
             }
         }
     }
