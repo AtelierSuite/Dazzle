@@ -84,17 +84,23 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private var unsupportedItem: NSToolbarItem?
 
     private func updateToolbar() {
-        unsupportedItem?.isHidden = deck.presentation.unsupportedFeatures.isEmpty
+        fontSubstitutions = deck.presentation.fontSubstitutions
+        unsupportedItem?.isHidden = deck.presentation.unsupportedFeatures.isEmpty && fontSubstitutions.isEmpty
     }
+
+    /// The deck's fonts this Mac draws in others, as of the last change.
+    private var fontSubstitutions: [FontSubstitution] = []
 
     @objc func showUnsupportedFeatures(_ sender: Any?) {
         let report = deck.presentation.unsupportedFeatures
         var lines: [String] = []
         if !report.omissions.isEmpty { lines += [String(localized: "Notice.Omitted.Intro"), report.omissionMessage] }
         if !report.features.isEmpty { lines += [String(localized: "Notice.UnsupportedFeatures.Intro"), report.noticeMessage] }
+        if !fontSubstitutions.isEmpty { lines += [String(localized: "Notice.Fonts.Intro"), fontSubstitutions.noticeMessage] }
         let label = NSTextField(wrappingLabelWithString: lines.joined(separator: "\n\n"))
         label.textColor = .secondaryLabelColor
-        let title = NSTextField(labelWithString: String(localized: "Notice.UnsupportedFeatures.Title"))
+        let title = NSTextField(labelWithString: report.isEmpty
+            ? String(localized: "Notice.Fonts.Title") : String(localized: "Notice.UnsupportedFeatures.Title"))
         title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
         let stack = NSStackView(views: [title, label])
         stack.orientation = .vertical
@@ -188,7 +194,8 @@ extension DocumentWindowController: NSToolbarDelegate {
             return button(identifier, "Mac.Toolbar.Media", "photo", #selector(insertMedia(_:)))
         case .unsupportedFeatures:
             let item = button(identifier, "Toolbar.UnsupportedFeatures", "exclamationmark.triangle", #selector(showUnsupportedFeatures(_:)))
-            item.isHidden = deck.presentation.unsupportedFeatures.isEmpty
+            fontSubstitutions = deck.presentation.fontSubstitutions
+            item.isHidden = deck.presentation.unsupportedFeatures.isEmpty && fontSubstitutions.isEmpty
             unsupportedItem = item
             return item
         case .notes:

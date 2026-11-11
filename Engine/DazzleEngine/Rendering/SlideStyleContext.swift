@@ -139,13 +139,6 @@ public struct SlideStyleContext: Sendable {
 
     /// A theme font reference such as `+mj-lt`, made a typeface name.
     public func typeface(_ name: String?, eastAsian: Bool = false) -> String? {
-        guard let name else { return nil }
-        switch name {
-        case "+mj-lt": return theme.majorFont
-        case "+mn-lt": return theme.minorFont
-        case "+mj-ea": return theme.majorEastAsianFont ?? theme.majorFont
-        case "+mn-ea": return theme.minorEastAsianFont ?? theme.minorFont
-        default: return name.hasPrefix("+") ? theme.minorFont : name
-        }
+        name.map(theme.typeface)
     }
 }
