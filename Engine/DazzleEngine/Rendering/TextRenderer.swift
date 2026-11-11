@@ -38,6 +38,8 @@ public struct TextRenderer {
         /// Whether the lines follow each other the other way across the
         /// turned box, so vertical lines run left to right.
         var reversesLines = false
+        /// How the text was shrunk to fit, when it was.
+        var fit = BodyProperties.Autofit.ShrinkStep(fontScale: 1, lineSpacingReduction: 0)
         /// The WordArt warp the letters are laid along, if any.
         var warp: TextWarpGeometry?
     }
@@ -161,12 +163,16 @@ public struct TextRenderer {
             return needed > inner.height + 1
         }
 
-        // Shrink on overflow, as PowerPoint would have when it last saved.
-        if case .normal = properties.autofit, fontScale == 1, overflows() {
-            for scale in stride(from: 0.9, through: 0.3, by: -0.1) {
+        // Shrink on overflow a step at a time, as PowerPoint would have when
+        // it last saved, unless it said by how much. The least step stands
+        // even when the text still overflows.
+        var fit = BodyProperties.Autofit.ShrinkStep(fontScale: fontScale, lineSpacingReduction: spacingReduction)
+        if let steps = properties.autofit?.shrinkStepsLeft, !steps.isEmpty, overflows() {
+            for step in steps {
+                fit = step
                 string = shaped(attributedString(
-                    body, shape: shape, sources: sources, scale: scale, spacingReduction: 0.1, colorOverride: colorOverride,
-                    hidesText: hidesText, paragraphOpacity: paragraphOpacity,
+                    body, shape: shape, sources: sources, scale: step.fontScale, spacingReduction: step.lineSpacingReduction,
+                    colorOverride: colorOverride, hidesText: hidesText, paragraphOpacity: paragraphOpacity,
                     colorChanges: colorChanges, paragraphColorChanges: paragraphColorChanges
                 ))
                 framesetter = CTFramesetterCreateWithAttributedString(string)
@@ -198,7 +204,7 @@ public struct TextRenderer {
                     origin: CGPoint(x: x, y: inner.minY + offset), height: column.1
                 )
             }
-            return Layout(columns: laidOut, turn: turn, reversesLines: reversesLines)
+            return Layout(columns: laidOut, turn: turn, reversesLines: reversesLines, fit: fit)
         }
 
         var originX = inner.minX
@@ -222,7 +228,7 @@ public struct TextRenderer {
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
         return Layout(
             columns: [Layout.Column(frame: frame, origin: CGPoint(x: originX, y: inner.minY + offset), height: frameHeight)],
-            turn: turn, reversesLines: reversesLines, warp: warp
+            turn: turn, reversesLines: reversesLines, fit: fit, warp: warp
         )
     }
 
@@ -541,13 +547,46 @@ public struct TextRenderer {
         return areas
     }
 
+    /// The rectangle a shape's text is set in, in slide points, insets and all.
+    public static func textFrame(of shape: SlideShape) -> CGRect {
+        let frame = shape.frame.points
+        return shape.textFrame?.points ?? shape.geometry.presetName.map {
+            PresetGeometry.textRect($0, adjustments: shape.geometry.adjustments, in: frame)
+        } ?? frame
+    }
+
+    /// How `body` shrinks to fit `shape`, worked out afresh as PowerPoint
+    /// would after an edit: the `normAutofit` to save, so other apps set the
+    /// text the same size. Nil when the text doesn't shrink on overflow.
+    public func shrinkFit(of body: TextBody, shape: SlideShape, sources: [SlideShape]) -> BodyProperties.Autofit? {
+        var measured = shape
+        measured.text = body
+        guard case .normal = style.bodyProperties(for: measured, sources: sources).merged(over: body.properties).autofit else {
+            return nil
+        }
+        var unfitted = body
+        unfitted.properties.autofit = .normal(fontScale: 1, lineSpacingReduction: 0)
+        measured.text = unfitted
+        guard let layout = layout(unfitted, shape: measured, sources: sources, in: Self.textFrame(of: shape),
+                                  colorOverride: nil, hidesText: false) else {
+            return unfitted.properties.autofit
+        }
+        return layout.fit.autofit
+    }
+
+    /// How far `shape`'s text is shrunk where the slide draws it: as the file
+    /// says, or as far as it takes to fit when the file says nothing.
+    public func drawnShrink(of shape: SlideShape, sources: [SlideShape]) -> BodyProperties.Autofit.ShrinkStep {
+        let unshrunk = BodyProperties.Autofit.ShrinkStep(fontScale: 1, lineSpacingReduction: 0)
+        guard let body = shape.text else { return unshrunk }
+        return layout(body, shape: shape, sources: sources, in: Self.textFrame(of: shape), colorOverride: nil, hidesText: false)?.fit
+            ?? unshrunk
+    }
+
     /// Where a shape's text is laid out, in slide points: the shape's text
     /// rectangle with the insets taken off, and the body properties in force.
     public func textArea(of shape: SlideShape, sources: [SlideShape]) -> (rect: CGRect, properties: BodyProperties) {
-        let frame = shape.frame.points
-        let textFrame = shape.textFrame?.points ?? shape.geometry.presetName.map {
-            PresetGeometry.textRect($0, adjustments: shape.geometry.adjustments, in: frame)
-        } ?? frame
+        let textFrame = Self.textFrame(of: shape)
         let properties = style.bodyProperties(for: shape, sources: sources)
         let rect = CGRect(
             x: textFrame.minX + EMU.points(properties.leftInset ?? 91_440),

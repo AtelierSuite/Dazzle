@@ -14,6 +14,8 @@ struct InPlaceTextEditor: UIViewRepresentable {
     /// View points per slide point.
     var scale: CGFloat
     var fontScale: Double
+    /// How much closer lines are set in text shrunk to fit.
+    var lineSpacingReduction: Double = 0
     var anchor: BodyProperties.Anchor
     /// How the text runs, when it runs vertically: the editor is turned to
     /// it, and Japanese and Chinese stand upright in vertical lines.
@@ -56,7 +58,7 @@ struct InPlaceTextEditor: UIViewRepresentable {
     func updateUIView(_ view: AnchoredTextView, context: Context) {
         let coordinator = context.coordinator
         let needsReload = body != coordinator.lastBody || scale != coordinator.parent.scale
-            || fontScale != coordinator.parent.fontScale
+            || fontScale != coordinator.parent.fontScale || lineSpacingReduction != coordinator.parent.lineSpacingReduction
         coordinator.parent = self
         view.anchor = anchor
         if needsReload { coordinator.load(into: view) }
@@ -80,12 +82,12 @@ struct InPlaceTextEditor: UIViewRepresentable {
             let parent = parent
             view.attributedText = EditableText.vertical(EditableText.attributedString(
                 parent.body, shape: parent.shape, sources: parent.sources, style: parent.style, scale: parent.scale,
-                fontScale: parent.fontScale, slideNumber: parent.slideNumber
+                fontScale: parent.fontScale, lineSpacingReduction: parent.lineSpacingReduction, slideNumber: parent.slideNumber
             ), parent.vertical)
             if view.attributedText.length == 0 {
                 view.typingAttributes = EditableText.vertical(EditableText.typingAttributes(
                     for: parent.body, shape: parent.shape, sources: parent.sources, style: parent.style,
-                    scale: parent.scale, fontScale: parent.fontScale
+                    scale: parent.scale, fontScale: parent.fontScale, lineSpacingReduction: parent.lineSpacingReduction
                 ), parent.vertical)
             }
             if let selection = parent.selection {

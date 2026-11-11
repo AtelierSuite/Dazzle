@@ -612,6 +612,8 @@ struct WebRenderer {
         body.properties.topInset = cell.marginTop ?? 45_720
         body.properties.bottomInset = cell.marginBottom ?? 45_720
         if body.properties.anchor == nil { body.properties.anchor = cell.anchor }
+        // A table's rows grow to hold their text, which never shrinks to fit a cell.
+        body.properties.autofit = nil
         var color: DrawingColor?
         var bold: Bool?
         if let tableStyle {
@@ -690,6 +692,9 @@ struct WebRenderer {
             json["fit"] = "shrink"
             json["scale"] = scale
             json["reduce"] = reduction
+            // The steps the page takes, in turn, when the text overflows, as PowerPoint would.
+            let steps = properties.autofit?.shrinkStepsLeft ?? []
+            if !steps.isEmpty { json["steps"] = steps.map { [$0.fontScale, $0.lineSpacingReduction] } }
         case .shape?:
             json["fit"] = "grow"
         default:

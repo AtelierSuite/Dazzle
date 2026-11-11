@@ -1041,6 +1041,58 @@ test("plays a Keynote movie as the slide appears and its sound on a tap, and sav
   assert.match(new TextDecoder().decode(saved.get("ppt/slides/slide1.xml")), /p14:media/);
 });
 
+/** Text boxes that shrink on overflow, some saying how far and some not, and a table whose cell says to shrink. */
+function deckWithShrinkingText() {
+  call("new", { name: "Shrinking.pptx" });
+  const entries = unzip(call("save", { format: "pptx" }).payload);
+  const name = "ppt/slides/slide1.xml";
+  const box = (id, label, fit, bodyAttributes = "") => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${label}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr><a:xfrm><a:off x="457200" y="457200"/><a:ext cx="1828800" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+      <p:txBody><a:bodyPr wrap="square"${bodyAttributes}>${fit}</a:bodyPr><a:lstStyle/>
+        <a:p><a:r><a:rPr lang="en-US"/><a:t>Text that runs on past the bottom of its box</a:t></a:r></a:p></p:txBody>
+    </p:sp>`;
+  const shapes = box(950, "Unsaid", "<a:normAutofit/>")
+    + box(951, "Said", '<a:normAutofit fontScale="62500" lnSpcReduction="20000"/>')
+    + box(952, "Closed up", '<a:normAutofit lnSpcReduction="10000"/>')
+    + box(953, "Columns", "<a:normAutofit/>", ' numCol="2"')
+    + box(954, "Upright", "<a:normAutofit/>", ' vert="eaVert"')
+    + `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="955" name="Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+      <p:xfrm><a:off x="457200" y="3200400"/><a:ext cx="914400" cy="370332"/></p:xfrm>
+      <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr/>
+        <a:tblGrid><a:gridCol w="914400"/></a:tblGrid>
+        <a:tr h="370332"><a:tc><a:txBody><a:bodyPr><a:normAutofit fontScale="40000"/></a:bodyPr><a:p><a:r><a:rPr lang="en-US"/><a:t>Cell</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+      </a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
+  entries.set(name, new TextEncoder().encode(new TextDecoder().decode(entries.get(name)).replace("</p:spTree>", `${shapes}</p:spTree>`)));
+  return zip(entries);
+}
+
+test("shrinks overflowing text in PowerPoint's steps unless the file says how far, but never in a table", () => {
+  const opened = call("open", { name: "Shrinking.pptx" }, deckWithShrinkingText());
+  const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
+  const body = (label) => shapes.find((node) => node.name === label)?.text;
+  const steps = body("Unsaid").steps;
+  assert.deepEqual(steps[0], [1, 0.1], "lines close up a tenth first");
+  assert.deepEqual(steps[1], [1, 0.2], "and then a fifth");
+  assert.deepEqual(steps.map(([scale]) => scale).filter((scale, index, all) => all.indexOf(scale) === index),
+    [1, 0.925, 0.85, 0.775, 0.7, 0.625, 0.55, 0.475, 0.4, 0.25], "then the letters shrink as PowerPoint's fontScale steps");
+  assert.ok(steps.slice(6).every(([, reduce]) => reduce === 0.2), "a fifth closer from 77.5% down");
+  assert.deepEqual(steps.at(-1), [0.25, 0.2], "a quarter is the least");
+
+  const said = body("Said");
+  assert.equal(said.steps, undefined, "a file that says how far is drawn as it says");
+  assert.deepEqual([said.scale, said.reduce], [0.625, 0.2]);
+  assert.deepEqual(body("Closed up").steps[0], [1, 0.2], "lines PowerPoint closed up go on from there");
+  assert.equal(body("Columns").cols, 2);
+  assert.deepEqual(body("Columns").steps, steps, "text in columns shrinks the same way");
+  assert.equal(body("Upright").vert, "eaVert");
+  assert.deepEqual(body("Upright").steps, steps, "and vertical text");
+
+  const cell = shapes.find((node) => node.name === "Table").table.cells[0].text;
+  assert.equal(cell.fit, undefined, "a table's rows grow rather than its text shrink");
+  assert.equal(cell.steps, undefined);
+});
+
 test("keeps WordArt warps when the text is typed into, saved and reopened", () => {
   call("new", { name: "Untitled.pptx" });
   const opened = call("open", { name: "WordArt.pptx" }, deckWithShapes());

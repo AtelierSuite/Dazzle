@@ -1240,6 +1240,8 @@ public struct TableLayout {
     /// A cell's text, with its margins and the style's text colour and weight.
     public func body(for cell: SlideTable.Cell, row: Int, includeEmpty: Bool = false) -> TextBody? {
         guard var body = cell.text, includeEmpty || !body.isEmpty else { return nil }
+        // A table's rows grow to hold their text, which never shrinks to fit a cell.
+        body.properties.autofit = nil
         body.properties.leftInset = cell.marginLeft ?? 91_440
         body.properties.rightInset = cell.marginRight ?? 91_440
         body.properties.topInset = cell.marginTop ?? 45_720
