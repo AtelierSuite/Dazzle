@@ -229,19 +229,25 @@ struct KeynoteConversionTests {
 
     @Test("What could not be brought across is reported")
     func omissions() {
-        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .builds])
+        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .approximatedBuilds])
     }
 
     @Test("Builds become animations on the shapes they build")
     func builds() throws {
         let shape = try #require(presentation.slides[0].shapes.first { $0.fill != nil && $0.text == nil })
         let dissolve = try #require(presentation.slides[0].animations.first)
-        #expect(presentation.slides[0].animations.count == 1)
+        #expect(presentation.slides[0].animations.count == 2)
         #expect(dissolve.shapeID == shape.shapeID)
         #expect(dissolve.category == .entrance)
         #expect(dissolve.effect == .fade)
         #expect(dissolve.trigger == .onClick)
         #expect(dissolve.duration == 0.75)
+        // A motion path, which Keynote keeps in a form Dazzle doesn't read,
+        // plays as the nearest emphasis rather than being dropped.
+        let motion = presentation.slides[0].animations[1]
+        #expect(motion.shapeID == shape.shapeID)
+        #expect(motion.category == .emphasis)
+        #expect(motion.effect == .pulse)
 
         let box = try #require(presentation.slides[1].shapes.first)
         let paragraphs = presentation.slides[1].animations
@@ -251,6 +257,38 @@ struct KeynoteConversionTests {
 
         let reread = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
         #expect(reread.slides[1].animations.map(\.paragraphs) == [0...0, 1...1])
+    }
+
+    @Test("Keynote's build effects become the nearest of Dazzle's")
+    func buildEffects() throws {
+        func effect(_ type: String, _ name: String) -> ShapeAnimation.Effect? { KeynoteBuilds.effect(type: type, name: name)?.1 }
+        #expect(effect("In", "apple:dissolve") == .fade)
+        #expect(effect("In", "apple:move-in") == .fly(.bottom))
+        #expect(effect("In", "apple:drop") == .fly(.top))
+        #expect(effect("Out", "apple:fall") == .fly(.bottom))
+        #expect(effect("In", "apple:drift") == .float)
+        #expect(effect("In", "apple:typewriter") == .wipe(.left))
+        #expect(effect("In", "apple:twirl") == .zoom)
+        let blinds = try #require(AnimationFilter("blinds(horizontal)"))
+        #expect(effect("In", "apple:blinds") == .filter(blinds, id: 3, subtype: 10))
+        let circle = try #require(AnimationFilter("circle(out)"))
+        #expect(effect("Out", "apple:wipe-iris") == .filter(circle, id: 6, subtype: 32))
+        let dissolve = try #require(AnimationFilter("dissolve"))
+        #expect(effect("In", "apple:sparkle") == .filter(dissolve, id: 9, subtype: 0))
+        #expect(KeynoteBuilds.effect(type: "Out", name: "apple:shimmer")?.0 == .exit)
+
+        #expect(KeynoteBuilds.effect(type: "Action", name: "apple:action-flip")?.0 == .emphasis)
+        #expect(effect("Action", "apple:action-flip") == .spin)
+        #expect(effect("Action", "apple:action-swing") == .teeter)
+        #expect(effect("Action", "apple:action-scale") == .growShrink)
+
+        // Effects with no counterpart are left to the nearest.
+        #expect(effect("In", "apple:made-up") == nil)
+        #expect(effect("Action", "apple:action-motion-path") == nil)
+        #expect(KeynoteBuilds.nearestEffect(type: "In") == (.entrance, .fade))
+        #expect(KeynoteBuilds.nearestEffect(type: "Out") == (.exit, .fade))
+        #expect(KeynoteBuilds.nearestEffect(type: "Action") == (.emphasis, .pulse))
+        #expect(KeynoteBuilds.nearestEffect(type: nil) == (.entrance, .fade))
     }
 
     @Test("Transitions are kept as PowerPoint's nearest, and automatic ones move on by themselves")
