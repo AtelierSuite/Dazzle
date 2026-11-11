@@ -67,13 +67,25 @@ public struct KeynoteTable {
 
         let visibleRows = rows.indices.filter { !rows[$0].hidden }
         let visibleColumns = columns.indices.filter { !columns[$0].hidden }
-        var covered: Set<[Int]> = []
-        for (origin, merge) in merges {
-            for row in origin[0]..<(origin[0] + merge.rowSpan) {
-                for column in origin[1]..<(origin[1] + merge.columnSpan) where [row, column] != origin {
-                    covered.insert([row, column])
-                }
-            }
+        // Merged ranges, kept within the table and counted in the rows and
+        // columns shown. A range whose top row or left column is hidden is
+        // anchored at the first shown, which takes the hidden cell's value.
+        // One that overlaps a range already merged is left unmerged.
+        var spans: [[Int]: Merge] = [:]
+        var mergedFrom: [[Int]: [Int]] = [:]
+        var coveredBy: [[Int]: [Int]] = [:]
+        for (origin, merge) in merges.sorted(by: { $0.key.lexicographicallyPrecedes($1.key) }) {
+            let rowRange = origin[0]..<min(origin[0] + merge.rowSpan, rowCount)
+            let columnRange = origin[1]..<min(origin[1] + merge.columnSpan, columnCount)
+            let shownRows = rowRange.filter { !rows[$0].hidden }
+            let shownColumns = columnRange.filter { !columns[$0].hidden }
+            guard let top = shownRows.first, let left = shownColumns.first, shownRows.count * shownColumns.count > 1 else { continue }
+            let range = rowRange.flatMap { row in columnRange.map { [row, $0] } }
+            guard range.allSatisfy({ coveredBy[$0] == nil && spans[$0] == nil }) else { continue }
+            let anchor = [top, left]
+            spans[anchor] = Merge(rowSpan: shownRows.count, columnSpan: shownColumns.count)
+            mergedFrom[anchor] = origin
+            for cell in range where cell != anchor { coveredBy[cell] = anchor }
         }
 
         var rowXML = ""
@@ -82,7 +94,7 @@ public struct KeynoteTable {
             let isFooter = row >= rowCount - footerRows && !isHeaderRow
             var cellXML = ""
             for column in visibleColumns {
-                let cell = cells[[row, column]] ?? Cell()
+                let cell = cells[mergedFrom[[row, column]] ?? [row, column]] ?? Cell()
                 let isHeaderColumn = column < headerColumns
                 // Header rows win over header columns where they cross.
                 let regionStyle = message.reference(isHeaderRow ? 19 : isFooter ? 21 : isHeaderColumn ? 20 : 18)
@@ -95,13 +107,14 @@ public struct KeynoteTable {
                 }
 
                 var attributes = ""
-                if let merge = merges[[row, column]] {
+                if let merge = spans[[row, column]] {
                     if merge.columnSpan > 1 { attributes += " gridSpan=\"\(merge.columnSpan)\"" }
                     if merge.rowSpan > 1 { attributes += " rowSpan=\"\(merge.rowSpan)\"" }
                 }
-                if covered.contains([row, column]) {
-                    let mergedAcross = covered.contains([row, column - 1]) || merges[[row, column - 1]].map { $0.columnSpan > 1 } == true
-                    attributes += mergedAcross ? " hMerge=\"1\"" : " vMerge=\"1\""
+                // A cell inside a range continues it from the left, from above or both.
+                if let anchor = coveredBy[[row, column]] {
+                    if column > anchor[1] { attributes += " hMerge=\"1\"" }
+                    if row > anchor[0] { attributes += " vMerge=\"1\"" }
                 }
 
                 let paragraphs: String
