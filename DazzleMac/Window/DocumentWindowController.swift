@@ -173,14 +173,7 @@ extension DocumentWindowController: NSToolbarDelegate {
             }
             return item
         case .insertTable:
-            let item = menuItem(identifier, "Menu.Insert.Table", "tablecells", nil)
-            for size in Self.tableSizes {
-                let entry = NSMenuItem(title: String(format: String(localized: "Table.Size"), size.columns, size.rows),
-                                       action: #selector(insertTable(_:)), keyEquivalent: "")
-                entry.representedObject = [size.rows, size.columns]
-                item.menu.addItem(entry)
-            }
-            return item
+            return button(identifier, "Menu.Insert.Table", "tablecells", #selector(chooseTableSize(_:)))
         case .insertChart:
             let item = menuItem(identifier, "Menu.Insert.Chart", "chart.bar", nil)
             for kind in Chart.Kind.allCases {

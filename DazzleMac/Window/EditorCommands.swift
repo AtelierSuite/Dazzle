@@ -7,8 +7,8 @@ import DazzleEngine
 extension DocumentWindowController: NSMenuItemValidation {
     private var state: EditorState { deck.state }
 
-    /// Rows by columns.
-    static let tableSizes: [(rows: Int, columns: Int)] = [(2, 2), (3, 2), (3, 3), (4, 3), (4, 4), (5, 4), (6, 5)]
+    /// Rows by columns: shortcuts in Insert ▸ Table, above "Other…".
+    static let tableSizes: [(rows: Int, columns: Int)] = [(2, 2), (3, 3), (4, 3), (4, 4)]
 
     private func edit(_ change: (inout Presentation) -> Void) {
         deck.edit(change)
@@ -127,6 +127,26 @@ extension DocumentWindowController: NSMenuItemValidation {
     @objc func insertTable(_ sender: Any?) {
         guard let size = (sender as? NSMenuItem)?.representedObject as? [Int], size.count == 2 else { return }
         edit { state.insertTable(rows: size[0], columns: size[1], in: &$0) }
+    }
+
+    /// Opens the table size picker, from the toolbar button or the menu's "Other…".
+    @objc func chooseTableSize(_ sender: Any?) {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = TableSizePickerController { [weak self, weak popover] rows, columns in
+            popover?.close()
+            guard let self else { return }
+            edit { state.insertTable(rows: rows, columns: columns, in: &$0) }
+        }
+        let toolbarItem = sender as? NSToolbarItem ?? window?.toolbar.flatMap { toolbar in
+            toolbar.isVisible ? toolbar.items.first { $0.itemIdentifier == .insertTable } : nil
+        }
+        if let toolbarItem, toolbarItem.isVisible {
+            popover.show(relativeTo: toolbarItem)
+        } else {
+            let view = canvas.view
+            popover.show(relativeTo: NSRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1), of: view, preferredEdge: .maxY)
+        }
     }
 
     @objc func insertChart(_ sender: Any?) {
@@ -307,8 +327,8 @@ extension DocumentWindowController: NSMenuItemValidation {
             return deck.selectedIndex > 0
         case #selector(moveSlideLater(_:)), #selector(nextSlide(_:)):
             return deck.selectedIndex < presentation.slides.count - 1
-        case #selector(insertTextBox(_:)), #selector(insertShape(_:)), #selector(insertTable(_:)), #selector(insertChart(_:)),
-             #selector(insertMedia(_:)):
+        case #selector(insertTextBox(_:)), #selector(insertShape(_:)), #selector(insertTable(_:)), #selector(chooseTableSize(_:)),
+             #selector(insertChart(_:)), #selector(insertMedia(_:)):
             return deck.canEditShapes
         case #selector(formatBold(_:)):
             menuItem.state = text.isBold == true ? .on : .off
