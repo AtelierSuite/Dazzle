@@ -1077,14 +1077,15 @@ final class EditorState {
 
     /// Replaces the text being typed into. A shape that grows to fit its
     /// text grows, or shrinks, with it: down, or for vertical text across,
-    /// away from the side its first line is on.
+    /// away from the side its first line is on. WordArt warped over its box
+    /// keeps the box, which its letters are laid over, as PowerPoint does.
     func setTextBody(_ body: TextBody, in presentation: inout Presentation) {
         guard let slide = selectedSlide(in: presentation), let current = selectedShape(in: presentation),
               current.text != body else { return }
         var extent: Double?
         let style = SlideStyleContext(presentation: presentation, slide: slide)
         let properties = style.bodyProperties(for: current, sources: style.sources(for: current)).merged(over: body.properties)
-        if case .shape = body.properties.autofit, current.rotation == 0 {
+        if case .shape = body.properties.autofit, current.rotation == 0, TextWarpGeometry.isFlat(properties.warp) {
             var measured = current
             measured.text = body
             let frame = measured.frame.points

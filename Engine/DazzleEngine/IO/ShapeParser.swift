@@ -176,6 +176,8 @@ public final class ShapeParser {
         shape.reflection = style.reflection
         shape.effects = style.effects
         shape.hasOwnEffects = list != nil || properties?.firstChild(named: "effectDag") != nil
+        shape.scene3D = Scene3D(element: properties?.firstChild(named: "scene3d"))
+        shape.shape3D = Shape3D(element: properties?.firstChild(named: "sp3d"))
     }
 
     /// A picture's video or sound: the copy in the package PowerPoint 2010

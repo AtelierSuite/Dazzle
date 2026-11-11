@@ -364,6 +364,11 @@ public struct ShapeWriter {
             if let spacing = text.properties.columnSpacing { properties.setAttribute("spcCol", String(spacing)) }
             if let rightToLeft = text.properties.columnsRightToLeft { properties.setAttribute("rtlCol", rightToLeft ? "1" : "0") }
             if case .normal(let scale, let reduction) = text.properties.autofit { writeShrink(scale, reduction, into: properties) }
+            // A WordArt warp the file didn't say, first among bodyPr's children. One it said is kept as it was.
+            if let warp = text.properties.warp, properties.firstChild(named: "prstTxWarp") == nil,
+               let element = fragment(warp.xml) {
+                properties.insertChild(element, at: 0)
+            }
         }
         for paragraph in body.children(named: "p") {
             body.removeChild(paragraph)

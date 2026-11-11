@@ -163,7 +163,11 @@ public struct SlideRenderer {
         // A glow, soft edges, inner, preset shadows and blur are worked from
         // a picture of the shape; without them, it is drawn as it is.
         if !shape.effects.isEmpty,
-           drawWithEffects(shape.effects, shadow: shape.shadow, frame: frame, style: style, context: context, content: content) {
+           drawWithEffects(
+               shape.effects, shadow: shape.shadow, frame: frame, style: style, context: context,
+               depth: EMU.points(shape.shape3D?.extrusionHeight ?? 0) + EMU.points(shape.shape3D?.contourWidth ?? 0),
+               content: content
+           ) {
             return
         }
 
@@ -246,11 +250,12 @@ public struct SlideRenderer {
     /// then the outer shadow, cast by the glow and the shape as one; the glow
     /// round the shape; the shape, its edges feathered or blurred; and the
     /// inner shadow over it. Works from a picture of the shape, as fine as the
-    /// context draws, with room round it for the effects to spread. Returns
+    /// context draws, with room round it for the effects, and `depth` points
+    /// more for the shape's sides, to spread. Returns
     /// `false`, having drawn nothing, if there is no room for the picture.
     private func drawWithEffects(
         _ effects: ShapeEffects, shadow: Shadow?, frame: CGRect, style: SlideStyleContext, context: CGContext,
-        content: (CGContext) -> Void
+        depth: CGFloat = 0, content: (CGContext) -> Void
     ) -> Bool {
         let glowRadius = effects.glow.map { EMU.points($0.radius) } ?? 0
         let blurRadius = effects.blur.map { EMU.points($0.radius) } ?? 0
@@ -267,7 +272,8 @@ public struct SlideRenderer {
         }
         let innerReach = innerShadow.map { hypot($0.offset.width, $0.offset.height) + $0.blur * 2 } ?? 0
         // Outlines, arrowheads and text can stand out past the frame.
-        let margin = max(glowRadius * 1.5, blurRadius * 2, innerReach) + 12 + max(frame.width, frame.height) * 0.1
+        // So can a shape's sides and contour, `depth` at most.
+        let margin = max(glowRadius * 1.5, blurRadius * 2, innerReach) + 12 + max(frame.width, frame.height) * 0.1 + depth
         let region = frame.insetBy(dx: -margin, dy: -margin)
         let ctm = context.ctm
         // A context drawing to the screen in points, as SwiftUI's canvas does, is
@@ -537,8 +543,12 @@ public struct SlideRenderer {
         colorChanges: [AnimationColorChange.Target: [AnimationColorChange.Value]] = [:]
     ) {
         let (fillPath, strokePath, isOpen, shades) = outline(of: shape, in: frame)
-        if !isOpen, var fill = style.fill(for: shape, sources: sources) {
-            if fill.fill == .group, let groupFill { fill = groupFill }
+        var resolvedFill = isOpen ? nil : style.fill(for: shape, sources: sources)
+        if resolvedFill?.fill == .group, let groupFill { resolvedFill = groupFill }
+        // Its sides and contour behind it, its bevel over its fill.
+        let look = style.threeDLook(for: shape, bounds: frame, fill: resolvedFill, isOpen: isOpen)
+        if let look { drawDepth(look, of: fillPath, context: context) }
+        if var fill = resolvedFill {
             if let changes = colorChanges[.fill], !changes.isEmpty {
                 let base: RGBAColor = if case .solid(let color) = fill.fill { style.color(color, placeholder: fill.placeholderColor) } else { .black }
                 let color = changes.reduce(base) { base, value in value.color(base: base) { style.color($0, placeholder: fill.placeholderColor) } }
@@ -555,6 +565,7 @@ public struct SlideRenderer {
                 }
             }
         }
+        if let look { drawBevel(look, on: fillPath, context: context) }
         if let (original, placeholderColor) = style.line(for: shape, sources: sources) {
             var line = original
             if let changes = colorChanges[.stroke], !changes.isEmpty {
@@ -579,6 +590,58 @@ public struct SlideRenderer {
             return
         } else if options.showsPlaceholderPrompts, let placeholder = shape.placeholder, !placeholder.isFurniture {
             drawPrompt(for: shape, placeholder: placeholder, sources: sources, frame: textFrame, renderer: renderer, context: context)
+        }
+    }
+
+    // MARK: - 3D
+
+    /// A shape's sides, as copies of its outline set off behind it, and its
+    /// contour round its edge, drawn before the shape itself.
+    private func drawDepth(_ look: Shape3DLook, of path: CGPath, context: CGContext) {
+        if let extrusion = look.extrusion {
+            for (transform, color) in zip(extrusion.transforms, extrusion.colors) {
+                var transform = transform
+                guard let copy = path.copy(using: &transform) else { continue }
+                context.addPath(copy)
+                context.setFillColor(color.cgColor)
+                context.fillPath(using: .evenOdd)
+            }
+        }
+        if let contour = look.contour {
+            context.saveGState()
+            context.addPath(path)
+            context.setStrokeColor(contour.color.cgColor)
+            context.setLineWidth(contour.width)
+            context.setLineJoin(.round)
+            context.strokePath()
+            context.restoreGState()
+        }
+    }
+
+    /// A shape's bevel, as bands of light and shade over its face, each
+    /// what stays inside the outline set off one way but not another.
+    private func drawBevel(_ look: Shape3DLook, on path: CGPath, context: CGContext) {
+        guard !look.bands.isEmpty else { return }
+        let reach = look.bands.map { max(abs($0.cut.width), abs($0.cut.height)) }.max() ?? 0
+        let far = path.boundingBoxOfPath.insetBy(dx: -reach - 1, dy: -reach - 1)
+        func moved(_ offset: CGSize) -> CGPath {
+            var transform = CGAffineTransform(translationX: offset.width, y: offset.height)
+            return path.copy(using: &transform) ?? path
+        }
+        for band in look.bands {
+            context.saveGState()
+            context.addPath(path)
+            context.clip(using: .evenOdd)
+            if band.kept != .zero {
+                context.addPath(moved(band.kept))
+                context.clip(using: .evenOdd)
+            }
+            context.addRect(far)
+            context.addPath(moved(band.cut))
+            context.clip(using: .evenOdd)
+            context.setFillColor(CGColor(gray: band.isLight ? 1 : 0, alpha: band.opacity))
+            context.fill(far)
+            context.restoreGState()
         }
     }
 
@@ -918,12 +981,15 @@ public struct SlideRenderer {
             )
         }
         let (outlinePath, _, _, _) = outline(of: shape, in: frame)
+        let look = style.threeDLook(for: shape, bounds: frame, fill: nil)
+        if let look { drawDepth(look, of: outlinePath, context: context) }
         context.saveGState()
         context.setAlpha(picture.effects.opacity)
         context.addPath(outlinePath)
         context.clip()
         drawImage(image, in: imageRect, context: context)
         context.restoreGState()
+        if let look { drawBevel(look, on: outlinePath, context: context) }
         if let (line, placeholderColor) = style.line(for: shape, sources: []) {
             stroke(outlinePath, line: line, placeholderColor: placeholderColor, style: style, context: context)
         }

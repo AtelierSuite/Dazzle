@@ -140,6 +140,10 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
     /// Whether its properties list effects of their own, even none, which
     /// take the place of any its style gives it.
     public var hasOwnEffects = false
+    /// `a:scene3d`: the camera and lights its own properties give it.
+    public var scene3D: Scene3D?
+    /// `a:sp3d`: the bevels, depth and contour its own properties give it.
+    public var shape3D: Shape3D?
     public var style: StyleReferences?
     public var text: TextBody?
     /// For SmartArt shapes, where the text goes when it is not the whole shape.

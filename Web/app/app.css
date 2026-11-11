@@ -741,6 +741,21 @@ body {
   direction: ltr;
 }
 
+/* WordArt: the text laid out flat, unseen, under its letters drawn along the warp. Typed text shows flat. */
+.text[data-warped]:not(.is-editing) > .text__flow {
+  visibility: hidden;
+}
+
+.text__warp {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.text.is-editing > .text__warp {
+  display: none;
+}
+
 .text[data-nowrap] .text__flow {
   white-space: pre;
 }
