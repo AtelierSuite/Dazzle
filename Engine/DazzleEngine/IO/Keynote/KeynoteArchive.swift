@@ -153,6 +153,8 @@ public enum KeynoteType {
     public static let note: UInt32 = 15
     public static let storage: UInt32 = 2001
     public static let shapeInfo: UInt32 = 2011
+    /// A sticky comment, a `TSWP.CommentInfoArchive`.
+    public static let commentInfo: UInt32 = 2014
     public static let characterStyle: UInt32 = 2021
     public static let paragraphStyle: UInt32 = 2022
     public static let listStyle: UInt32 = 2023

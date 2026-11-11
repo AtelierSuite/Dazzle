@@ -153,6 +153,10 @@ public struct KeynoteSlideWriter {
             }
             skipped.insert(object.type)
             return nil
+        case KeynoteType.commentInfo:
+            // A sticky comment isn't part of the slide; it is one of its comments.
+            if !isLayout, let comment = comment(object) { comments.append(comment) }
+            return nil
         default:
             // Anything else with a place on the slide keeps it, as a stand-in.
             if let standIn = standIn(Self.drawableArchive(in: object.message), label: String(localized: "Object.Other", bundle: .engine)) {
@@ -190,6 +194,8 @@ public struct KeynoteSlideWriter {
     public private(set) var hasObjectStandIns = false
     /// Whether a 3D object was written, which shows only a still picture of itself.
     public private(set) var has3DObjects = false
+    /// The slide's sticky comments.
+    public private(set) var comments: [SlideComment] = []
 
     /// An object Dazzle can't show, kept in its place as a stand-in: a box
     /// naming what it is. PowerPoint shows the box as it is; Dazzle reads it
@@ -206,6 +212,34 @@ public struct KeynoteSlideWriter {
             <a:normAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="1400">\
             <a:solidFill><a:srgbClr val="666673"/></a:solidFill></a:rPr><a:t>\(text)</a:t></a:r></a:p></p:txBody></p:sp>
             """
+    }
+
+    /// A `TSWP.CommentInfoArchive` as a comment pinned where the note sat:
+    /// what its comment storage says, by whom and when, with its replies.
+    /// Older comments keep only the text of the note itself.
+    private func comment(_ object: KeynoteArchive.Object) -> SlideComment? {
+        let info = object.message.message(1)
+        let position = Frame(info?.message(1)?.message(1)?.message(1))?.origin
+        func entry(_ storage: ProtoMessage?, id: String, fallback: String) -> SlideComment {
+            let author = archive[storage?.reference(3)]?.message.string(1) ?? ""
+            let initials = author.split(whereSeparator: \.isWhitespace).prefix(2).compactMap(\.first)
+                .map(String.init).joined().uppercased()
+            // Keynote counts time from the start of 2001.
+            let date = storage?.message(2)?.float(1).map { Date(timeIntervalSinceReferenceDate: $0) }
+            return SlideComment(
+                id: id, author: author, initials: initials, date: date, text: storage?.string(1) ?? fallback,
+                position: position, format: .legacy
+            )
+        }
+        let storage = archive[object.message.reference(2)]?.message
+        let note = info.map { self.text.plainText(archive[$0.reference(4) ?? $0.reference(3) ?? $0.reference(2)]) } ?? ""
+        let fallback = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard storage?.string(1)?.isEmpty == false || !fallback.isEmpty else { return nil }
+        var thread = entry(storage, id: "keynote-\(object.identifier)", fallback: fallback)
+        thread.replies = (storage?.references(4) ?? []).compactMap { reply in
+            archive[reply].map { entry($0.message, id: "keynote-\(reply)", fallback: "") }
+        }
+        return thread
     }
 
     /// Older documents keep a shape's text in the deprecated field 2.
