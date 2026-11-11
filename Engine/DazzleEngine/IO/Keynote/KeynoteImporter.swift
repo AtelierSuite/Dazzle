@@ -184,6 +184,7 @@ public enum KeynoteImporter {
                     layouts.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
                     omissions.formUnion(writer.skipped.map(omission))
                     if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
+                    if writer.hasTableStandIns { omissions.insert(.tableStandIns) }
                     layoutPaths[template.identifier] = path
                     layoutPath = path
                 }
@@ -206,6 +207,7 @@ public enum KeynoteImporter {
             slides.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
             omissions.formUnion(writer.skipped.map(omission))
             if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
+            if writer.hasTableStandIns { omissions.insert(.tableStandIns) }
             let builds = KeynoteBuilds(archive: archive).animations(slide, shapeIDs: writer.shapeIDs)
             animations.append(builds.animations)
             if builds.lost { omissions.insert(.builds) }

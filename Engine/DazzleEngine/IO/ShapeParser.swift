@@ -252,6 +252,9 @@ public final class ShapeParser {
 
         if let table = data?.firstChild(named: "tbl") {
             shape.kind = .table(self.table(table))
+        } else if uri.hasSuffix("/table") {
+            // A frame with no table in it, as a Keynote table Dazzle can't read becomes, is shown as a stand-in.
+            shape.kind = .unsupported(String(localized: "Object.Table", bundle: .engine))
         } else if uri.hasSuffix("/chart") || uri.contains("chartex") {
             let path = data?.children.first { $0.name == "chart" }?.relationshipID.flatMap(target(of:))
             let chart = path.flatMap { Chart(path: $0, data: parts[$0]) }
