@@ -108,6 +108,9 @@ enum EditableText {
         if let baseline = run.baseline, baseline != 0 {
             attributes[.baselineOffset] = CGFloat(baseline) / 100_000 * size * 1.5
         }
+        if let spacing = run.spacing, spacing != 0 {
+            attributes[.kern] = CGFloat(spacing) / 100 * scale
+        }
         return attributes
     }
 

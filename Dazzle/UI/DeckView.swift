@@ -19,6 +19,8 @@ struct DeckView: View {
     @State private var quickPasteGeneration = 0
     /// The pending `restoreQuickPaste()` flip, so a burst of events flips once.
     @State private var quickPasteRestore: Task<Void, Never>?
+    /// The deck's fonts this device draws in others, kept up to date as it changes.
+    @State private var fontSubstitutions: [FontSubstitution] = []
     @Environment(\.undoManager) private var undoManager
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -106,7 +108,7 @@ struct DeckView: View {
             get: { horizontalSizeClass == .compact && state.isShowingUnsupportedFeatureNotice },
             set: { state.isShowingUnsupportedFeatureNotice = $0 }
         )) {
-            UnsupportedFeatureNotice(report: document.presentation.unsupportedFeatures)
+            UnsupportedFeatureNotice(report: document.presentation.unsupportedFeatures, fontSubstitutions: fontSubstitutions)
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
                 .presentationContentInteraction(.scrolls)
@@ -127,6 +129,7 @@ struct DeckView: View {
         }
         .onAppear {
             state.reconcile(with: document.presentation)
+            fontSubstitutions = document.presentation.fontSubstitutions
             attachHistory()
             offerToRemote()
         }
@@ -148,6 +151,7 @@ struct DeckView: View {
             }
             state.reconcile(with: new)
             restoreQuickPaste()
+            fontSubstitutions = new.fontSubstitutions
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -354,7 +358,7 @@ struct DeckView: View {
         }
         ToolbarItemGroup(placement: .primaryAction) {
             // An iPhone's bar has no room for it either, so there it moves to the "…" menu.
-            if !document.presentation.unsupportedFeatures.isEmpty, horizontalSizeClass != .compact {
+            if hasNotice, horizontalSizeClass != .compact {
                 Button {
                     state.isShowingUnsupportedFeatureNotice = true
                 } label: {
@@ -363,7 +367,7 @@ struct DeckView: View {
                 .accessibilityIdentifier("unsupportedFeatures")
                 .accessibilityLabel("Toolbar.UnsupportedFeatures")
                 .popover(isPresented: $state.isShowingUnsupportedFeatureNotice) {
-                    UnsupportedFeatureNotice(report: document.presentation.unsupportedFeatures)
+                    UnsupportedFeatureNotice(report: document.presentation.unsupportedFeatures, fontSubstitutions: fontSubstitutions)
                 }
             }
             if !sharesInMoreMenu {
@@ -371,6 +375,11 @@ struct DeckView: View {
             }
             moreMenu
         }
+    }
+
+    /// Whether there is anything for the warning button to tell.
+    private var hasNotice: Bool {
+        !document.presentation.unsupportedFeatures.isEmpty || !fontSubstitutions.isEmpty
     }
 
     private var findButton: some View {
@@ -443,7 +452,7 @@ struct DeckView: View {
             }
             if horizontalSizeClass == .compact {
                 redoButton
-                if !document.presentation.unsupportedFeatures.isEmpty {
+                if hasNotice {
                     Button("Toolbar.UnsupportedFeatures", systemImage: "exclamationmark.triangle") {
                         state.isShowingUnsupportedFeatureNotice = true
                     }
@@ -567,16 +576,17 @@ private struct PlayMenu<Label: View>: View {
 }
 
 /// What the toolbar's warning button says: which parts of the file Dazzle
-/// keeps but cannot show or use.
+/// keeps but cannot show or use, and which fonts it draws in others.
 ///
 /// A popover rather than an alert: nothing here needs deciding, so it has no
 /// business stopping the user before they have seen their slides.
 private struct UnsupportedFeatureNotice: View {
     var report: UnsupportedFeatureReport
+    var fontSubstitutions: [FontSubstitution]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Notice.UnsupportedFeatures.Title", systemImage: "exclamationmark.triangle")
+            Label(report.isEmpty ? "Notice.Fonts.Title" : "Notice.UnsupportedFeatures.Title", systemImage: "exclamationmark.triangle")
                 .font(.headline)
                 .labelStyle(.titleAndIcon)
             if !report.omissions.isEmpty {
@@ -584,6 +594,10 @@ private struct UnsupportedFeatureNotice: View {
             }
             if !report.features.isEmpty {
                 message("Notice.UnsupportedFeatures.Intro", report.noticeMessage)
+            }
+            if !fontSubstitutions.isEmpty {
+                message("Notice.Fonts.Intro", fontSubstitutions.noticeMessage)
+                    .accessibilityIdentifier("fontSubstitutions")
             }
         }
         .multilineTextAlignment(.leading)

@@ -349,7 +349,14 @@ public struct SlideRenderer {
         switch shape.geometry {
         case .preset(let name, let adjustments):
             let path = PresetGeometry.path(name, adjustments: adjustments, in: frame)
-            return (path, path, PresetGeometry.isOpen(name) || shape.kind == .connector)
+            var stroke = path
+            if let details = PresetGeometry.detailPath(name, adjustments: adjustments, in: frame) {
+                let combined = CGMutablePath()
+                combined.addPath(path)
+                combined.addPath(details)
+                stroke = combined
+            }
+            return (path, stroke, PresetGeometry.isOpen(name) || shape.kind == .connector)
         case .custom(let paths):
             let (fill, stroke) = PresetGeometry.path(paths, in: frame)
             return (fill, stroke, false)
@@ -431,7 +438,7 @@ public struct SlideRenderer {
 
     private func paint(
         _ fill: Fill, in path: CGPath, bounds: CGRect, placeholderColor: RGBAColor?,
-        style: SlideStyleContext, context: CGContext
+        style: SlideStyleContext, context: CGContext, rule: CGPathFillRule = .evenOdd
     ) {
         switch fill {
         case .none, .group:
@@ -439,14 +446,14 @@ public struct SlideRenderer {
         case .solid(let color):
             context.addPath(path)
             context.setFillColor(style.color(color, placeholder: placeholderColor).cgColor)
-            context.fillPath(using: .evenOdd)
+            context.fillPath(using: rule)
         case .gradient(let gradient):
             let colors = gradient.stops.map { style.color($0.color, placeholder: placeholderColor).cgColor } as CFArray
             let locations = gradient.stops.map { CGFloat($0.position) }
             guard let cgGradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: locations) else { return }
             context.saveGState()
             context.addPath(path)
-            context.clip(using: .evenOdd)
+            context.clip(using: rule)
             if gradient.isRadial {
                 let center = CGPoint(
                     x: bounds.minX + bounds.width * gradient.focusX, y: bounds.minY + bounds.height * gradient.focusY
@@ -478,32 +485,55 @@ public struct SlideRenderer {
             context.saveGState()
             context.setAlpha(effects.opacity)
             context.addPath(path)
-            context.clip(using: .evenOdd)
+            context.clip(using: rule)
             drawImage(image, in: bounds, context: context)
             context.restoreGState()
-        case .tiledPicture(let imagePath, let effects):
+        case .tiledPicture(let imagePath, let effects, let layout):
             guard let image = image(at: imagePath, effects: effects, placeholderColor: placeholderColor, style: style) else {
                 return
             }
-            // A tile is laid at its own size: pixels at 96 to the inch.
-            let tile = CGSize(width: CGFloat(image.width) * 0.75, height: CGFloat(image.height) * 0.75)
+            // At 100% a tile is the picture's own size: pixels at 96 to the inch.
+            let tile = CGSize(
+                width: CGFloat(image.width) * 0.75 * abs(layout.scaleX), height: CGFloat(image.height) * 0.75 * abs(layout.scaleY)
+            )
             guard tile.width >= 1, tile.height >= 1 else { return }
-            let columns = Int((bounds.width / tile.width).rounded(.up))
-            let rows = Int((bounds.height / tile.height).rounded(.up))
+            // One tile sits against the alignment point, moved by the offset; the rest repeat from it both ways.
+            let anchor = layout.alignment.fractions
+            let origin = CGPoint(
+                x: bounds.minX + (bounds.width - tile.width) * anchor.x + EMU.points(layout.offsetX),
+                y: bounds.minY + (bounds.height - tile.height) * anchor.y + EMU.points(layout.offsetY)
+            )
+            let columns = Int(((bounds.minX - origin.x) / tile.width).rounded(.down))..<Int(((bounds.maxX - origin.x) / tile.width).rounded(.up))
+            let rows = Int(((bounds.minY - origin.y) / tile.height).rounded(.down))..<Int(((bounds.maxY - origin.y) / tile.height).rounded(.up))
             context.saveGState()
             context.setAlpha(effects.opacity)
             context.addPath(path)
-            context.clip(using: .evenOdd)
-            if columns * rows > 4_000 {
+            context.clip(using: rule)
+            if columns.count * rows.count > 4_000 {
                 // Too fine a tile to lay one by one: stretching looks the same.
                 drawImage(image, in: bounds, context: context)
             } else {
-                for row in 0..<rows {
-                    for column in 0..<columns {
-                        drawImage(image, in: CGRect(
-                            origin: CGPoint(x: bounds.minX + CGFloat(column) * tile.width, y: bounds.minY + CGFloat(row) * tile.height),
+                // Flipping mirrors every other tile; a negative scale mirrors them all.
+                let flipsAcross = layout.flip == .x || layout.flip == .xy
+                let flipsDown = layout.flip == .y || layout.flip == .xy
+                // Tiles meet at fractions of a point; softened edges would show as seams between them.
+                context.setShouldAntialias(false)
+                for row in rows {
+                    for column in columns {
+                        let rect = CGRect(
+                            origin: CGPoint(x: origin.x + CGFloat(column) * tile.width, y: origin.y + CGFloat(row) * tile.height),
                             size: tile
-                        ), context: context)
+                        )
+                        let mirrorsX = (flipsAcross && !column.isMultiple(of: 2)) != (layout.scaleX < 0)
+                        let mirrorsY = (flipsDown && !row.isMultiple(of: 2)) != (layout.scaleY < 0)
+                        context.saveGState()
+                        if mirrorsX || mirrorsY {
+                            context.translateBy(x: rect.midX, y: rect.midY)
+                            context.scaleBy(x: mirrorsX ? -1 : 1, y: mirrorsY ? -1 : 1)
+                            context.translateBy(x: -rect.midX, y: -rect.midY)
+                        }
+                        drawImage(image, in: rect, context: context)
+                        context.restoreGState()
                     }
                 }
             }
@@ -514,36 +544,64 @@ public struct SlideRenderer {
     private func stroke(
         _ path: CGPath, line: LineStyle, placeholderColor: RGBAColor?, style: SlideStyleContext, context: CGContext
     ) {
-        guard case .solid(let color) = line.fill ?? .none else { return }
+        let fill = line.fill ?? .none
+        if fill == .none || fill == .group { return }
         let width = max(EMU.points(line.width ?? 9_525), 0.25)
+        let dashes: [CGFloat]? = switch line.dash {
+        case "dash", "sysDash": [width * 4, width * 3]
+        case "lgDash": [width * 8, width * 3]
+        case "dot", "sysDot": [width, width * 2]
+        case "dashDot", "sysDashDot": [width * 4, width * 2, width, width * 2]
+        case "lgDashDot", "lgDashDotDot", "sysDashDotDot": [width * 8, width * 3, width, width * 3]
+        default: nil
+        }
+        let points = line.head != nil || line.tail != nil ? endpoints(of: path) : nil
+
+        guard case .solid(let color) = fill else {
+            // A gradient or picture is laid over the line's outline, its
+            // dashes and arrowheads included, as over a filled area. Each
+            // part is painted on its own, as their windings would cancel
+            // where they overlap, but all across the same bounds.
+            var parts = line.compoundStrokes(of: path, width: width).map { band in
+                let dashed = dashes.map { band.path.copy(dashingWithPhase: 0, lengths: $0) } ?? band.path
+                return dashed.copy(strokingWithWidth: band.width, lineCap: line.cgLineCap, lineJoin: line.cgLineJoin, miterLimit: line.miterLimit)
+            }
+            if let points {
+                if let tail = line.tail { parts.append(arrowhead(tail, at: points.end, from: points.beforeEnd, width: width)) }
+                if let head = line.head { parts.append(arrowhead(head, at: points.start, from: points.afterStart, width: width)) }
+            }
+            let bounds = parts.reduce(CGRect.null) { $0.union($1.boundingBoxOfPath) }
+            for part in parts {
+                paint(fill, in: part, bounds: bounds, placeholderColor: placeholderColor, style: style, context: context, rule: .winding)
+            }
+            return
+        }
+
         let resolved = style.color(color, placeholder: placeholderColor)
         context.saveGState()
         context.setStrokeColor(resolved.cgColor)
         context.setLineWidth(width)
-        context.setLineJoin(.round)
-        switch line.dash {
-        case "dash", "sysDash": context.setLineDash(phase: 0, lengths: [width * 4, width * 3])
-        case "lgDash": context.setLineDash(phase: 0, lengths: [width * 8, width * 3])
-        case "dot", "sysDot": context.setLineDash(phase: 0, lengths: [width, width * 2])
-        case "dashDot", "sysDashDot": context.setLineDash(phase: 0, lengths: [width * 4, width * 2, width, width * 2])
-        case "lgDashDot", "lgDashDotDot", "sysDashDotDot":
-            context.setLineDash(phase: 0, lengths: [width * 8, width * 3, width, width * 3])
-        default: break
+        line.applyCapAndJoin(to: context)
+        if let dashes { context.setLineDash(phase: 0, lengths: dashes) }
+        for band in line.compoundStrokes(of: path, width: width) {
+            context.setLineWidth(band.width)
+            context.addPath(band.path)
+            context.strokePath()
         }
-        context.addPath(path)
-        context.strokePath()
         context.restoreGState()
 
         // Arrowheads, at either end of an open line.
-        guard line.head != nil || line.tail != nil else { return }
-        let points = endpoints(of: path)
         guard let points else { return }
         context.saveGState()
         context.setFillColor(resolved.cgColor)
-        context.setStrokeColor(resolved.cgColor)
-        context.setLineWidth(width)
-        if let tail = line.tail { arrowhead(tail, at: points.end, from: points.beforeEnd, width: width, context: context) }
-        if let head = line.head { arrowhead(head, at: points.start, from: points.afterStart, width: width, context: context) }
+        if let tail = line.tail {
+            context.addPath(arrowhead(tail, at: points.end, from: points.beforeEnd, width: width))
+            context.fillPath()
+        }
+        if let head = line.head {
+            context.addPath(arrowhead(head, at: points.start, from: points.afterStart, width: width))
+            context.fillPath()
+        }
         context.restoreGState()
     }
 
@@ -562,45 +620,46 @@ public struct SlideRenderer {
         return (points[0], points[1], points[points.count - 2], points[points.count - 1])
     }
 
-    /// A line end of `type`: `triangle`, `stealth`, `arrow` (open), `oval` or `diamond`.
-    private func arrowhead(_ type: String, at tip: CGPoint, from tail: CGPoint, width: CGFloat, context: CGContext) {
+    /// A line end of `type`: `triangle`, `stealth`, `arrow` (open), `oval` or
+    /// `diamond`, as an area to fill.
+    private func arrowhead(_ type: String, at tip: CGPoint, from tail: CGPoint, width: CGFloat) -> CGPath {
         let angle = atan2(tip.y - tail.y, tip.x - tail.x)
         let length = max(width * 4, 6)
         let spread: CGFloat = .pi / 7
         func point(_ distance: CGFloat, _ turn: CGFloat) -> CGPoint {
             CGPoint(x: tip.x - distance * cos(angle + turn), y: tip.y - distance * sin(angle + turn))
         }
+        let path = CGMutablePath()
         switch type {
         case "oval":
             let radius = length / 2.5
-            context.fillEllipse(in: CGRect(x: tip.x - radius, y: tip.y - radius, width: radius * 2, height: radius * 2))
+            path.addEllipse(in: CGRect(x: tip.x - radius, y: tip.y - radius, width: radius * 2, height: radius * 2))
         case "diamond":
             let half = length / 2.5
-            context.move(to: CGPoint(x: tip.x + half * cos(angle), y: tip.y + half * sin(angle)))
-            context.addLine(to: CGPoint(x: tip.x - half * sin(angle), y: tip.y + half * cos(angle)))
-            context.addLine(to: CGPoint(x: tip.x - half * cos(angle), y: tip.y - half * sin(angle)))
-            context.addLine(to: CGPoint(x: tip.x + half * sin(angle), y: tip.y - half * cos(angle)))
-            context.closePath()
-            context.fillPath()
+            path.move(to: CGPoint(x: tip.x + half * cos(angle), y: tip.y + half * sin(angle)))
+            path.addLine(to: CGPoint(x: tip.x - half * sin(angle), y: tip.y + half * cos(angle)))
+            path.addLine(to: CGPoint(x: tip.x - half * cos(angle), y: tip.y - half * sin(angle)))
+            path.addLine(to: CGPoint(x: tip.x + half * sin(angle), y: tip.y - half * cos(angle)))
+            path.closeSubpath()
         case "arrow":
-            context.move(to: point(length, -spread))
-            context.addLine(to: tip)
-            context.addLine(to: point(length, spread))
-            context.strokePath()
+            let open = CGMutablePath()
+            open.move(to: point(length, -spread))
+            open.addLine(to: tip)
+            open.addLine(to: point(length, spread))
+            return open.copy(strokingWithWidth: width, lineCap: .butt, lineJoin: .miter, miterLimit: 10)
         case "stealth":
-            context.move(to: tip)
-            context.addLine(to: point(length, -spread))
-            context.addLine(to: point(length * 0.6, 0))
-            context.addLine(to: point(length, spread))
-            context.closePath()
-            context.fillPath()
+            path.move(to: tip)
+            path.addLine(to: point(length, -spread))
+            path.addLine(to: point(length * 0.6, 0))
+            path.addLine(to: point(length, spread))
+            path.closeSubpath()
         default:
-            context.move(to: tip)
-            context.addLine(to: point(length, -spread))
-            context.addLine(to: point(length, spread))
-            context.closePath()
-            context.fillPath()
+            path.move(to: tip)
+            path.addLine(to: point(length, -spread))
+            path.addLine(to: point(length, spread))
+            path.closeSubpath()
         }
+        return path
     }
 
     // MARK: - Pictures

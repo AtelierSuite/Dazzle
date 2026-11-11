@@ -213,6 +213,7 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
         case tables
         case charts
         case builds
+        case approximatedBuilds
         case movies
         case otherObjects
 
@@ -221,6 +222,7 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
             case .tables: String(localized: "Notice.Omission.Tables", bundle: .engine)
             case .charts: String(localized: "Notice.Omission.Charts", bundle: .engine)
             case .builds: String(localized: "Notice.Omission.Builds", bundle: .engine)
+            case .approximatedBuilds: String(localized: "Notice.Omission.ApproximatedBuilds", bundle: .engine)
             case .movies: String(localized: "Notice.Omission.Movies", bundle: .engine)
             case .otherObjects: String(localized: "Notice.Omission.Other", bundle: .engine)
             }

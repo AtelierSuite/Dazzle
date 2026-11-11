@@ -248,10 +248,10 @@ public struct ShapeWriter {
     /// relationship of the slide's, added if the slide has none to it.
     public mutating func fillXML(_ fill: Fill) -> String {
         switch fill {
-        case .picture(let path, let effects), .tiledPicture(let path, let effects):
+        case .picture(let path, let effects), .tiledPicture(let path, let effects, _):
             let reference = relationshipID(forImage: path)
-            let layout = if case .tiledPicture = fill {
-                "<a:tile tx=\"0\" ty=\"0\" sx=\"100000\" sy=\"100000\" flip=\"none\" algn=\"tl\"/>"
+            let layout = if case .tiledPicture(_, _, let tile) = fill {
+                tile.xml
             } else {
                 "<a:stretch><a:fillRect/></a:stretch>"
             }
@@ -305,8 +305,8 @@ public struct ShapeWriter {
         })
     }
 
-    /// Writes the outline's fill, width, dash and arrowheads over what the
-    /// file had, keeping its caps, joins and anything else.
+    /// Writes the outline's fill, width, compound, cap, dash, join and
+    /// arrowheads over what the file had, keeping anything else.
     private func writeLine(_ line: LineStyle, into element: XMLElement) {
         guard let properties = properties(of: element) else { return }
         let outline: XMLElement
@@ -321,6 +321,8 @@ public struct ShapeWriter {
             outline = created
         }
         if let width = line.width { outline.setAttribute("w", String(width)) }
+        if let cap = line.cap { outline.setAttribute("cap", cap) }
+        if let compound = line.compound { outline.setAttribute("cmpd", compound) }
         func place(_ xml: String?, replacing names: Set<String>) {
             for child in outline.children where names.contains(child.name) { outline.removeChild(child) }
             guard let xml, let new = fragment(xml) else { return }
@@ -329,6 +331,7 @@ public struct ShapeWriter {
         }
         if let fill = line.fill { place(fill.xml, replacing: Fill.elementNames) }
         if let dash = line.dash { place("<a:prstDash val=\"\(XMLLite.escape(dash))\"/>", replacing: ["prstDash", "custDash"]) }
+        if let join = line.join { place(join.xml, replacing: ["round", "bevel", "miter"]) }
         place(line.head.map { "<a:headEnd type=\"\(XMLLite.escape($0))\"/>" }, replacing: ["headEnd"])
         place(line.tail.map { "<a:tailEnd type=\"\(XMLLite.escape($0))\"/>" }, replacing: ["tailEnd"])
     }
@@ -602,6 +605,7 @@ public struct ShapeWriter {
         if let underline = properties.isUnderlined { element.setAttribute("u", underline ? "sng" : "none") }
         if let strike = properties.isStruckThrough { element.setAttribute("strike", strike ? "sngStrike" : "noStrike") }
         if let baseline = properties.baseline { element.setAttribute("baseline", baseline == 0 ? nil : String(baseline)) }
+        if let spacing = properties.spacing { element.setAttribute("spc", spacing == 0 ? nil : String(spacing)) }
         if let color = properties.color, let fill = fragment("<a:solidFill>\(color.xml)</a:solidFill>") {
             for child in element.children where Fill.elementNames.contains(child.name) {
                 element.removeChild(child)

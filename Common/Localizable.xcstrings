@@ -15985,6 +15985,76 @@
         }
       }
     },
+    "Notice.Fonts.Intro" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "These fonts aren’t on this device, so similar ones are shown in their place. Lines may break differently than where the presentation was made:"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以下のフォントはこのデバイスにないため、似たフォントで表示しています。作成した環境と行の折り返しが異なる場合があります:"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다음 서체는 이 기기에 없어 비슷한 서체로 표시됩니다. 프레젠테이션을 만든 환경과 줄 바꿈이 다를 수 있습니다:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此设备上没有以下字体，因此改用相似的字体显示。换行位置可能与制作演示文稿时不同："
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此裝置上沒有以下字體，因此改用相似的字體顯示。換行位置可能與製作簡報時不同："
+          }
+        }
+      }
+    },
+    "Notice.Fonts.Title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Some Fonts Are Substituted"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一部のフォントは代替表示です"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일부 서체가 대체되었습니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分字体已替换"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分字體已替換"
+          }
+        }
+      }
+    },
     "Notice.Omitted.Intro" : {
       "extractionState" : "manual",
       "localizations" : {

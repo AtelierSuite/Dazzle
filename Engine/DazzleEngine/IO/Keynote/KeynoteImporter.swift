@@ -191,6 +191,7 @@ public enum KeynoteImporter {
             let builds = KeynoteBuilds(archive: archive).animations(slide, shapeIDs: writer.shapeIDs)
             animations.append(builds.animations)
             if builds.lost { omissions.insert(.builds) }
+            if builds.approximated { omissions.insert(.approximatedBuilds) }
             notes.append(text.plainText(archive[notesStorage]).trimmingCharacters(in: .whitespacesAndNewlines))
             origins.append(KeynoteSlideOrigin(
                 node: node.identifier, slide: slide.identifier,

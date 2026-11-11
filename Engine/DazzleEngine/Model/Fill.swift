@@ -7,8 +7,8 @@ public enum Fill: Equatable, Hashable, Sendable {
     case gradient(Gradient)
     /// A picture, by its path inside the package, stretched over the area.
     case picture(path: String, effects: BlipEffects = BlipEffects())
-    /// A picture repeated at its own size across the area.
-    case tiledPicture(path: String, effects: BlipEffects = BlipEffects())
+    /// A picture repeated across the area, laid out as `tile` says.
+    case tiledPicture(path: String, effects: BlipEffects = BlipEffects(), tile: Tile = Tile())
     /// Whatever the enclosing group is filled with.
     case group
 
@@ -38,6 +38,78 @@ public enum Fill: Equatable, Hashable, Sendable {
             self.isRadial = isRadial
             self.focusX = focusX
             self.focusY = focusY
+        }
+    }
+
+    /// `a:tile`: how a tiled picture is scaled, placed and mirrored.
+    public struct Tile: Equatable, Hashable, Sendable {
+        /// Which tiles are mirrored: every other one across, down, or both.
+        public enum Flip: String, Sendable, CaseIterable {
+            case none, x, y, xy
+        }
+
+        /// The point of the area the first tile is laid against.
+        public enum Alignment: String, Sendable, CaseIterable {
+            case topLeft = "tl", top = "t", topRight = "tr"
+            case left = "l", center = "ctr", right = "r"
+            case bottomLeft = "bl", bottom = "b", bottomRight = "br"
+
+            /// 0, 0.5 or 1 across and down the area.
+            public var fractions: (x: Double, y: Double) {
+                switch self {
+                case .topLeft: (0, 0)
+                case .top: (0.5, 0)
+                case .topRight: (1, 0)
+                case .left: (0, 0.5)
+                case .center: (0.5, 0.5)
+                case .right: (1, 0.5)
+                case .bottomLeft: (0, 1)
+                case .bottom: (0.5, 1)
+                case .bottomRight: (1, 1)
+                }
+            }
+        }
+
+        /// EMU the tiles are moved by, after alignment.
+        public var offsetX = 0
+        public var offsetY = 0
+        /// The tile's size as a fraction of the picture's own.
+        public var scaleX = 1.0
+        public var scaleY = 1.0
+        public var flip = Flip.none
+        public var alignment = Alignment.topLeft
+
+        public init(
+            offsetX: Int = 0, offsetY: Int = 0, scaleX: Double = 1, scaleY: Double = 1,
+            flip: Flip = .none, alignment: Alignment = .topLeft
+        ) {
+            self.offsetX = offsetX
+            self.offsetY = offsetY
+            self.scaleX = scaleX
+            self.scaleY = scaleY
+            self.flip = flip
+            self.alignment = alignment
+        }
+
+        public init(element: XMLElement?) {
+            guard let element else { return }
+            // Percentages come as thousandths of a percent, or in strict files as "50%".
+            func percentage(_ key: String) -> Double? {
+                guard let value = element.attribute(key) else { return nil }
+                if value.hasSuffix("%") { return Double(value.dropLast()).map { $0 / 100 } }
+                return Double(value).map { $0 / 100_000 }
+            }
+            offsetX = element.attribute("tx").flatMap(Int.init) ?? 0
+            offsetY = element.attribute("ty").flatMap(Int.init) ?? 0
+            scaleX = percentage("sx") ?? 1
+            scaleY = percentage("sy") ?? 1
+            flip = element.attribute("flip").flatMap(Flip.init(rawValue:)) ?? .none
+            alignment = element.attribute("algn").flatMap(Alignment.init(rawValue:)) ?? .topLeft
+        }
+
+        public var xml: String {
+            "<a:tile tx=\"\(offsetX)\" ty=\"\(offsetY)\" sx=\"\(Int((scaleX * 100_000).rounded()))\" "
+                + "sy=\"\(Int((scaleY * 100_000).rounded()))\" flip=\"\(flip.rawValue)\" algn=\"\(alignment.rawValue)\"/>"
         }
     }
 
@@ -81,8 +153,10 @@ public enum Fill: Equatable, Hashable, Sendable {
             guard let reference = element.firstChild(named: "blip")?.attribute("embed"),
                   let path = image(reference) else { return Fill.none }
             let effects = BlipEffects(blip: element.firstChild(named: "blip"))
-            return element.firstChild(named: "tile") != nil
-                ? .tiledPicture(path: path, effects: effects) : .picture(path: path, effects: effects)
+            if let tile = element.firstChild(named: "tile") {
+                return .tiledPicture(path: path, effects: effects, tile: Tile(element: tile))
+            }
+            return .picture(path: path, effects: effects)
         case "pattFill":
             // A pattern is drawn as its foreground, which is what it reads as at a distance.
             return DrawingColor.first(in: element.firstChild(named: "fgClr")).map(Fill.solid) ?? Fill.none
@@ -153,6 +227,35 @@ public struct BlipEffects: Equatable, Hashable, Sendable {
 
 /// The outline of a shape.
 public struct LineStyle: Equatable, Hashable, Sendable {
+    /// How the outline turns its corners: `a:round`, `a:bevel` or `a:miter`.
+    public enum Join: Equatable, Hashable, Sendable {
+        case round
+        case bevel
+        /// `lim`: how far a corner may reach, in thousandths of a percent of
+        /// the line's width; `nil` when the file does not say.
+        case miter(limit: Int?)
+
+        public init?(element: XMLElement) {
+            if element.firstChild(named: "round") != nil {
+                self = .round
+            } else if element.firstChild(named: "bevel") != nil {
+                self = .bevel
+            } else if let miter = element.firstChild(named: "miter") {
+                self = .miter(limit: miter.attribute("lim").flatMap(Int.init))
+            } else {
+                return nil
+            }
+        }
+
+        public var xml: String {
+            switch self {
+            case .round: "<a:round/>"
+            case .bevel: "<a:bevel/>"
+            case .miter(let limit): limit.map { "<a:miter lim=\"\($0)\"/>" } ?? "<a:miter/>"
+            }
+        }
+    }
+
     /// `nil` when the line does not say, leaving it to the shape's style.
     public var fill: Fill?
     /// EMU; `nil` when the line does not say.
@@ -162,13 +265,24 @@ public struct LineStyle: Equatable, Hashable, Sendable {
     /// Arrowhead types at either end, such as `triangle`.
     public var head: String?
     public var tail: String?
+    /// `cmpd`: `sng`, `dbl`, `thickThin`, `thinThick` or `tri`.
+    public var compound: String?
+    /// `cap`: `rnd`, `sq` or `flat`.
+    public var cap: String?
+    public var join: Join?
 
-    public init(fill: Fill? = nil, width: Int? = nil, dash: String? = nil, head: String? = nil, tail: String? = nil) {
+    public init(
+        fill: Fill? = nil, width: Int? = nil, dash: String? = nil, head: String? = nil, tail: String? = nil,
+        compound: String? = nil, cap: String? = nil, join: Join? = nil
+    ) {
         self.fill = fill
         self.width = width
         self.dash = dash
         self.head = head
         self.tail = tail
+        self.compound = compound
+        self.cap = cap
+        self.join = join
     }
 
     public init(element: XMLElement) {
@@ -177,6 +291,31 @@ public struct LineStyle: Equatable, Hashable, Sendable {
         dash = element.firstChild(named: "prstDash")?.attribute("val")
         head = element.firstChild(named: "headEnd")?.attribute("type").flatMap { $0 == "none" ? nil : $0 }
         tail = element.firstChild(named: "tailEnd")?.attribute("type").flatMap { $0 == "none" ? nil : $0 }
+        compound = element.attribute("cmpd")
+        cap = element.attribute("cap")
+        join = Join(element: element)
+    }
+
+    /// The parallel strokes a compound line is drawn as, across its width
+    /// from the outer side to the inner: each one's start and end as
+    /// fractions of the width. A single line is one stroke, 0 to 1.
+    public var compoundBands: [(start: Double, end: Double)] {
+        // Strokes and gaps in turn, in proportion to one another.
+        let parts: [Double] = switch compound {
+        case "dbl": [1, 1, 1]
+        case "thickThin": [2, 1, 1]
+        case "thinThick": [1, 1, 2]
+        case "tri": [1, 1, 2, 1, 1]
+        default: [1]
+        }
+        let total = parts.reduce(0, +)
+        var bands: [(start: Double, end: Double)] = []
+        var position = 0.0
+        for (index, part) in parts.enumerated() {
+            if index.isMultiple(of: 2) { bands.append((position / total, (position + part) / total)) }
+            position += part
+        }
+        return bands
     }
 
     /// Values this line leaves unsaid are taken from `base`.
@@ -184,7 +323,8 @@ public struct LineStyle: Equatable, Hashable, Sendable {
         guard let base else { return self }
         return LineStyle(
             fill: fill ?? base.fill, width: width ?? base.width, dash: dash ?? base.dash,
-            head: head ?? base.head, tail: tail ?? base.tail
+            head: head ?? base.head, tail: tail ?? base.tail,
+            compound: compound ?? base.compound, cap: cap ?? base.cap, join: join ?? base.join
         )
     }
 }

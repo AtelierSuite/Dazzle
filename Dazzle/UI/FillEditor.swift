@@ -163,7 +163,7 @@ struct FillEditor: View {
             Toggle("Fill.Picture.Tile", isOn: Binding(get: { false }, set: { tiled in
                 if tiled { onChange(.tiledPicture(path: path, effects: effects)) }
             }))
-        } else if case .tiledPicture(let path, let effects)? = fill {
+        } else if case .tiledPicture(let path, let effects, _)? = fill {
             Toggle("Fill.Picture.Tile", isOn: Binding(get: { true }, set: { tiled in
                 if !tiled { onChange(.picture(path: path, effects: effects)) }
             }))

@@ -53,7 +53,19 @@ public struct Theme: Equatable, Sendable {
     public var backgroundFillStyles: [Fill]
     public var lineStyles: [LineStyle]
 
-    /// Office's own default, for a package that somehow has no theme.
+    /// A theme font reference such as `+mj-lt` made a typeface name, or
+    /// any other name as it is.
+    public func typeface(_ name: String) -> String {
+        switch name {
+        case "+mj-lt": majorFont
+        case "+mn-lt": minorFont
+        case "+mj-ea": majorEastAsianFont ?? majorFont
+        case "+mn-ea": minorEastAsianFont ?? minorFont
+        default: name.hasPrefix("+") ? minorFont : name
+        }
+    }
+
+        /// Office's own default, for a package that somehow has no theme.
     public static let office = Theme(
         colors: [
             "dk1": 0x000000, "lt1": 0xFFFFFF, "dk2": 0x0E2841, "lt2": 0xE8E8E8,
