@@ -18,6 +18,8 @@ public struct KeynoteSlideWriter {
 
     public private(set) var relationships: [Relationship]
     public private(set) var skipped: Set<UInt32> = []
+    /// Whether a chart Dazzle can't read was written as a stand-in.
+    public private(set) var hasChartStandIns = false
     private var nextShapeID = 2
     /// Measured frames for text that grows to fit, by shape id.
     private let fittedFrames: [Int: EMURect]
@@ -116,10 +118,14 @@ public struct KeynoteSlideWriter {
         case KeynoteType.group:
             return group(object.message)
         case KeynoteType.chart:
-            return chart(object.message) ?? {
-                skipped.insert(object.type)
-                return nil
-            }()
+            if let chart = chart(object.message) { return chart }
+            // A chart Dazzle can't read keeps its place, shown as a stand-in.
+            if let standIn = chartStandIn(object.message) {
+                hasChartStandIns = true
+                return standIn
+            }
+            skipped.insert(object.type)
+            return nil
         case KeynoteType.table:
             return table(object.message) ?? {
                 skipped.insert(object.type)
@@ -305,6 +311,17 @@ public struct KeynoteSlideWriter {
             <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">\
             <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="\(relationship)"/>\
             </a:graphicData></a:graphic></p:graphicFrame>
+            """
+    }
+
+    /// A chart frame with no chart in it, which reads as a chart stand-in.
+    private mutating func chartStandIn(_ drawable: ProtoMessage) -> String? {
+        guard let frame = Frame(drawable.message(1)?.message(1)), frame.size.width > 0, frame.size.height > 0 else { return nil }
+        let nonVisual = nonVisual(drawable.message(1), name: "Chart")
+        return """
+            <p:graphicFrame><p:nvGraphicFramePr>\(nonVisual)<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>\
+            \(frame.xml().replacingOccurrences(of: "a:xfrm", with: "p:xfrm"))<a:graphic>\
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphic></p:graphicFrame>
             """
     }
 

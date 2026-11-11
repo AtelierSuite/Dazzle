@@ -1072,3 +1072,156 @@ extension KeynoteFixture {
         return try ZipArchive.archive(entries: [("Index/Document.iwa", iwa(objects))])
     }
 }
+
+extension KeynoteFixture {
+    /// The chart kinds the main deck leaves out, one slide each: a 3D pie,
+    /// a mixed chart of columns and a line, a two-axis chart, bubbles,
+    /// scatter points sharing their x values, a radar chart, a chart of a
+    /// kind Keynote may add later and one with no data.
+    static let chartTypes: [UInt64] = [16, 10, 11, 22, 9, 27, 99, 0]
+
+    static func chartsDeck() throws -> Data {
+        var objects: [(id: UInt64, type: UInt32, message: ProtoWriter)] = []
+        func add(_ id: UInt64, _ type: UInt32, _ build: (inout ProtoWriter) -> Void) {
+            var writer = ProtoWriter()
+            build(&writer)
+            objects.append((id, type, writer))
+        }
+
+        add(1, KeynoteType.document) { $0.reference(2, 2) }
+        add(2, KeynoteType.show) { show in
+            show.message(3) { tree in
+                for index in chartTypes.indices { tree.reference(2, 100 + UInt64(index) * 10) }
+            }
+            show.message(4) { $0.size(1_024, 768) }
+        }
+        // Mixed and two-axis series say what they are drawn as: 3, a line.
+        add(50, 5030) { $0.message(10_000) { $0.varint(26, 1) } }
+        add(51, 5030) { $0.message(10_000) { $0.varint(26, 3) } }
+
+        for (index, type) in chartTypes.enumerated() {
+            let node = 100 + UInt64(index) * 10
+            add(node, KeynoteType.slideNode) { $0.reference(2, node + 1) }
+            add(node + 1, KeynoteType.slide) { $0.reference(42, node + 2) }
+            add(node + 2, KeynoteType.chart) { chart in
+                chart.message(1) { $0.message(1) { $0.geometry(x: 100, y: 100, width: 600, height: 400) } }
+                chart.message(10_000) { info in
+                    info.varint(1, type)
+                    info.varint(5, 2)
+                    // Shared x values for the scatter chart.
+                    if type == 9 { info.varint(2, 2) }
+                    // The chart with no data has no grid.
+                    if index != chartTypes.count - 1 {
+                        info.message(7) { grid in
+                            grid.string(1, "One")
+                            grid.string(1, "Two")
+                            for name in ["A", "B", "C"] { grid.string(2, name) }
+                            for row in [[1.0, 2, 3], [4, 5, 6]] {
+                                grid.message(3) { gridRow in
+                                    for value in row { gridRow.message(1) { $0.double(1, value) } }
+                                }
+                            }
+                        }
+                    }
+                    if type == 10 || type == 11 {
+                        info.message(19) { array in
+                            for (series, style) in [(0, 50), (1, 51), (2, 51)] as [(UInt64, UInt64)] {
+                                array.message(2) { entry in
+                                    entry.varint(1, series)
+                                    entry.reference(2, style)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return try ZipArchive.archive(entries: [("Index/Document.iwa", iwa(objects))])
+    }
+}
+
+@Suite("Keynote charts of every kind")
+struct KeynoteChartKindTests {
+    private let presentation: Presentation
+
+    init() throws {
+        presentation = try KeynoteImporter.presentation(from: KeynoteFixture.chartsDeck())
+    }
+
+    private func chart(_ slide: Int) throws -> Chart? {
+        let shape = try #require(presentation.slides[slide].shapes.first)
+        #expect(shape.frame == EMURect(x: 100 * 12_700, y: 100 * 12_700, width: 600 * 12_700, height: 400 * 12_700))
+        guard case .chart(let chart) = shape.kind else {
+            Issue.record("Expected a chart, got \(shape.kind)")
+            return nil
+        }
+        return chart
+    }
+
+    @Test("3D charts are drawn flat")
+    func flat() throws {
+        let chart = try #require(try chart(0))
+        #expect(chart.kind == .pie)
+        #expect(chart.allSeries.map(\.values) == [[1, 4], [2, 5], [3, 6]])
+    }
+
+    @Test("Mixed and two-axis charts keep each series' kind")
+    func mixed() throws {
+        for slide in [1, 2] {
+            let chart = try #require(try chart(slide))
+            #expect(chart.plots.map(\.kind) == [.column, .line])
+            #expect(chart.plots.map { $0.series.map(\.name) } == [["A"], ["B", "C"]])
+            #expect(chart.categories == ["One", "Two"])
+        }
+    }
+
+    @Test("Bubbles and scatter points are read as points, x then y")
+    func scatter() throws {
+        let bubbles = try #require(try chart(3))
+        #expect(bubbles.kind == .scatter)
+        // x, y and a bubble's size: one series.
+        #expect(bubbles.allSeries.map(\.name) == ["B"])
+        #expect(bubbles.allSeries.map(\.values) == [[2, 5]])
+        #expect(bubbles.allSeries.map(\.xValues) == [[1, 4]])
+
+        let shared = try #require(try chart(4))
+        #expect(shared.allSeries.map(\.name) == ["B", "C"])
+        #expect(shared.allSeries.map(\.values) == [[2, 5], [3, 6]])
+        #expect(shared.allSeries.map(\.xValues) == [[1, 4], [1, 4]])
+    }
+
+    @Test("Radar charts are drawn as lines")
+    func radar() throws {
+        let chart = try #require(try chart(5))
+        #expect(chart.kind == .line)
+        #expect(chart.allSeries.count == 3)
+    }
+
+    @Test("Charts Dazzle can't read keep their place as stand-ins")
+    func standIns() throws {
+        #expect(try chart(6) == nil)
+        #expect(try chart(7) == nil)
+        #expect(presentation.unsupportedFeatures.omissions == [.chartStandIns])
+        #expect(presentation.unsupportedFeatures.features.isEmpty)
+    }
+
+    @Test("Stand-ins are saved back to Keynote and to PowerPoint")
+    func saving() throws {
+        let keynote = try #require(KeynoteWriter.fileWrapper(for: presentation).regularFileContents)
+        let reread = try KeynoteImporter.presentation(from: keynote)
+        #expect(reread.slides.count == KeynoteFixture.chartTypes.count)
+        #expect(reread.slides.map(\.shapes.count) == presentation.slides.map(\.shapes.count))
+
+        let pptx = try PPTXWriter.data(from: presentation)
+        let opened = try PPTXReader.presentation(from: pptx)
+        #expect(opened.slides.count == KeynoteFixture.chartTypes.count)
+        for (slide, original) in zip(opened.slides, presentation.slides) {
+            guard case .chart(let chart) = slide.shapes.first?.kind, case .chart(let before) = original.shapes.first?.kind else {
+                Issue.record("Expected a chart")
+                continue
+            }
+            #expect(chart?.plots.map(\.kind) == before?.plots.map(\.kind))
+            #expect(chart?.allSeries.map(\.values) == before?.allSeries.map(\.values))
+        }
+    }
+}

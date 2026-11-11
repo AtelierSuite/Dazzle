@@ -635,6 +635,108 @@ test("draws glows, soft edges, inner, preset and themed shadows and blurs, and s
   }
 });
 
+/** Protocol buffer fields, for building a Keynote archive. */
+class Proto {
+  bytes = [];
+  static varint(value) {
+    const out = [];
+    do {
+      let byte = value % 128;
+      value = Math.floor(value / 128);
+      if (value) byte |= 0x80;
+      out.push(byte);
+    } while (value);
+    return out;
+  }
+  varint(field, value) { this.bytes.push(...Proto.varint(field * 8), ...Proto.varint(value)); return this; }
+  float(field, value) {
+    const buffer = new DataView(new ArrayBuffer(4));
+    buffer.setFloat32(0, value, true);
+    this.bytes.push(...Proto.varint(field * 8 + 5), ...new Uint8Array(buffer.buffer));
+    return this;
+  }
+  double(field, value) {
+    const buffer = new DataView(new ArrayBuffer(8));
+    buffer.setFloat64(0, value, true);
+    this.bytes.push(...Proto.varint(field * 8 + 1), ...new Uint8Array(buffer.buffer));
+    return this;
+  }
+  data(field, bytes) { this.bytes.push(...Proto.varint(field * 8 + 2), ...Proto.varint(bytes.length), ...bytes); return this; }
+  string(field, text) { return this.data(field, [...new TextEncoder().encode(text)]); }
+  message(field, build) { const nested = new Proto(); build(nested); return this.data(field, nested.bytes); }
+  reference(field, id) { return this.message(field, (m) => m.varint(1, id)); }
+}
+
+/** An `.iwa` of `objects`, as one snappy chunk of literals. */
+function iwa(objects) {
+  const stream = [];
+  for (const [id, type, message] of objects) {
+    const info = new Proto().varint(1, id).message(2, (m) => m.varint(1, type).varint(3, message.bytes.length));
+    stream.push(...Proto.varint(info.bytes.length), ...info.bytes, ...message.bytes);
+  }
+  const block = [...Proto.varint(stream.length)];
+  for (let offset = 0; offset < stream.length; offset += 65536) {
+    const length = Math.min(65536, stream.length - offset);
+    block.push(61 << 2, (length - 1) & 0xff, (length - 1) >> 8, ...stream.slice(offset, offset + length));
+  }
+  return Uint8Array.from([0, block.length & 0xff, (block.length >> 8) & 0xff, block.length >> 16, ...block]);
+}
+
+/** A Keynote deck of three charts: mixed columns and a line, bubbles, and a kind Keynote may add later. */
+function keynoteCharts() {
+  const types = [10, 22, 99];
+  const objects = [
+    [1, 1, new Proto().reference(2, 2)],
+    [2, 2, new Proto()
+      .message(3, (tree) => types.forEach((_, index) => tree.reference(2, 100 + index * 10)))
+      .message(4, (size) => size.float(1, 1024).float(2, 768))],
+    [50, 5030, new Proto().message(10000, (m) => m.varint(26, 1))],
+    [51, 5030, new Proto().message(10000, (m) => m.varint(26, 3))],
+  ];
+  types.forEach((type, index) => {
+    const node = 100 + index * 10;
+    objects.push([node, 4, new Proto().reference(2, node + 1)]);
+    objects.push([node + 1, 5, new Proto().reference(42, node + 2)]);
+    objects.push([node + 2, 5021, new Proto()
+      .message(1, (d) => d.message(1, (g) => g
+        .message(1, (p) => p.float(1, 100).float(2, 100))
+        .message(2, (s) => s.float(1, 600).float(2, 400))
+        .varint(3, 3)))
+      .message(10000, (info) => {
+        info.varint(1, type).varint(5, 2).message(7, (grid) => {
+          grid.string(1, "One").string(1, "Two");
+          for (const name of ["A", "B", "C"]) grid.string(2, name);
+          for (const row of [[1, 2, 3], [4, 5, 6]]) grid.message(3, (r) => row.forEach((v) => r.message(1, (c) => c.double(1, v))));
+        });
+        if (type === 10) {
+          info.message(19, (array) => [[0, 50], [1, 51], [2, 51]].forEach(([series, style]) =>
+            array.message(2, (entry) => entry.varint(1, series).reference(2, style))));
+        }
+      })]);
+  });
+  return zip(new Map([["Index/Document.iwa", iwa(objects)]]));
+}
+
+test("draws every Keynote chart it reads, and a stand-in for one it can't", () => {
+  const opened = call("open", { name: "Charts.key" }, keynoteCharts());
+  const [mixed, bubbles, unknown] = opened.state.slides.map((slide) => call("scene", { slide: slide.id }).result.shapes[0]);
+  assert.equal(mixed.kind, "chart");
+  assert.ok(mixed.chart.length > 0, "the mixed chart is drawn");
+  assert.equal(bubbles.kind, "chart");
+  assert.ok(bubbles.chart.length > 0, "the bubbles are drawn as points");
+  assert.equal(unknown.kind, "standin");
+  assert.equal(unknown.isChart, true);
+  assert.ok(unknown.w > 0 && unknown.h > 0, "the stand-in keeps the chart's place");
+  assert.deepEqual(opened.result.omissions, [strings["Notice.Omission.ChartStandIns"] ?? opened.result.omissions[0]]);
+  assert.ok(!opened.result.omissions[0].includes("Notice."), "the omission is worded");
+  assert.deepEqual(opened.result.unsupported, []);
+  for (const format of opened.result.saveFormats.map((f) => f.key)) {
+    const saved = call("save", { format, keep: true });
+    const reopened = call("open", { name: `Charts.${format}` }, saved.payload);
+    assert.equal(reopened.state.slides.length, 3, `saved as ${format}`);
+  }
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));

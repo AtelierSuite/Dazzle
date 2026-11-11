@@ -183,6 +183,7 @@ public enum KeynoteImporter {
                     let xml = layoutXML(template, number: layouts.count + 1, writer: &writer)
                     layouts.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
                     omissions.formUnion(writer.skipped.map(omission))
+                    if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
                     layoutPaths[template.identifier] = path
                     layoutPath = path
                 }
@@ -204,6 +205,7 @@ public enum KeynoteImporter {
             let xml = slideXML(slide, hidden: node.message.bool(4) ?? false, writer: &writer)
             slides.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
             omissions.formUnion(writer.skipped.map(omission))
+            if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
             let builds = KeynoteBuilds(archive: archive).animations(slide, shapeIDs: writer.shapeIDs)
             animations.append(builds.animations)
             if builds.lost { omissions.insert(.builds) }
