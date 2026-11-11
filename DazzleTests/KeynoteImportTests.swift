@@ -1072,3 +1072,242 @@ extension KeynoteFixture {
         return try ZipArchive.archive(entries: [("Index/Document.iwa", iwa(objects))])
     }
 }
+
+extension KeynoteFixture {
+    /// Tables the main deck leaves out, one slide each: one saved before
+    /// 2019, one with merges across a hidden column, one with no data
+    /// store, one too big for a slide and one whose model is missing.
+    static func tablesDeck() throws -> Data {
+        var objects: [(id: UInt64, type: UInt32, message: ProtoWriter)] = []
+        func add(_ id: UInt64, _ type: UInt32, _ build: (inout ProtoWriter) -> Void) {
+            var writer = ProtoWriter()
+            build(&writer)
+            objects.append((id, type, writer))
+        }
+        let slideCount = 5
+        add(1, KeynoteType.document) { $0.reference(2, 2) }
+        add(2, KeynoteType.show) { show in
+            show.message(3) { tree in
+                for index in 0..<slideCount { tree.reference(2, 100 + UInt64(index) * 20) }
+            }
+            show.message(4) { $0.size(1_024, 768) }
+        }
+        func table(_ index: Int, model: (inout ProtoWriter) -> Void) {
+            let node = 100 + UInt64(index) * 20
+            add(node, KeynoteType.slideNode) { $0.reference(2, node + 1) }
+            add(node + 1, KeynoteType.slide) { $0.reference(42, node + 2) }
+            add(node + 2, KeynoteType.table) { info in
+                info.message(1) { $0.message(1) { $0.geometry(x: 50, y: 60, width: 400, height: 300) } }
+                info.reference(2, node + 3)
+            }
+            add(node + 3, KeynoteType.tableModel, model)
+        }
+        func strings(_ id: UInt64, _ values: [String]) {
+            add(id, 6005) { list in
+                for (key, value) in values.enumerated() {
+                    list.message(3) { $0.varint(1, UInt64(key + 1)); $0.string(3, value) }
+                }
+            }
+        }
+
+        // Before 2019: cells of versions 2 to 4, in the rows' older fields.
+        table(0) { model in
+            model.message(4) { store in
+                store.message(3) { $0.message(1) { tile in
+                    tile.varint(1, 0)
+                    tile.reference(2, 104)
+                } }
+                store.reference(4, 105)
+                store.reference(5, 106)
+            }
+            model.varint(6, 2)
+            model.varint(7, 2)
+        }
+        add(104, 6002) { tile in
+            tile.message(5) { row in
+                row.varint(1, 0)
+                let text = olderCell(version: 4, type: 3, flags: 0x10, keys: [1])
+                // Version 3 keeps its type a byte later.
+                let number = olderCell(version: 3, type: 2, flags: 0x20, keys: [], double: 2.5)
+                row.data(3, text + number)
+                row.data(4, offsets([0, text.count]))
+            }
+            tile.message(5) { row in
+                row.varint(1, 1)
+                let duration = olderCell(version: 4, type: 7, flags: 0x20, keys: [], double: 5_400)
+                // A cell style, then the string.
+                let styled = olderCell(version: 2, type: 3, flags: 0x12, keys: [1, 2])
+                row.data(3, duration + styled)
+                row.data(4, offsets([0, duration.count]))
+            }
+        }
+        strings(105, ["Older", "Styled"])
+        add(106, 6005) { list in
+            list.message(3) { $0.varint(1, 1); $0.reference(4, 107) }
+        }
+        add(107, KeynoteType.cellStyle) { style in
+            style.message(11) { $0.message(1) { $0.message(1) { $0.color(1, 0, 0) } } }
+        }
+
+        // Three rows of four columns, the second hidden. A1:C2 is merged,
+        // and so is B3:D3, which starts in the hidden column. B2:C2
+        // overlaps A1:C2, and D3 merged down five rows runs off the table.
+        table(1) { model in
+            model.message(4) { store in
+                store.reference(2, 124)
+                store.message(3) { $0.message(1) { tile in
+                    tile.varint(1, 0)
+                    tile.reference(2, 125)
+                } }
+                store.reference(4, 126)
+                store.reference(13, 127)
+            }
+            model.varint(6, 3)
+            model.varint(7, 4)
+        }
+        add(124, 6006) { bucket in
+            bucket.message(2) { header in
+                header.varint(1, 1)
+                header.varint(3, 1)
+            }
+        }
+        add(125, 6002) { tile in
+            tile.message(5) { row in
+                row.varint(1, 0)
+                row.data(6, cell(type: 3, flags: 0x8, keys: [1]))
+                row.data(7, offsets([0]))
+            }
+            tile.message(5) { row in
+                row.varint(1, 2)
+                row.data(6, cell(type: 3, flags: 0x8, keys: [2]))
+                row.data(7, offsets([0xFFFF, 0]))
+            }
+        }
+        strings(126, ["Merged", "Hidden start"])
+        add(127, 6010) { map in
+            for (row, column, columns, rows) in [(0, 0, 3, 2), (2, 1, 3, 1), (1, 1, 2, 1), (2, 3, 1, 5)] as [(UInt64, UInt64, UInt64, UInt64)] {
+                map.message(1) { range in
+                    range.message(1) { $0.varint(1, row << 16 | column) }
+                    range.message(2) { $0.varint(1, columns << 16 | rows) }
+                }
+            }
+        }
+
+        // Rows and columns but nothing to read them from.
+        table(2) { model in
+            model.varint(6, 2)
+            model.varint(7, 3)
+            model.double(16, 25)
+            model.double(17, 80)
+        }
+        // More cells than any slide shows.
+        table(3) { model in
+            model.message(4) { $0.message(3) { _ in } }
+            model.varint(6, 300)
+            model.varint(7, 100)
+        }
+        // A model that isn't there.
+        let node = 100 + 4 * 20
+        add(UInt64(node), KeynoteType.slideNode) { $0.reference(2, UInt64(node) + 1) }
+        add(UInt64(node) + 1, KeynoteType.slide) { $0.reference(42, UInt64(node) + 2) }
+        add(UInt64(node) + 2, KeynoteType.table) { info in
+            info.message(1) { $0.message(1) { $0.geometry(x: 50, y: 60, width: 400, height: 300) } }
+            info.reference(2, 999)
+        }
+        return try ZipArchive.archive(entries: [("Index/Document.iwa", iwa(objects))])
+    }
+
+    /// A packed cell as Keynote kept them before 2019: its flags at byte 4,
+    /// its type at byte 1 from version 4 and at byte 2 before, then its
+    /// keys and last its value.
+    private static func olderCell(version: UInt8, type: UInt8, flags: UInt32, keys: [UInt32], double: Double? = nil) -> [UInt8] {
+        var bytes: [UInt8] = version >= 4 ? [version, type, 0, 0] : [version, 0, type, 0]
+        withUnsafeBytes(of: flags.littleEndian) { bytes += $0 }
+        bytes += [0, 0, 0, 0]
+        for key in keys { withUnsafeBytes(of: key.littleEndian) { bytes += $0 } }
+        if let double { withUnsafeBytes(of: double.bitPattern.littleEndian) { bytes += $0 } }
+        return bytes
+    }
+}
+
+@Suite("Keynote tables of every structure")
+struct KeynoteTableStructureTests {
+    private let presentation: Presentation
+
+    init() throws {
+        presentation = try KeynoteImporter.presentation(from: KeynoteFixture.tablesDeck())
+    }
+
+    private func table(_ slide: Int) throws -> SlideTable {
+        let shape = try #require(presentation.slides[slide].shapes.first)
+        guard case .table(let table) = shape.kind else {
+            Issue.record("Expected a table, got \(shape.kind)")
+            throw CancellationError()
+        }
+        return table
+    }
+
+    @Test("Tables saved before 2019 keep their values and styles")
+    func older() throws {
+        let table = try table(0)
+        #expect(table.rows.map { $0.cells.map { $0.text?.plainText ?? "" } } == [["Older", "2.5"], ["1h 30m", "Styled"]])
+        guard case .solid(let color)? = table.rows[1].cells[1].fill else {
+            Issue.record("Expected the cell style's fill")
+            return
+        }
+        #expect(color.base == .rgb(0xFF0000))
+    }
+
+    @Test("Merges span only the rows and columns shown and stay within the table")
+    func merges() throws {
+        let table = try table(1)
+        #expect(table.columnWidths.count == 3)
+        let rows = table.rows.map(\.cells)
+        #expect(rows.map(\.count) == [3, 3, 3])
+        #expect(rows[0][0].text?.plainText == "Merged")
+        #expect(rows[0][0].columnSpan == 2)
+        #expect(rows[0][0].rowSpan == 2)
+        #expect(rows[0][1].isHorizontalMerge && !rows[0][1].isVerticalMerge)
+        #expect(!rows[0][2].isMerged)
+        #expect(rows[1][0].isVerticalMerge && !rows[1][0].isHorizontalMerge)
+        #expect(rows[1][1].isHorizontalMerge && rows[1][1].isVerticalMerge)
+        #expect(!rows[1][2].isMerged)
+        // B3:D3 starts in the hidden column: C3 takes its place and its value.
+        #expect(!rows[2][0].isMerged)
+        #expect(rows[2][1].text?.plainText == "Hidden start")
+        #expect(rows[2][1].columnSpan == 2)
+        #expect(rows[2][1].rowSpan == 1)
+        #expect(rows[2][2].isHorizontalMerge)
+    }
+
+    @Test("Tables Dazzle can't read keep their place as stand-ins")
+    func standIns() throws {
+        let label = String(localized: "Object.Table", bundle: .engine)
+        let frames = [
+            // Sized by its rows and columns.
+            EMURect(x: 50 * 12_700, y: 60 * 12_700, width: 240 * 12_700, height: 50 * 12_700),
+            // Too big to size that way: the drawable's frame.
+            EMURect(x: 50 * 12_700, y: 60 * 12_700, width: 400 * 12_700, height: 300 * 12_700),
+            EMURect(x: 50 * 12_700, y: 60 * 12_700, width: 400 * 12_700, height: 300 * 12_700),
+        ]
+        for (slide, frame) in zip(2..., frames) {
+            let shape = try #require(presentation.slides[slide].shapes.first)
+            #expect(shape.kind == .unsupported(label))
+            #expect(shape.frame == frame)
+        }
+        #expect(presentation.unsupportedFeatures.omissions == [.tableStandIns])
+        #expect(presentation.unsupportedFeatures.features.isEmpty)
+    }
+
+    @Test("Tables and stand-ins are saved back to Keynote and to PowerPoint")
+    func saving() throws {
+        let keynote = try #require(KeynoteWriter.fileWrapper(for: presentation).regularFileContents)
+        let reread = try KeynoteImporter.presentation(from: keynote)
+        #expect(reread.slides.map { $0.shapes.map(\.kind) } == presentation.slides.map { $0.shapes.map(\.kind) })
+
+        let pptx = try PPTXWriter.data(from: presentation)
+        let opened = try PPTXReader.presentation(from: pptx)
+        #expect(opened.slides.map { $0.shapes.map(\.kind) } == presentation.slides.map { $0.shapes.map(\.kind) })
+        #expect(opened.slides.map { $0.shapes.map(\.frame) } == presentation.slides.map { $0.shapes.map(\.frame) })
+    }
+}
