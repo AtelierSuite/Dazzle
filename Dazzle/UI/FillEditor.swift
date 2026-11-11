@@ -114,10 +114,16 @@ struct FillEditor: View {
             ColorSwatches(identifier: "\(identifier).end", choices: choices, selected: gradient.stops.last?.color) { color in
                 if let color { update { $0.stops[$0.stops.count - 1].color = color } }
             }
-            Toggle("Fill.Gradient.Radial", isOn: Binding(
-                get: { gradient.isRadial },
-                set: { isRadial in update { $0.isRadial = isRadial } }
-            ))
+            Picker("Fill.Gradient.Style", selection: Binding(
+                get: { gradient.path },
+                set: { path in update { $0.path = path } }
+            )) {
+                Text("Fill.Gradient.Linear").tag(Fill.Gradient.Path?.none)
+                Text("Fill.Gradient.Radial").tag(Fill.Gradient.Path?.some(.circle))
+                Text("Fill.Gradient.Rectangular").tag(Fill.Gradient.Path?.some(.rect))
+                Text("Fill.Gradient.Path").tag(Fill.Gradient.Path?.some(.shape))
+            }
+            .accessibilityIdentifier("\(identifier).gradientStyle")
             if !gradient.isRadial {
                 Picker("Fill.Gradient.Direction", selection: Binding(
                     get: { (gradient.angle / 45).rounded() * 45 },
