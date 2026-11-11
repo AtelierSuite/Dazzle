@@ -589,6 +589,8 @@ export function runStyle(element, run, scale = 1) {
   const lines = [run.u && "underline", run.s && "line-through"].filter(Boolean);
   if (lines.length) element.style.textDecoration = lines.join(" ");
   if (run.base) element.style.verticalAlign = run.base > 0 ? "super" : "sub";
+  // Spacing shrinks with text fitted to its box, as Apple platforms kern it, but not with superscript.
+  if (run.sp) element.style.letterSpacing = `${run.sp * scale}px`; // design-lint-allow (document content)
   if (run.outline) {
     element.style.webkitTextStroke = `${run.outline.w}px ${run.outline.c}`;
     element.style.paintOrder = "stroke fill";

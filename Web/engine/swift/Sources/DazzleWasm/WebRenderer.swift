@@ -591,6 +591,8 @@ struct WebRenderer {
         if run.isUnderlined == true { json["u"] = true }
         if run.isStruckThrough == true { json["s"] = true }
         if let baseline = run.baseline, baseline != 0 { json["base"] = baseline > 0 ? 1 : -1 }
+        // Character spacing, in points (`spc` is hundredths of a point).
+        if let spacing = run.spacing, spacing != 0 { json["sp"] = Double(spacing) / 100 }
         json["c"] = css(run.color.map { style.color($0) } ?? style.color(.scheme("tx1")))
         if case .line(let width, let color) = run.outline, width > 0 {
             json["outline"] = ["w": EMU.points(width), "c": css(style.color(color))]
