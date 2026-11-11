@@ -41,7 +41,8 @@ public struct KeynoteTable {
         guard model.type == KeynoteType.tableModel, let store = message.message(4) else { return nil }
         let rowCount = message.int(6) ?? 0
         let columnCount = message.int(7) ?? 0
-        guard rowCount > 0, columnCount > 0 else { return nil }
+        // A table too big to draw on a slide is left to its stand-in.
+        guard rowCount > 0, columnCount > 0, rowCount * columnCount <= Self.maximumCells else { return nil }
         let headerRows = message.int(9) ?? 0
         let headerColumns = message.int(10) ?? 0
         let footerRows = message.int(11) ?? 0
@@ -67,13 +68,25 @@ public struct KeynoteTable {
 
         let visibleRows = rows.indices.filter { !rows[$0].hidden }
         let visibleColumns = columns.indices.filter { !columns[$0].hidden }
-        var covered: Set<[Int]> = []
-        for (origin, merge) in merges {
-            for row in origin[0]..<(origin[0] + merge.rowSpan) {
-                for column in origin[1]..<(origin[1] + merge.columnSpan) where [row, column] != origin {
-                    covered.insert([row, column])
-                }
-            }
+        // Merged ranges, kept within the table and counted in the rows and
+        // columns shown. A range whose top row or left column is hidden is
+        // anchored at the first shown, which takes the hidden cell's value.
+        // One that overlaps a range already merged is left unmerged.
+        var spans: [[Int]: Merge] = [:]
+        var mergedFrom: [[Int]: [Int]] = [:]
+        var coveredBy: [[Int]: [Int]] = [:]
+        for (origin, merge) in merges.sorted(by: { $0.key.lexicographicallyPrecedes($1.key) }) {
+            let rowRange = origin[0]..<min(origin[0] + merge.rowSpan, rowCount)
+            let columnRange = origin[1]..<min(origin[1] + merge.columnSpan, columnCount)
+            let shownRows = rowRange.filter { !rows[$0].hidden }
+            let shownColumns = columnRange.filter { !columns[$0].hidden }
+            guard let top = shownRows.first, let left = shownColumns.first, shownRows.count * shownColumns.count > 1 else { continue }
+            let range = rowRange.flatMap { row in columnRange.map { [row, $0] } }
+            guard range.allSatisfy({ coveredBy[$0] == nil && spans[$0] == nil }) else { continue }
+            let anchor = [top, left]
+            spans[anchor] = Merge(rowSpan: shownRows.count, columnSpan: shownColumns.count)
+            mergedFrom[anchor] = origin
+            for cell in range where cell != anchor { coveredBy[cell] = anchor }
         }
 
         var rowXML = ""
@@ -82,7 +95,7 @@ public struct KeynoteTable {
             let isFooter = row >= rowCount - footerRows && !isHeaderRow
             var cellXML = ""
             for column in visibleColumns {
-                let cell = cells[[row, column]] ?? Cell()
+                let cell = cells[mergedFrom[[row, column]] ?? [row, column]] ?? Cell()
                 let isHeaderColumn = column < headerColumns
                 // Header rows win over header columns where they cross.
                 let regionStyle = message.reference(isHeaderRow ? 19 : isFooter ? 21 : isHeaderColumn ? 20 : 18)
@@ -95,13 +108,14 @@ public struct KeynoteTable {
                 }
 
                 var attributes = ""
-                if let merge = merges[[row, column]] {
+                if let merge = spans[[row, column]] {
                     if merge.columnSpan > 1 { attributes += " gridSpan=\"\(merge.columnSpan)\"" }
                     if merge.rowSpan > 1 { attributes += " rowSpan=\"\(merge.rowSpan)\"" }
                 }
-                if covered.contains([row, column]) {
-                    let mergedAcross = covered.contains([row, column - 1]) || merges[[row, column - 1]].map { $0.columnSpan > 1 } == true
-                    attributes += mergedAcross ? " hMerge=\"1\"" : " vMerge=\"1\""
+                // A cell inside a range continues it from the left, from above or both.
+                if let anchor = coveredBy[[row, column]] {
+                    if column > anchor[1] { attributes += " hMerge=\"1\"" }
+                    if row > anchor[0] { attributes += " vMerge=\"1\"" }
                 }
 
                 let paragraphs: String
@@ -150,6 +164,31 @@ public struct KeynoteTable {
         return (xml, size)
     }
 
+    /// The size, in points, a table model's visible rows and columns add up
+    /// to, for a table the rest of which can't be read. A table too big to
+    /// draw has none: its stand-in takes the drawable's frame.
+    public func size(model: KeynoteArchive.Object) -> CGSize? {
+        let message = model.message
+        let rowCount = message.int(6) ?? 0
+        let columnCount = message.int(7) ?? 0
+        guard rowCount > 0, columnCount > 0, rowCount * columnCount <= Self.maximumCells else { return nil }
+        let store = message.message(4)
+        let rows = headers(store?.message(1)?.references(2).compactMap { archive[$0]?.message } ?? [], count: rowCount,
+                           default: message.float(16) ?? 20)
+        let columns = headers(archive[store?.reference(2)].map { [$0.message] } ?? [], count: columnCount,
+                              default: message.float(17) ?? 100)
+        let size = CGSize(
+            width: columns.filter { !$0.hidden }.reduce(0) { $0 + $1.size },
+            height: rows.filter { !$0.hidden }.reduce(0) { $0 + $1.size }
+        )
+        return size.width > 0 && size.height > 0 ? size : nil
+    }
+
+    /// The most cells a table is drawn with. Keynote's own tables are
+    /// rarely more than a few hundred; one pasted from a spreadsheet can
+    /// be far bigger than any slide shows.
+    static let maximumCells = 20_000
+
     // MARK: - Data store
 
     /// Row or column sizes, in points, and whether each is hidden.
@@ -185,15 +224,19 @@ public struct KeynoteTable {
             guard let tile = archive[entry.reference(2)]?.message else { continue }
             let firstRow = (entry.int(1) ?? 0) * tileSize
             for row in tile.messages(5) {
-                guard case .bytes(let storage)? = row.fields[6]?.last, case .bytes(let offsetBytes)? = row.fields[7]?.last else {
+                // Cells as Keynote has kept them since 2019, then as it kept them before.
+                let storage: (buffer: [UInt8], offsets: [UInt8])
+                if case .bytes(let buffer)? = row.fields[6]?.last, case .bytes(let offsets)? = row.fields[7]?.last, !offsets.isEmpty {
+                    storage = (Array(buffer), Array(offsets))
+                } else if case .bytes(let buffer)? = row.fields[3]?.last, case .bytes(let offsets)? = row.fields[4]?.last {
+                    storage = (Array(buffer), Array(offsets))
+                } else {
                     continue
                 }
-                let buffer = Array(storage)
-                let offsets = Array(offsetBytes)
                 let scale = row.bool(8) == true ? 4 : 1
-                for column in 0..<(offsets.count / 2) {
-                    let raw = Int(offsets[column * 2]) | Int(offsets[column * 2 + 1]) << 8
-                    guard raw != 0xFFFF, let cell = Self.cell(buffer, at: raw * scale) else { continue }
+                for column in 0..<(storage.offsets.count / 2) {
+                    let raw = Int(storage.offsets[column * 2]) | Int(storage.offsets[column * 2 + 1]) << 8
+                    guard raw != 0xFFFF, let cell = Self.cell(storage.buffer, at: raw * scale) else { continue }
                     result[[firstRow + (row.int(1) ?? 0), column]] = cell
                 }
             }
@@ -204,7 +247,8 @@ public struct KeynoteTable {
     /// One packed cell: a version, a type, then a word of flags saying which
     /// of the optional fields follow, in flag order.
     private static func cell(_ buffer: [UInt8], at offset: Int) -> Cell? {
-        guard offset + 12 <= buffer.count, buffer[offset] >= 5 else { return nil }
+        guard offset + 12 <= buffer.count else { return nil }
+        guard buffer[offset] >= 5 else { return olderCell(buffer, at: offset) }
         var cell = Cell(type: buffer[offset + 1])
         func word(_ at: Int) -> UInt32 {
             (0..<4).reduce(0) { $0 | UInt32(buffer[at + $1]) << (8 * UInt32($1)) }
@@ -238,6 +282,43 @@ public struct KeynoteTable {
             default: break
             }
         }
+        return cell
+    }
+
+    /// A packed cell as Keynote kept it before 2019, versions 2 to 4: the
+    /// flags come first and the value last, after the keys. Versions before
+    /// 4 keep the type a byte later.
+    private static func olderCell(_ buffer: [UInt8], at offset: Int) -> Cell? {
+        let version = buffer[offset]
+        guard (2...4).contains(version) else { return nil }
+        var cell = Cell(type: buffer[offset + (version >= 4 ? 1 : 2)])
+        func word(_ at: Int) -> UInt32 {
+            (0..<4).reduce(0) { $0 | UInt32(buffer[at + $1]) << (8 * UInt32($1)) }
+        }
+        let flags = word(offset + 4)
+        var cursor = offset + 12
+        func take(_ length: Int) -> Int? {
+            guard cursor + length <= buffer.count else { return nil }
+            defer { cursor += length }
+            return cursor
+        }
+        // Styles, formats and formulas, four bytes each, in flag order.
+        for bit in [0x2, 0x4, 0x8, 0x80, 0x100, 0x400, 0x800] as [UInt32] where flags & bit != 0 {
+            guard let at = take(4) else { return nil }
+            switch bit {
+            case 0x2: cell.cellStyle = word(at)
+            case 0x80: cell.textStyle = word(at)
+            default: break
+            }
+        }
+        if flags & 0x200 != 0, let at = take(4) { cell.richText = word(at) }
+        for bit in [0x1000, 0x2000] as [UInt32] where flags & bit != 0 { _ = take(4) }
+        if flags & 0x10 != 0, let at = take(4) { cell.string = word(at) }
+        func double(_ at: Int) -> Double {
+            Double(bitPattern: (0..<8).reduce(UInt64(0)) { $0 | UInt64(buffer[at + $1]) << (8 * UInt64($1)) })
+        }
+        if flags & 0x20 != 0, let at = take(8) { cell.number = double(at) }
+        if flags & 0x40 != 0, let at = take(8) { cell.seconds = double(at) }
         return cell
     }
 
@@ -318,13 +399,36 @@ public struct KeynoteTable {
             return formatter.string(from: date)
         case 6:
             return (cell.number ?? 0) != 0 ? "TRUE" : "FALSE"
-        case 2, 7, 10:
+        case 7:
+            return cell.number.map(duration) ?? ""
+        case 2, 10:
             guard let number = cell.number else { return "" }
             let format = cell.currencyFormat.flatMap { formats[$0] } ?? cell.numberFormat.flatMap { formats[$0] }
             return self.number(number, format: format)
         default:
             return cell.string.flatMap { strings[$0] } ?? ""
         }
+    }
+
+    /// A duration in seconds as Keynote shows it by default: each unit
+    /// from weeks to seconds that it has, such as "1h 30m".
+    private func duration(_ seconds: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.maximumFractionDigits = 3
+        var remaining = abs(seconds)
+        var parts: [String] = []
+        for (unit, length) in [("w", 604_800.0), ("d", 86_400), ("h", 3_600), ("m", 60)] where remaining >= length {
+            let count = (remaining / length).rounded(.down)
+            remaining -= count * length
+            parts.append("\(Int(count))\(unit)")
+        }
+        // Rounding to the millisecond, so that what's left of a whole minute isn't shown.
+        remaining = (remaining * 1_000).rounded() / 1_000
+        if remaining > 0 || parts.isEmpty {
+            parts.append((formatter.string(from: NSNumber(value: remaining)) ?? String(remaining)) + "s")
+        }
+        return (seconds < 0 ? "-" : "") + parts.joined(separator: " ")
     }
 
     /// A number as its `TSK.FormatStructArchive` shows it. Decimal places

@@ -14,20 +14,95 @@ public struct TextRenderer {
 
     /// The kinds of vertical text, by their name in the file, all laid out
     /// across the shape and turned a quarter.
-    static let verticalKinds: Set = ["vert", "eaVert", "vert270", "wordArtVert", "wordArtVertRtl", "mongolianVert"]
-    /// Those set in vertical lines (縦書き and stacked), where Japanese and
-    /// Chinese stand upright, rather than turned letters and all.
-    static let uprightKinds: Set = ["eaVert", "wordArtVert", "wordArtVertRtl"]
+    static let verticalKinds = BodyProperties.verticalKinds
+    /// Those set in vertical lines (縦書き, Mongolian and stacked), where
+    /// Japanese and Chinese stand upright, rather than turned letters and all.
+    static let uprightKinds: Set = ["eaVert", "mongolianVert", "wordArtVert", "wordArtVertRtl"]
+    /// Those stacked, where every letter stands upright, Latin ones too.
+    static let stackedKinds: Set = ["wordArtVert", "wordArtVertRtl"]
 
-    /// Text laid out in a shape: the frame CoreText made, and where it sits.
+    /// Text laid out in a shape: a frame CoreText made for each column the
+    /// text reaches, and where each sits.
     private struct Layout {
-        var frame: CTFrame
-        /// The frame's top-left corner, in slide points, in the turned
-        /// space when the text runs vertically.
-        var origin: CGPoint
-        var height: CGFloat
+        struct Column {
+            var frame: CTFrame
+            /// The frame's top-left corner, in slide points, in the turned
+            /// space when the text runs vertically.
+            var origin: CGPoint
+            var height: CGFloat
+        }
+
+        var columns: [Column]
         /// For vertical text: the point turned about, and by how much.
         var turn: (center: CGPoint, angle: CGFloat)?
+        /// Whether the lines follow each other the other way across the
+        /// turned box, so vertical lines run left to right.
+        var reversesLines = false
+    }
+
+    /// How text is set in columns: how many, how wide, and how far apart.
+    private struct ColumnSet {
+        var count: Int
+        var width: CGFloat
+        var gap: CGFloat
+
+        init(_ properties: BodyProperties, width: CGFloat) {
+            let wraps = properties.wraps ?? true
+            count = wraps ? max(properties.columnCount ?? 1, 1) : 1
+            gap = count > 1 ? CGFloat(EMU.points(properties.columnSpacing ?? 0)) : 0
+            self.width = max((width - gap * CGFloat(count - 1)) / CGFloat(count), 1)
+        }
+    }
+
+    /// The stretch of text each column holds when columns are `height` tall:
+    /// every column but the last takes what fits, and the last the rest.
+    private func columnRanges(_ framesetter: CTFramesetter, length: Int, columns: ColumnSet, height: CGFloat) -> [CFRange] {
+        var ranges: [CFRange] = []
+        var start = 0
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: columns.width, height: max(height, 1)), transform: nil)
+        for _ in 0..<(columns.count - 1) where start < length {
+            let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: start, length: 0), path, nil)
+            let visible = CTFrameGetVisibleStringRange(frame).length
+            guard visible > 0 else { break }
+            ranges.append(CFRange(location: start, length: visible))
+            start += visible
+        }
+        if start < length || ranges.isEmpty {
+            ranges.append(CFRange(location: start, length: length - start))
+        }
+        return ranges
+    }
+
+    private func suggestedHeight(_ framesetter: CTFramesetter, range: CFRange, width: CGFloat) -> CGFloat {
+        CTFramesetterSuggestFrameSizeWithConstraints(
+            framesetter, range, nil, CGSize(width: width, height: .greatestFiniteMagnitude), nil
+        ).height
+    }
+
+    /// How tall the text in the last column stands when columns are `height`
+    /// tall: no taller than `height` when everything fits.
+    private func lastColumnHeight(_ framesetter: CTFramesetter, length: Int, columns: ColumnSet, height: CGFloat) -> CGFloat {
+        let ranges = columnRanges(framesetter, length: length, columns: columns, height: height)
+        return ranges.last.map { suggestedHeight(framesetter, range: $0, width: columns.width) } ?? 0
+    }
+
+    /// The least height columns can have and still hold all the text, the
+    /// text balanced across them.
+    private func balancedHeight(_ framesetter: CTFramesetter, length: Int, columns: ColumnSet) -> CGFloat {
+        let whole = suggestedHeight(framesetter, range: CFRange(location: 0, length: length), width: columns.width)
+        guard columns.count > 1, whole > 0 else { return whole }
+        var low = whole / CGFloat(columns.count)
+        var high = whole
+        if lastColumnHeight(framesetter, length: length, columns: columns, height: low) <= low + 1 { return low }
+        while high - low > 0.5 {
+            let middle = (low + high) / 2
+            if lastColumnHeight(framesetter, length: length, columns: columns, height: middle) <= middle + 1 {
+                high = middle
+            } else {
+                low = middle
+            }
+        }
+        return high
     }
 
     private func layout(
@@ -46,20 +121,15 @@ public struct TextRenderer {
         guard inner.width > 0 || properties.wraps == false else { return nil }
 
         // Vertical text is laid out across the shape's height, then turned.
+        // Lines that run left to right, but not turned anticlockwise, follow
+        // each other the other way across the turned box.
         var turn: (center: CGPoint, angle: CGFloat)?
-        if let vertical = properties.vertical, Self.verticalKinds.contains(vertical) {
-            turn = (CGPoint(x: inner.midX, y: inner.midY), vertical == "vert270" ? -.pi / 2 : .pi / 2)
+        if properties.runsVertically {
+            turn = (CGPoint(x: inner.midX, y: inner.midY), properties.vertical == "vert270" ? -.pi / 2 : .pi / 2)
             inner = CGRect(x: -inner.height / 2, y: -inner.width / 2, width: inner.height, height: inner.width)
         }
-        // Set in vertical lines rather than turned, Japanese and Chinese take
-        // their vertical forms, which CoreText draws upright in the turned line.
-        let upright = properties.vertical.map(Self.uprightKinds.contains) ?? false
-        func shaped(_ string: NSAttributedString) -> NSAttributedString {
-            guard upright else { return string }
-            let shaped = NSMutableAttributedString(attributedString: string)
-            shaped.addAttribute(NSAttributedString.Key(kCTVerticalFormsAttributeName as String), value: true, range: NSRange(location: 0, length: shaped.length))
-            return shaped
-        }
+        let reversesLines = properties.runsVertically && !properties.linesStartAtRight && properties.vertical != "vert270"
+        func shaped(_ string: NSAttributedString) -> NSAttributedString { Self.shaped(string, vertical: properties.vertical) }
 
         var fontScale = 1.0
         var spacingReduction = 0.0
@@ -75,11 +145,19 @@ public struct TextRenderer {
             colorOverride: colorOverride, hidesText: hidesText, paragraphOpacity: paragraphOpacity,
             colorChanges: colorChanges, paragraphColorChanges: paragraphColorChanges
         ))
+        let columns = ColumnSet(properties, width: inner.width)
         var framesetter = CTFramesetterCreateWithAttributedString(string)
         var size = suggestedSize(framesetter, string: string, width: layoutWidth)
+        // Text in columns overflows only when the last column runs past the bottom.
+        func overflows() -> Bool {
+            let needed = columns.count > 1
+                ? lastColumnHeight(framesetter, length: string.length, columns: columns, height: inner.height)
+                : size.height
+            return needed > inner.height + 1
+        }
 
         // Shrink on overflow, as PowerPoint would have when it last saved.
-        if case .normal = properties.autofit, fontScale == 1, size.height > inner.height + 1 {
+        if case .normal = properties.autofit, fontScale == 1, overflows() {
             for scale in stride(from: 0.9, through: 0.3, by: -0.1) {
                 string = shaped(attributedString(
                     body, shape: shape, sources: sources, scale: scale, spacingReduction: 0.1, colorOverride: colorOverride,
@@ -88,8 +166,34 @@ public struct TextRenderer {
                 ))
                 framesetter = CTFramesetterCreateWithAttributedString(string)
                 size = suggestedSize(framesetter, string: string, width: layoutWidth)
-                if size.height <= inner.height + 1 { break }
+                if !overflows() { break }
             }
+        }
+
+        if columns.count > 1 {
+            // Text fills each column to the bottom before the next; the last
+            // column takes what is left, running on past the bottom if it must.
+            let ranges = columnRanges(framesetter, length: string.length, columns: columns, height: inner.height)
+            let heights = ranges.map { ceil(suggestedHeight(framesetter, range: $0, width: columns.width)) + 1 }
+            let blockHeight = heights.max() ?? 0
+            let offset: CGFloat = switch properties.anchor ?? .top {
+            case .top: 0
+            case .center: (inner.height - blockHeight) / 2
+            case .bottom: inner.height - blockHeight
+            }
+            let step = columns.width + columns.gap
+            let rightToLeft = properties.columnsRightToLeft ?? false
+            let laidOut = zip(ranges, heights).enumerated().map { index, column in
+                let path = CGPath(rect: CGRect(x: 0, y: 0, width: columns.width, height: column.1), transform: nil)
+                let x = rightToLeft
+                    ? inner.maxX - columns.width - CGFloat(index) * step
+                    : inner.minX + CGFloat(index) * step
+                return Layout.Column(
+                    frame: CTFramesetterCreateFrame(framesetter, column.0, path, nil),
+                    origin: CGPoint(x: x, y: inner.minY + offset), height: column.1
+                )
+            }
+            return Layout(columns: laidOut, turn: turn, reversesLines: reversesLines)
         }
 
         var originX = inner.minX
@@ -111,7 +215,23 @@ public struct TextRenderer {
 
         let path = CGPath(rect: CGRect(x: 0, y: 0, width: frameWidth, height: frameHeight), transform: nil)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
-        return Layout(frame: frame, origin: CGPoint(x: originX, y: inner.minY + offset), height: frameHeight, turn: turn)
+        return Layout(
+            columns: [Layout.Column(frame: frame, origin: CGPoint(x: originX, y: inner.minY + offset), height: frameHeight)],
+            turn: turn, reversesLines: reversesLines
+        )
+    }
+
+    /// Text as it is set in `vertical` lines. Japanese and Chinese take their
+    /// vertical forms, which CoreText draws upright in the turned line, and
+    /// stacked text stands every other letter upright too.
+    static func shaped(_ string: NSAttributedString, vertical: String?) -> NSAttributedString {
+        guard let vertical, uprightKinds.contains(vertical) else { return string }
+        let shaped = NSMutableAttributedString(attributedString: string)
+        shaped.addAttribute(
+            NSAttributedString.Key(kCTVerticalFormsAttributeName as String), value: true,
+            range: NSRange(location: 0, length: shaped.length)
+        )
+        return stackedKinds.contains(vertical) ? stacked(shaped) : shaped
     }
 
     /// Draws `body` into `rect`, in a context whose y axis points down.
@@ -141,18 +261,47 @@ public struct TextRenderer {
             return
         }
         let space = context.ctm
-        context.translateBy(x: layout.origin.x, y: layout.origin.y + layout.height)
-        context.scaleBy(x: 1, y: -1)
-        context.textMatrix = .identity
         // Every shadow goes down before any letter, so none falls across another run's letters.
-        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
-        for (line, origin) in zip(lines, origins) {
-            drawShadows(of: line, at: origin, space: space, context: context)
+        let placed = lines(of: layout)
+        func inColumn(_ column: Layout.Column, _ draw: () -> Void) {
+            context.saveGState()
+            context.translateBy(x: column.origin.x, y: column.origin.y + column.height)
+            context.scaleBy(x: 1, y: -1)
+            context.textMatrix = .identity
+            draw()
+            context.restoreGState()
         }
-        CTFrameDraw(layout.frame, context)
-        drawStrikethroughs(in: layout.frame, context: context)
+        for (line, origin, column) in placed {
+            inColumn(column) { drawShadows(of: line, at: origin, space: space, context: context) }
+        }
+        for (line, origin, column) in placed {
+            inColumn(column) {
+                context.textPosition = origin
+                CTLineDraw(line, context)
+                drawStackedLetters(in: line, at: origin, context: context)
+                drawStrikethroughs(in: line, origin: origin, context: context)
+            }
+        }
+    }
+
+    /// Every line laid out, column by column, with where it starts in its
+    /// column's CoreText space. Lines running the other way across the turned
+    /// box are set in the opposite order about its middle, which is where it is turned.
+    private func lines(of layout: Layout) -> [(line: CTLine, origin: CGPoint, column: Layout.Column)] {
+        layout.columns.flatMap { column in
+            let lines = CTFrameGetLines(column.frame) as? [CTLine] ?? []
+            var origins = [CGPoint](repeating: .zero, count: lines.count)
+            CTFrameGetLineOrigins(column.frame, CFRange(location: 0, length: 0), &origins)
+            return zip(lines, origins).map { line, origin in
+                guard layout.reversesLines else { return (line, origin, column) }
+                var ascent: CGFloat = 0
+                var descent: CGFloat = 0
+                CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+                let baseline = column.origin.y + column.height - origin.y
+                let reversed = -baseline + ascent - descent
+                return (line, CGPoint(x: origin.x, y: column.origin.y + column.height - reversed), column)
+            }
+        }
     }
 
     /// Draws only the shadows a line's letters cast from `origin`. `space` is
@@ -173,6 +322,7 @@ public struct TextRenderer {
             context.translateBy(x: away.width, y: away.height)
             context.textPosition = origin
             CTRunDraw(run, context, CFRange(location: 0, length: 0))
+            drawStackedLetter(in: run, at: origin, context: context)
             context.restoreGState()
         }
     }
@@ -180,17 +330,14 @@ public struct TextRenderer {
     /// Draw whole paragraphs in their unchanged CoreText layout. Wrapped lines,
     /// bullets, links, and decorations move together around the paragraph bounds.
     private func drawParagraphs(_ layout: Layout, appearances: [Int: AnimatedAppearance], context: CGContext) {
-        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
         var paragraphs: [Int: [(line: CTLine, baseline: CGPoint, bounds: CGRect)]] = [:]
-        for (line, origin) in zip(lines, origins) {
+        for (line, origin, column) in lines(of: layout) {
             let runs = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
             let index = runs.first.flatMap { (CTRunGetAttributes($0) as NSDictionary)[Self.paragraphIndexKey.rawValue] as? Int } ?? 0
             var ascent: CGFloat = 0
             var descent: CGFloat = 0
             let width = CTLineGetTypographicBounds(line, &ascent, &descent, nil)
-            let baseline = CGPoint(x: layout.origin.x + origin.x, y: layout.origin.y + layout.height - origin.y)
+            let baseline = CGPoint(x: column.origin.x + origin.x, y: column.origin.y + column.height - origin.y)
             let bounds = CGRect(x: baseline.x, y: baseline.y - ascent, width: width, height: ascent + descent)
             paragraphs[index, default: []].append((line, baseline, bounds))
         }
@@ -228,6 +375,7 @@ public struct TextRenderer {
                 context.textMatrix = .identity
                 context.textPosition = .zero
                 CTLineDraw(entry.line, context)
+                drawStackedLetters(in: entry.line, at: .zero, context: context)
                 drawStrikethroughs(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
             }
@@ -239,11 +387,8 @@ public struct TextRenderer {
     public func linkAreas(_ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect) -> [(CGRect, Hyperlink)] {
         guard let layout = layout(body, shape: shape, sources: sources, in: rect, colorOverride: nil, hidesText: false),
               layout.turn == nil else { return [] }
-        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
         var areas: [(CGRect, Hyperlink)] = []
-        for (line, origin) in zip(lines, origins) {
+        for (line, origin, column) in lines(of: layout) {
             for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
                 let attributes = CTRunGetAttributes(run) as NSDictionary
                 guard let box = attributes[Self.linkKey.rawValue] as? LinkBox else { continue }
@@ -252,7 +397,7 @@ public struct TextRenderer {
                 let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), &ascent, &descent, nil)
                 let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
                 areas.append((CGRect(
-                    x: layout.origin.x + origin.x + start, y: layout.origin.y + layout.height - origin.y - ascent,
+                    x: column.origin.x + origin.x + start, y: column.origin.y + column.height - origin.y - ascent,
                     width: width, height: ascent + descent
                 ), box.link))
             }
@@ -282,16 +427,42 @@ public struct TextRenderer {
         let properties = style.bodyProperties(for: shape, sources: []).merged(over: body.properties)
         let horizontal = EMU.points((properties.leftInset ?? 91_440) + (properties.rightInset ?? 91_440))
         let vertical = EMU.points((properties.topInset ?? 45_720) + (properties.bottomInset ?? 45_720))
-        let string = attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil)
-        let size = suggestedSize(CTFramesetterCreateWithAttributedString(string), string: string, width: max(width - horizontal, 1))
+        let string = Self.shaped(
+            attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil),
+            vertical: properties.vertical
+        )
+        let framesetter = CTFramesetterCreateWithAttributedString(string)
+        // Text in columns is as tall as its columns when balanced.
+        let columns = ColumnSet(properties, width: max(width - horizontal, 1))
+        if columns.count > 1 {
+            return ceil(balancedHeight(framesetter, length: string.length, columns: columns)) + vertical
+        }
+        let size = suggestedSize(framesetter, string: string, width: max(width - horizontal, 1))
         return ceil(size.height) + vertical
+    }
+
+    /// How wide vertical `body` lays out at `height`, insets included: how
+    /// far its lines reach across the box when each runs that far down it.
+    public func width(of body: TextBody, shape: SlideShape, height: CGFloat) -> CGFloat {
+        let properties = style.bodyProperties(for: shape, sources: []).merged(over: body.properties)
+        let horizontal = EMU.points((properties.leftInset ?? 91_440) + (properties.rightInset ?? 91_440))
+        let vertical = EMU.points((properties.topInset ?? 45_720) + (properties.bottomInset ?? 45_720))
+        let string = Self.shaped(
+            attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil),
+            vertical: properties.vertical
+        )
+        let size = suggestedSize(CTFramesetterCreateWithAttributedString(string), string: string, width: max(height - vertical, 1))
+        return ceil(size.height) + horizontal
     }
 
     /// The width `body` takes, insets included, when its lines never wrap.
     public func unwrappedWidth(of body: TextBody, shape: SlideShape) -> CGFloat {
         let properties = style.bodyProperties(for: shape, sources: []).merged(over: body.properties)
         let horizontal = EMU.points((properties.leftInset ?? 91_440) + (properties.rightInset ?? 91_440))
-        let string = attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil)
+        let string = Self.shaped(
+            attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil),
+            vertical: properties.vertical
+        )
         let framesetter = CTFramesetterCreateWithAttributedString(string)
         let size = suggestedSize(framesetter, string: string, width: 100_000)
         return ceil(size.width + trailingWhitespace(framesetter)) + 1 + horizontal
@@ -509,11 +680,12 @@ public struct TextRenderer {
         }
         // The first line starts at the indent, where a bullet hangs; the tab
         // after the bullet lands on the margin, where the rest of the lines start.
+        // The paragraph's own tab stops go alongside, and past them a stop
+        // every default tab size.
         var firstLine = max(marginLeft + indent, 0)
         var head = marginLeft
-        let tabLocation = marginLeft > firstLine || !hasBullet ? marginLeft : firstLine + fontSize * 0.6
-        var tabs = [CTTextTabCreate(.left, Double(tabLocation), nil)] as CFArray
-        var defaultTab: CGFloat = 72
+        var tabs = TabLayout.stops(properties, fontSize: Double(fontSize), hasBullet: hasBullet).map(Self.textTab) as CFArray
+        var defaultTab = CGFloat(TabLayout.defaultInterval(properties))
 
         var lineMultiple: CGFloat = 1
         var minimumLine: CGFloat = 0
@@ -564,17 +736,23 @@ public struct TextRenderer {
         return CTParagraphStyleCreate(settings, settings.count)
     }
 
-    /// Strikethrough is a TextKit attribute that CoreText does not draw.
-    private func drawStrikethroughs(in frame: CTFrame, context: CGContext) {
-        let lines = CTFrameGetLines(frame) as? [CTLine] ?? []
-        guard !lines.isEmpty else { return }
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(frame, CFRange(location: 0, length: 0), &origins)
-        for (line, origin) in zip(lines, origins) {
-            drawStrikethroughs(in: line, origin: origin, context: context)
+    /// A stop as CoreText takes it. A decimal stop is a right-aligned one that
+    /// ends its column at the decimal point.
+    private static func textTab(_ stop: TabLayout.Stop) -> CTTextTab {
+        let alignment: CTTextAlignment = switch stop.alignment {
+        case .left: .left
+        case .center: .center
+        case .right, .decimal: .right
         }
+        var options: CFDictionary?
+        if stop.alignment == .decimal {
+            let terminators = CFCharacterSetCreateWithCharactersInString(nil, String(TabLayout.decimalSeparator) as CFString)
+            options = [kCTTabColumnTerminatorsAttributeName as String: terminators] as CFDictionary
+        }
+        return CTTextTabCreate(alignment, stop.location, options)
     }
 
+    /// Strikethrough is a TextKit attribute that CoreText does not draw.
     private func drawStrikethroughs(in line: CTLine, origin: CGPoint, context: CGContext) {
         for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
             let attributes = CTRunGetAttributes(run) as NSDictionary
@@ -591,6 +769,108 @@ public struct TextRenderer {
             context.addLine(to: CGPoint(x: origin.x + start + width, y: origin.y + height))
             context.strokePath()
         }
+    }
+
+    // MARK: - Stacked letters
+
+    private static let stackedKey = NSAttributedString.Key("DazzleStacked")
+
+    /// A letter stood upright in stacked text. It is laid out as an object
+    /// replacement character, holding a character's height down the line and
+    /// an em across it, and drawn as its own line, turned back upright.
+    private final class StackedLetter: NSObject {
+        let line: CTLine?
+        let length: CGFloat
+        let breadth: CGFloat
+        init(line: CTLine?, length: CGFloat, breadth: CGFloat) {
+            self.line = line
+            self.length = length
+            self.breadth = breadth
+        }
+    }
+
+    /// Stands upright every letter that vertical forms leave on its side.
+    private static func stacked(_ string: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: string)
+        let text = string.string as NSString
+        let verticalForms = NSAttributedString.Key(kCTVerticalFormsAttributeName as String)
+        text.enumerateSubstrings(in: NSRange(location: 0, length: text.length), options: .byComposedCharacterSequences) { letter, range, _, _ in
+            guard let letter, let first = letter.unicodeScalars.first, !first.properties.isWhitespace,
+                  first.properties.generalCategory != .format, !standsUpright(first) else { return }
+            var attributes = string.attributes(at: range.location, effectiveRange: nil)
+            attributes[verticalForms] = nil
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: letter, attributes: attributes))
+            let font = attributes[fontKey].map { $0 as! CTFont } // swiftlint:disable:this force_cast
+            let size = font.map(CTFontGetSize) ?? 18
+            let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+            let stacked = StackedLetter(
+                line: line, length: font.map { CTFontGetAscent($0) + CTFontGetDescent($0) } ?? size, breadth: max(size, width)
+            )
+            // A letter of more than one character keeps its length; the rest take no room.
+            for offset in 0..<range.length {
+                let letter = offset == 0 ? stacked : StackedLetter(line: nil, length: 0, breadth: 0)
+                var replaced = attributes
+                replaced[stackedKey] = letter
+                replaced[NSAttributedString.Key(kCTRunDelegateAttributeName as String)] = runDelegate(for: letter)
+                result.replaceCharacters(
+                    in: NSRange(location: range.location + offset, length: 1),
+                    with: NSAttributedString(string: "\u{FFFC}", attributes: replaced)
+                )
+            }
+        }
+        return result
+    }
+
+    /// Keeps a stacked letter's room in the line: its length down the line,
+    /// half its breadth either side of the middle, where vertical forms sit.
+    private static func runDelegate(for letter: StackedLetter) -> CTRunDelegate? {
+        var callbacks = CTRunDelegateCallbacks(
+            version: kCTRunDelegateVersion1,
+            dealloc: { Unmanaged<StackedLetter>.fromOpaque($0).release() },
+            getAscent: { Unmanaged<StackedLetter>.fromOpaque($0).takeUnretainedValue().breadth / 2 },
+            getDescent: { Unmanaged<StackedLetter>.fromOpaque($0).takeUnretainedValue().breadth / 2 },
+            getWidth: { Unmanaged<StackedLetter>.fromOpaque($0).takeUnretainedValue().length }
+        )
+        return CTRunDelegateCreate(&callbacks, Unmanaged.passRetained(letter).toOpaque())
+    }
+
+    /// Whether vertical forms already stand a character upright: Japanese,
+    /// Chinese and Korean letters, and their punctuation and symbols.
+    static func standsUpright(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x1100...0x11FF, 0x2E80...0x303F, 0x3040...0x31FF, 0x3200...0x4DBF, 0x4E00...0x9FFF,
+             0xA960...0xA97F, 0xAC00...0xD7FF, 0xF900...0xFAFF, 0xFE10...0xFE1F, 0xFE30...0xFE4F,
+             0xFF01...0xFF60, 0xFFE0...0xFFE6, 0x1F000...0x1FAFF, 0x20000...0x3FFFF:
+            true
+        default:
+            false
+        }
+    }
+
+    /// Draws each stacked letter of `line`, whose origin is `origin`.
+    private func drawStackedLetters(in line: CTLine, at origin: CGPoint, context: CGContext) {
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            drawStackedLetter(in: run, at: origin, context: context)
+        }
+    }
+
+    /// Draws `run`'s letter upright, if it is a stacked one, in the middle of
+    /// the room it keeps: turned back a quarter against the line's turn.
+    private func drawStackedLetter(in run: CTRun, at origin: CGPoint, context: CGContext) {
+        let attributes = CTRunGetAttributes(run) as NSDictionary
+        guard let letter = attributes[Self.stackedKey.rawValue] as? StackedLetter, let line = letter.line,
+              CTRunGetGlyphCount(run) > 0 else { return }
+        var position = CGPoint.zero
+        CTRunGetPositions(run, CFRange(location: 0, length: 1), &position)
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let width = CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+        context.saveGState()
+        context.translateBy(x: origin.x + position.x + letter.length / 2, y: origin.y + position.y)
+        context.rotate(by: .pi / 2)
+        context.textPosition = CGPoint(x: -width / 2, y: -(ascent - descent) / 2)
+        CTLineDraw(line, context)
+        context.restoreGState()
     }
 
     // MARK: - Bullets

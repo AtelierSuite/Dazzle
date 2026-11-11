@@ -96,6 +96,22 @@ public enum KeynoteImporter {
                     if case .group(let group) = shape.kind { visit(group.children) }
                     guard let body = shape.text, case .shape = body.properties.autofit else { continue }
                     var frame = shape.frame
+                    // Vertical text is as wide as its lines reach across, and
+                    // grows away from the side they start on.
+                    if body.properties.runsVertically {
+                        guard body.properties.wraps != false else { continue }
+                        let width = EMU.from(points: renderer.width(of: body, shape: shape, height: EMU.points(frame.height)))
+                        var growth: Double = switch body.properties.anchor {
+                        case .center?: 0.5
+                        case .bottom?: 1
+                        default: 0
+                        }
+                        if body.properties.linesStartAtRight { growth = 1 - growth }
+                        frame.x -= Int((Double(width - frame.width) * growth).rounded())
+                        frame.width = width
+                        frames[shape.shapeID] = frame
+                        continue
+                    }
                     // Text that doesn't wrap is as wide as its longest line, and
                     // grows away from the side it's aligned to.
                     if body.properties.wraps == false {
@@ -181,6 +197,8 @@ public enum KeynoteImporter {
                     let xml = layoutXML(template, number: layouts.count + 1, writer: &writer)
                     layouts.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
                     omissions.formUnion(writer.skipped.map(omission))
+                    if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
+                    if writer.hasTableStandIns { omissions.insert(.tableStandIns) }
                     layoutPaths[template.identifier] = path
                     layoutPath = path
                 }
@@ -202,6 +220,8 @@ public enum KeynoteImporter {
             let xml = slideXML(slide, hidden: node.message.bool(4) ?? false, writer: &writer)
             slides.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
             omissions.formUnion(writer.skipped.map(omission))
+            if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
+            if writer.hasTableStandIns { omissions.insert(.tableStandIns) }
             let builds = KeynoteBuilds(archive: archive).animations(
                 slide, shapeIDs: writer.shapeIDs, media: writer.mediaDrawables
             )

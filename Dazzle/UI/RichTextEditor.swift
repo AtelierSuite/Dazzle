@@ -15,6 +15,9 @@ struct InPlaceTextEditor: UIViewRepresentable {
     var scale: CGFloat
     var fontScale: Double
     var anchor: BodyProperties.Anchor
+    /// How the text runs, when it runs vertically: the editor is turned to
+    /// it, and Japanese and Chinese stand upright in vertical lines.
+    var vertical: String? = nil
     var selection: NSRange?
     var onChange: (TextBody) -> Void
     var onSelectionChange: (NSRange) -> Void
@@ -75,15 +78,15 @@ struct InPlaceTextEditor: UIViewRepresentable {
             isLoading = true
             defer { isLoading = false }
             let parent = parent
-            view.attributedText = EditableText.attributedString(
+            view.attributedText = EditableText.vertical(EditableText.attributedString(
                 parent.body, shape: parent.shape, sources: parent.sources, style: parent.style, scale: parent.scale,
                 fontScale: parent.fontScale, slideNumber: parent.slideNumber
-            )
+            ), parent.vertical)
             if view.attributedText.length == 0 {
-                view.typingAttributes = EditableText.typingAttributes(
+                view.typingAttributes = EditableText.vertical(EditableText.typingAttributes(
                     for: parent.body, shape: parent.shape, sources: parent.sources, style: parent.style,
                     scale: parent.scale, fontScale: parent.fontScale
-                )
+                ), parent.vertical)
             }
             if let selection = parent.selection {
                 let length = view.attributedText.length

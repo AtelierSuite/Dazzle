@@ -211,7 +211,13 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
     /// lost on the way in. Unlike `features`, none of it is saved.
     public enum Omission: String, CaseIterable, Sendable {
         case tables
+        /// Tables that are kept in their place as stand-ins, and saved
+        /// back only into the Keynote file they came from.
+        case tableStandIns
         case charts
+        /// Charts that are kept in their place as stand-ins, and saved
+        /// back only into the Keynote file they came from.
+        case chartStandIns
         case builds
         case approximatedBuilds
         case movies
@@ -220,7 +226,9 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
         public var message: String {
             switch self {
             case .tables: String(localized: "Notice.Omission.Tables", bundle: .engine)
+            case .tableStandIns: String(localized: "Notice.Omission.TableStandIns", bundle: .engine)
             case .charts: String(localized: "Notice.Omission.Charts", bundle: .engine)
+            case .chartStandIns: String(localized: "Notice.Omission.ChartStandIns", bundle: .engine)
             case .builds: String(localized: "Notice.Omission.Builds", bundle: .engine)
             case .approximatedBuilds: String(localized: "Notice.Omission.ApproximatedBuilds", bundle: .engine)
             case .movies: String(localized: "Notice.Omission.Movies", bundle: .engine)

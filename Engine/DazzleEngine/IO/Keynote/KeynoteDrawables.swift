@@ -18,6 +18,10 @@ public struct KeynoteSlideWriter {
 
     public private(set) var relationships: [Relationship]
     public private(set) var skipped: Set<UInt32> = []
+    /// Whether a chart Dazzle can't read was written as a stand-in.
+    public private(set) var hasChartStandIns = false
+    /// Whether a table Dazzle can't read was written as a stand-in.
+    public private(set) var hasTableStandIns = false
     private var nextShapeID = 2
     /// Measured frames for text that grows to fit, by shape id.
     private let fittedFrames: [Int: EMURect]
@@ -113,15 +117,23 @@ public struct KeynoteSlideWriter {
         case KeynoteType.group:
             return group(object.message)
         case KeynoteType.chart:
-            return chart(object.message) ?? {
-                skipped.insert(object.type)
-                return nil
-            }()
+            if let chart = chart(object.message) { return chart }
+            // A chart Dazzle can't read keeps its place, shown as a stand-in.
+            if let standIn = chartStandIn(object.message) {
+                hasChartStandIns = true
+                return standIn
+            }
+            skipped.insert(object.type)
+            return nil
         case KeynoteType.table:
-            return table(object.message) ?? {
-                skipped.insert(object.type)
-                return nil
-            }()
+            if let table = table(object.message) { return table }
+            // A table Dazzle can't read keeps its place, shown as a stand-in.
+            if let standIn = tableStandIn(object.message) {
+                hasTableStandIns = true
+                return standIn
+            }
+            skipped.insert(object.type)
+            return nil
         default:
             skipped.insert(object.type)
             return nil
@@ -367,6 +379,23 @@ public struct KeynoteSlideWriter {
             """
     }
 
+    /// A table frame with no table in it, which reads as a table stand-in.
+    /// It takes the size the table's rows and columns would give it, or the
+    /// drawable's own when they say nothing.
+    private mutating func tableStandIn(_ info: ProtoMessage) -> String? {
+        guard var frame = Frame(info.message(1)?.message(1)) else { return nil }
+        let table = KeynoteTable(archive: archive, styles: styles, text: text, locale: locale)
+        if let size = archive[info.reference(2)].flatMap({ table.size(model: $0) }) { frame.size = size }
+        guard frame.size.width > 0, frame.size.height > 0 else { return nil }
+        let nonVisual = nonVisual(info.message(1), name: "Table")
+        return """
+            <p:graphicFrame><p:nvGraphicFramePr>\(nonVisual)<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/>\
+            </p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>\
+            \(frame.xml().replacingOccurrences(of: "a:xfrm", with: "p:xfrm"))<a:graphic>\
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"/></a:graphic></p:graphicFrame>
+            """
+    }
+
     private mutating func chart(_ drawable: ProtoMessage) -> String? {
         guard let frame = Frame(drawable.message(1)?.message(1)),
               let chart = KeynoteChart(archive: archive, styles: styles).chart(drawable, path: media.nextChartPath),
@@ -383,6 +412,17 @@ public struct KeynoteSlideWriter {
             <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">\
             <c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="\(relationship)"/>\
             </a:graphicData></a:graphic></p:graphicFrame>
+            """
+    }
+
+    /// A chart frame with no chart in it, which reads as a chart stand-in.
+    private mutating func chartStandIn(_ drawable: ProtoMessage) -> String? {
+        guard let frame = Frame(drawable.message(1)?.message(1)), frame.size.width > 0, frame.size.height > 0 else { return nil }
+        let nonVisual = nonVisual(drawable.message(1), name: "Chart")
+        return """
+            <p:graphicFrame><p:nvGraphicFramePr>\(nonVisual)<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>\
+            \(frame.xml().replacingOccurrences(of: "a:xfrm", with: "p:xfrm"))<a:graphic>\
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"/></a:graphic></p:graphicFrame>
             """
     }
 

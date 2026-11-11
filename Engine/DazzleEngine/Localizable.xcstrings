@@ -561,6 +561,41 @@
         }
       }
     },
+    "Notice.Omission.ChartStandIns" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Some charts, which are shown as placeholders where they were"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一部のグラフ（元の位置にプレースホルダとして表示されます）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일부 차트(원래 위치에 자리 표시자로 표시됨)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分图表（在原位置显示为占位符）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分圖表（在原位置顯示為預留位置）"
+          }
+        }
+      }
+    },
     "Notice.Omission.Charts" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -662,6 +697,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "其他部分物件"
+          }
+        }
+      }
+    },
+    "Notice.Omission.TableStandIns" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Some tables, which are shown as placeholders where they were"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一部の表（元の位置にプレースホルダとして表示されます）"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일부 표(원래 위치에 자리 표시자로 표시됨)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分表格（在原位置显示为占位符）"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分表格（在原位置顯示為預留位置）"
           }
         }
       }
@@ -872,6 +942,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "SmartArt"
+          }
+        }
+      }
+    },
+    "Object.Table" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Table"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "표"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表格"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "表格"
           }
         }
       }

@@ -306,7 +306,7 @@ struct RenderingFidelityTests {
             Issue.record("Expected a gradient")
             return
         }
-        #expect(parsed.focusX == 1 && parsed.focusY == 1)
+        #expect(parsed.path == .circle && parsed.fillToRect == .init(left: 1, top: 1, right: 0, bottom: 0))
 
         let tiled = try XMLLite.parse(Data("""
             <blipFill xmlns:r="r"><blip r:embed="rId1"><alphaModFix amt="50000"/></blip><tile/></blipFill>
