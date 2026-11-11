@@ -111,6 +111,8 @@ extension EditorState {
         copy.autoAdvanceAfter = original.autoAdvanceAfter
         copy.advancesOnClick = original.advancesOnClick
         copy.isTransitionModified = original.isTransitionModified
+        copy.transition = original.transition
+        copy.isTransitionEffectModified = original.isTransitionEffectModified
         copy.animations = original.animations.map { ShapeAnimation(copying: $0) }
         copy.areAnimationsModified = original.areAnimationsModified
         // Notes and comments belong to one slide; the copy gets its own notes.
@@ -150,7 +152,9 @@ extension EditorState {
         copy.showsMasterShapes = slide.showsMasterShapes
         copy.autoAdvanceAfter = slide.autoAdvanceAfter
         copy.advancesOnClick = slide.advancesOnClick
-        copy.isTransitionModified = slide.autoAdvanceAfter != nil || !slide.advancesOnClick
+        copy.transition = slide.transition
+        copy.isTransitionEffectModified = slide.transition != nil
+        copy.isTransitionModified = slide.autoAdvanceAfter != nil || !slide.advancesOnClick || slide.transition != nil
         // Effects as read may name the other file's parts, such as a sound;
         // only those Dazzle can write anew come across.
         copy.animations = slide.animations.filter(\.effect.isMadeByDazzle).map { animation in

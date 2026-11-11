@@ -462,31 +462,31 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Slide transitions are kept, but slides appear without them."
+            "value" : "Some slide transitions are kept, but played as a fade."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "画面切り替えは保持されますが、再生されません。"
+            "value" : "一部の画面切り替えは保持されますが、フェードとして再生されます。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "전환 효과는 유지되지만 재생되지 않습니다."
+            "value" : "일부 전환 효과는 유지되지만 페이드로 재생됩니다."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "切换效果会保留，但不会播放。"
+            "value" : "部分切换效果会保留，但以淡入淡出方式播放。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "轉場效果會保留，但不會播放。"
+            "value" : "部分轉場效果會保留，但以淡入淡出方式播放。"
           }
         }
       }
