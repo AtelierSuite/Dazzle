@@ -325,8 +325,8 @@ export class Inspector extends EventTarget {
     const choices = this.engine.info?.choices ?? {};
     const groupings = (choices.groupings ?? []).map((grouping) => [grouping.id, grouping.label]);
     return this.section(t("Panel.Chart.Title"),
-      this.row(t("Chart.Type"), this.popup("chartKind", t("Chart.Type"), (choices.charts ?? []).map((kind) => [kind.kind, kind.label]), chart.kind))
-      + (chart.hasAxes && chart.kind !== "scatter" ? this.row(t("Chart.Grouping"), this.popup("chartGrouping", t("Chart.Grouping"), groupings, chart.grouping)) : "")
+      this.row(t("Chart.Type"), this.popup("chartKind", t("Chart.Type"), (chart.kinds ?? choices.charts ?? []).map((kind) => [kind.kind, kind.label]), chart.kind))
+      + (chart.hasGrouping ? this.row(t("Chart.Grouping"), this.popup("chartGrouping", t("Chart.Grouping"), groupings, chart.grouping)) : "")
       + this.row("", this.buttons([["chartData", t("ActionBar.ChartData")]]))
       + this.row("", this.check("chartShowTitle", t("Chart.ShowTitle"), Boolean(chart.title)))
       + (chart.title ? this.row(t("Chart.Title"), this.text("chartTitle", t("Chart.Title"), chart.title)) : "")
