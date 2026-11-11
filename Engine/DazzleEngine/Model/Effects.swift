@@ -230,11 +230,19 @@ public struct EffectStyle: Equatable, Hashable, Sendable {
     public var shadow: Shadow?
     public var reflection: Reflection?
     public var effects: ShapeEffects
+    /// An effect style's `a:scene3d` and `a:sp3d`.
+    public var scene3D: Scene3D?
+    public var shape3D: Shape3D?
 
-    public init(shadow: Shadow? = nil, reflection: Reflection? = nil, effects: ShapeEffects = ShapeEffects()) {
+    public init(
+        shadow: Shadow? = nil, reflection: Reflection? = nil, effects: ShapeEffects = ShapeEffects(),
+        scene3D: Scene3D? = nil, shape3D: Shape3D? = nil
+    ) {
         self.shadow = shadow
         self.reflection = reflection
         self.effects = effects
+        self.scene3D = scene3D
+        self.shape3D = shape3D
     }
 
     /// Reads an `a:effectStyle`, or a shape's `a:effectLst`.
@@ -243,6 +251,10 @@ public struct EffectStyle: Equatable, Hashable, Sendable {
         shadow = Shadow(element: list?.firstChild(named: "outerShdw"))
         reflection = Reflection(element: list?.firstChild(named: "reflection"))
         effects = ShapeEffects(element: list)
+        if element?.name == "effectStyle" {
+            scene3D = Scene3D(element: element?.firstChild(named: "scene3d"))
+            shape3D = Shape3D(element: element?.firstChild(named: "sp3d"))
+        }
     }
 }
 

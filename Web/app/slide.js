@@ -297,6 +297,7 @@ export class SlideDrawer {
     const geometry = svg("svg", {
       class: "shape__outline", width: node.w, height: node.h, viewBox: `0 0 ${Math.max(node.w, 0.01)} ${Math.max(node.h, 0.01)}`, overflow: "visible",
     }, parent);
+    if (node.path) this.depth(node, node.path, node.rule ?? "evenodd", geometry);
     if (node.fill && node.path) {
       const fill = svg("path", { d: node.path, "fill-rule": node.rule ?? "evenodd" }, geometry);
       this.paint(fill, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
@@ -308,6 +309,7 @@ export class SlideDrawer {
         base.classList.add("shape__fill");
         svg("path", { d: shade.d, "fill-rule": "evenodd", fill: shade.c, "fill-opacity": shade.o, class: "shape__shade" }, geometry);
       }
+      this.bevel(node, node.path, node.rule ?? "evenodd", geometry, context);
     }
     if (node.line && (node.strokePath ?? node.path)) this.stroke(node.strokePath ?? node.path, node.line, geometry, context, node);
     if (node.text && !(node.prompt && isEmptyText(node.text))) {
@@ -678,12 +680,14 @@ export class SlideDrawer {
     const geometry = svg("svg", { class: "shape__outline", width: node.w, height: node.h, viewBox: `0 0 ${Math.max(node.w, 0.01)} ${Math.max(node.h, 0.01)}`, overflow: "visible" }, parent);
     const clip = nextId("c");
     svg("path", { d: node.path }, svg("clipPath", { id: clip }, context.defs));
+    this.depth(node, node.path, "nonzero", geometry);
     const group = svg("g", { "clip-path": `url(#${clip})` }, geometry);
     const image = svg("image", {
       x: node.image.x, y: node.image.y, width: node.image.w, height: node.image.h, preserveAspectRatio: "none",
     }, group);
     this.setImage(image, node.src);
     this.effects(image, node.fx, context);
+    this.bevel(node, node.path, "nonzero", geometry, context);
     if (node.line) this.stroke(node.path, node.line, geometry, context, node);
     if (node.media) {
       parent.dataset.media = JSON.stringify(node.media);
@@ -911,6 +915,48 @@ export class SlideDrawer {
       end.append(document.createElement("br"));
     }
     return element;
+  }
+
+  // MARK: - 3D
+
+  /** A shape's sides, as copies of its outline set off behind it and darkened, and its contour round its edge, as the engine draws them. */
+  depth(node, d, rule, parent) {
+    const look = node.look3d;
+    if (!look) return;
+    (look.sides?.casts ?? []).forEach(([a, b, c, e, f, g], index) => {
+      svg("path", {
+        d, "fill-rule": rule, fill: look.sides.cs[index], transform: `matrix(${a} ${b} ${c} ${e} ${f} ${g})`, class: "shape__side",
+      }, parent);
+    });
+    if (look.contour) {
+      svg("path", {
+        d, fill: "none", stroke: look.contour.c, "stroke-width": look.contour.w, "stroke-linejoin": "round", class: "shape__contour",
+      }, parent);
+    }
+  }
+
+  /**
+   * A shape's bevel, as bands of white or black over its face: each what stays inside the outline when it is set off
+   * by `k` (a clip) but not when it is set off by `x` (a mask).
+   */
+  bevel(node, d, rule, parent, context) {
+    const bands = node.look3d?.bands;
+    if (!bands?.length) return;
+    const reach = Math.max(...bands.map((band) => Math.max(Math.abs(band.xx), Math.abs(band.xy)))) + 1;
+    const area = { x: -reach, y: -reach, width: node.w + 2 * reach, height: node.h + 2 * reach };
+    for (const band of bands) {
+      const element = svg("path", { d, "fill-rule": rule, fill: band.c, "fill-opacity": band.o, class: "shape__bevel" }, parent);
+      if (band.kx || band.ky) {
+        const clip = nextId("c");
+        svg("path", { d, "clip-rule": rule, transform: `translate(${band.kx} ${band.ky})` }, svg("clipPath", { id: clip }, context.defs));
+        element.setAttribute("clip-path", `url(#${clip})`);
+      }
+      const mask = nextId("m");
+      const cut = svg("mask", { id: mask, maskUnits: "userSpaceOnUse", ...area }, context.defs);
+      svg("rect", { ...area, fill: "#fff" }, cut);
+      svg("path", { d, "fill-rule": rule, fill: "#000", transform: `translate(${band.xx} ${band.xy})` }, cut);
+      element.setAttribute("mask", `url(#${mask})`);
+    }
   }
 
   // MARK: - Effects

@@ -102,29 +102,69 @@ public struct SlideStyleContext: Sendable {
         if shape.hasOwnEffects || shape.edits.contains(.effects) {
             return EffectStyle(shadow: shape.shadow, reflection: shape.reflection, effects: shape.effects)
         }
-        for candidate in [shape] + sources {
-            guard let reference = candidate.style?.effect else { continue }
-            guard reference.index > 0, theme.effectStyles.indices.contains(reference.index - 1) else { break }
-            var themed = theme.effectStyles[reference.index - 1]
-            if let color = reference.color {
-                if let shadow = themed.shadow { themed.shadow?.color = shadow.color.replacingPlaceholder(with: color) }
-                themed.effects = themed.effects.replacingPlaceholder(with: color)
-            }
+        if var themed = themedEffectStyle(for: shape, sources: sources) {
+            themed.scene3D = nil
+            themed.shape3D = nil
             return themed
         }
         return EffectStyle(shadow: shape.shadow, reflection: shape.reflection, effects: shape.effects)
     }
 
-    /// The shape with the effects it is drawn with made its own.
+    /// The theme's effect style a shape's `p:style`, or its placeholder's,
+    /// names, in the colour that names it.
+    public func themedEffectStyle(for shape: SlideShape, sources: [SlideShape] = []) -> EffectStyle? {
+        for candidate in [shape] + sources {
+            guard let reference = candidate.style?.effect else { continue }
+            guard reference.index > 0, theme.effectStyles.indices.contains(reference.index - 1) else { return nil }
+            var themed = theme.effectStyles[reference.index - 1]
+            if let color = reference.color {
+                if let shadow = themed.shadow { themed.shadow?.color = shadow.color.replacingPlaceholder(with: color) }
+                themed.effects = themed.effects.replacingPlaceholder(with: color)
+                themed.shape3D = themed.shape3D?.replacingPlaceholder(with: color)
+            }
+            return themed
+        }
+        return nil
+    }
+
+    /// The shape with the effects it is drawn with made its own. Its camera,
+    /// lights, bevels and depth are its own where its properties give them,
+    /// and its theme effect style's where they don't.
     public func resolvingEffects(of shape: SlideShape, sources: [SlideShape] = []) -> SlideShape {
+        var shape = shape
+        if shape.scene3D == nil || shape.shape3D == nil, let themed = themedEffectStyle(for: shape, sources: sources) {
+            shape.scene3D = shape.scene3D ?? themed.scene3D
+            shape.shape3D = shape.shape3D ?? themed.shape3D
+        }
         guard !shape.hasOwnEffects else { return shape }
         let resolved = effects(for: shape, sources: sources)
-        var shape = shape
         shape.shadow = resolved.shadow
         shape.reflection = resolved.reflection
         shape.effects = resolved.effects
         shape.hasOwnEffects = true
         return shape
+    }
+
+    /// How a shape's camera, lights, bevels and depth are drawn, for a shape
+    /// filling `bounds` whose fill is `fill`. Pictures show their bevel on
+    /// the picture. `nil` for a shape without them, and for an open one.
+    public func threeDLook(
+        for shape: SlideShape, bounds: CGRect, fill: ResolvedFill?, isOpen: Bool = false
+    ) -> Shape3DLook? {
+        guard let shape3D = shape.shape3D, !isOpen else { return nil }
+        let face: RGBAColor? = switch fill?.fill ?? Fill.none {
+        case .solid(let color): self.color(color, placeholder: fill?.placeholderColor)
+        case .gradient(let gradient): gradient.stops.first.map { self.color($0.color, placeholder: fill?.placeholderColor) }
+        case .pattern(let pattern): self.color(pattern.foreground, placeholder: fill?.placeholderColor)
+        case .picture, .tiledPicture: RGBAColor(red: 0.6, green: 0.6, blue: 0.6)
+        case .none, .group:
+            if case .picture = shape.kind { RGBAColor(red: 0.6, green: 0.6, blue: 0.6) } else { nil }
+        }
+        return Shape3DLook(
+            scene: shape.scene3D, shape: shape3D, bounds: bounds, rotation: shape.rotation,
+            flipsHorizontally: shape.flipsHorizontally, flipsVertically: shape.flipsVertically, face: face,
+            color: { self.color($0, placeholder: fill?.placeholderColor) }
+        )
     }
 
     public func background(of slide: Slide) -> ResolvedFill {
