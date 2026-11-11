@@ -256,6 +256,16 @@ function deckWithShapes() {
       <p:spPr>${frame(2743200)}<a:prstGeom prst="cloudCallout"><a:avLst/></a:prstGeom>
         <a:blipFill><a:blip r:embed="rIdTile"/><a:tile tx="12700" ty="25400" sx="50000" sy="25000" flip="xy" algn="ctr"/></a:blipFill>
         <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
+    </p:sp>
+    <p:sp><p:nvSpPr><p:cNvPr id="903" name="Tabbed"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+      <p:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr defTabSz="457200"/></a:lstStyle>
+        <a:p><a:pPr><a:tabLst><a:tab pos="1828800" algn="dec"/><a:tab pos="914400" algn="ctr"/></a:tabLst></a:pPr>
+          <a:r><a:rPr lang="en-US"/><a:t>Item\tMiddle\t12.5</a:t></a:r></a:p>
+        <a:p><a:pPr marL="342900" indent="-342900"><a:buChar char="•"/><a:tabLst><a:tab pos="114300"/><a:tab pos="1371600" algn="r"/></a:tabLst></a:pPr>
+          <a:r><a:rPr lang="en-US"/><a:t>Bullet\tRight</a:t></a:r></a:p>
+        <a:p><a:r><a:rPr lang="en-US"/><a:t>No tabs</a:t></a:r></a:p>
+      </p:txBody>
     </p:sp>`;
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
@@ -273,7 +283,10 @@ const drawn = (() => {
   try {
     const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
     const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
-    return { info: opened.result, lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled") };
+    return {
+      info: opened.result, lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled"),
+      tabbed: shapes.find((node) => node.name === "Tabbed"), slide: opened.state.slides[0].id,
+    };
   } catch (error) {
     return { error };
   }
@@ -312,6 +325,33 @@ test("fills a cloud callout as one and strokes its puffs", () => {
 test("names the typefaces the presentation doesn't carry", () => {
   if (drawn.error) throw drawn.error;
   assert.ok(drawn.info.typefaces.includes("Calibri"));
+});
+
+test("sets tabbed text on its stops and the default tab size, and saves them", () => {
+  if (drawn.error) throw drawn.error;
+  const [stops, bulleted, plain] = drawn.tabbed.text.paras;
+  assert.deepEqual(stops.tabs, [[0, "l"], [72, "ctr"], [144, "dec"]], "in order along the line, with the margin's");
+  assert.equal(stops.dts, 36, "the default tab size comes from the list style");
+  assert.deepEqual(bulleted.tabs, [[27, "l"], [108, "r"]], "the bullet's tab still reaches the margin");
+  assert.equal(plain.tabs, undefined, "only tabbed paragraphs are laid out by stop");
+
+  // Typed into, the paragraphs are written again, their stops with them.
+  call("select", { slide: drawn.slide, shapes: [drawn.tabbed.id] });
+  call("beginText", { shape: drawn.tabbed.id });
+  call("setText", { paras: [
+    { src: 0, runs: [{ src: [0, 0], t: "Item\tMiddle\t99.25" }] },
+    { src: 1, runs: [{ src: [1, 0], t: "Bullet\tRight" }] },
+    { src: 2, runs: [{ src: [2, 0], t: "No tabs" }] },
+  ] });
+  call("endText");
+  const saved = call("save", { format: "pptx" }).payload;
+  const slide = new TextDecoder().decode(unzip(saved).get("ppt/slides/slide1.xml"));
+  assert.match(slide, /99\.25/, "the typed text is saved");
+  assert.match(slide, /<a:tabLst><a:tab algn="ctr" pos="914400"\/><a:tab algn="dec" pos="1828800"\/><\/a:tabLst>/);
+  const reopened = call("open", { name: "Tabbed.pptx" }, saved);
+  const again = call("scene", { slide: reopened.state.slides[0].id }).result.shapes.find((node) => node.name === "Tabbed");
+  assert.deepEqual(again.text.paras[0].tabs, stops.tabs);
+  assert.equal(again.text.paras[0].dts, 36);
 });
 
 for (const path of process.argv.slice(2)) {
