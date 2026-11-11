@@ -256,6 +256,10 @@ function deckWithShapes() {
       <p:spPr>${frame(2743200)}<a:prstGeom prst="cloudCallout"><a:avLst/></a:prstGeom>
         <a:blipFill><a:blip r:embed="rIdTile"/><a:tile tx="12700" ty="25400" sx="50000" sy="25000" flip="xy" algn="ctr"/></a:blipFill>
         <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
+    </p:sp>
+    <p:sp><p:nvSpPr><p:cNvPr id="903" name="Vertical"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
+      <p:txBody><a:bodyPr vert="eaVert"><a:spAutoFit/></a:bodyPr><a:p><a:r><a:rPr lang="ja-JP"/><a:t>縦書きText</a:t></a:r></a:p></p:txBody>
     </p:sp>`;
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
@@ -273,7 +277,10 @@ const drawn = (() => {
   try {
     const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
     const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
-    return { info: opened.result, lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled") };
+    return {
+      info: opened.result, slide: opened.state.slides[0].id, lined: shapes.find((node) => node.name === "Lined"),
+      tiled: shapes.find((node) => node.name === "Tiled"), vertical: shapes.find((node) => node.name === "Vertical"),
+    };
   } catch (error) {
     return { error };
   }
@@ -312,6 +319,24 @@ test("fills a cloud callout as one and strokes its puffs", () => {
 test("names the typefaces the presentation doesn't carry", () => {
   if (drawn.error) throw drawn.error;
   assert.ok(drawn.info.typefaces.includes("Calibri"));
+});
+
+test("passes vertical text to the page to set in vertical lines", () => {
+  if (drawn.error) throw drawn.error;
+  assert.equal(drawn.vertical.text.vert, "eaVert");
+});
+
+test("grows vertical text across as it is typed, leftwards from its first line on the right", () => {
+  if (drawn.error) throw drawn.error;
+  const before = drawn.vertical;
+  call("select", { slide: drawn.slide, shapes: [before.id] });
+  call("beginText", { shape: before.id });
+  call("setText", { paras: [{ src: 0, runs: [{ t: "縦書きText" }] }, { src: 0, runs: [{ t: "二行目" }] }], width: before.w + 40 });
+  call("endText");
+  const after = call("scene", { slide: drawn.slide }).result.shapes.find((node) => node.name === "Vertical");
+  assert.ok(Math.abs(after.w - (before.w + 40)) < 0.5, "as wide as the page measured it");
+  assert.ok(Math.abs(after.x + after.w - (before.x + before.w)) < 0.5, "its right side stays put");
+  assert.equal(after.h, before.h, "as tall as before");
 });
 
 for (const path of process.argv.slice(2)) {

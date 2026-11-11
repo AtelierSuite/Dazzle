@@ -3,7 +3,7 @@
 // here, and typed into in place; every change goes to the engine, which
 // draws the slide again.
 
-import { SlideDrawer, fitText, drawTableBorders } from "./slide.js";
+import { SlideDrawer, TURNED_TEXT, fitText, drawTableBorders } from "./slide.js";
 
 const HANDLE = 8;
 const SNAP = 5;
@@ -627,11 +627,16 @@ export class SlideCanvas extends EventTarget {
     if (signature === editing.sent) return;
     editing.sent = signature;
     const args = { paras };
-    // Only horizontal text grows its shape's height as it is typed.
-    if (editing.body.fit === "grow" && !editing.cell && !editing.body.vert) {
+    // Text grows its shape as it is typed: down, or across when it runs vertically.
+    if (editing.body.fit === "grow" && !editing.cell) {
       const node = this.shape(editing.id);
-      const insets = node ? node.h - editing.body.h : 0;
-      args.height = editing.flow.scrollHeight + insets;
+      if (!editing.body.vert) {
+        args.height = editing.flow.scrollHeight + (node ? node.h - editing.body.h : 0);
+      } else {
+        // Text turned a quarter is laid out across the box's height, its lines stacked down the turned box.
+        const across = editing.body.vert in TURNED_TEXT ? editing.flow.scrollHeight : editing.flow.scrollWidth;
+        args.width = across + (node ? node.w - editing.body.w : 0);
+      }
     }
     await this.engine.call("setText", args);
   }
