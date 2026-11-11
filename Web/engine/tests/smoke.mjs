@@ -237,6 +237,21 @@ function zip(entries) {
 // A one-pixel PNG, for a tiled picture fill.
 const PIXEL = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
 
+/** A picture of the one-pixel PNG whose blip carries `effects`. */
+function picture(id, name, x, effects) {
+  return `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${name}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>
+    <p:blipFill><a:blip r:embed="rIdTile">${effects}</a:blip><a:stretch><a:fillRect/></a:stretch></p:blipFill>
+    <p:spPr><a:xfrm><a:off x="${x}" y="914400"/><a:ext cx="1371600" cy="1371600"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
+}
+
+/** Office 2010's artistic effects on a picture, on an original picture kept apart when `layer` names one. */
+function artistic(layer, ...effects) {
+  return `<a:extLst><a:ext uri="{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}">
+    <a14:imgProps xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"><a14:imgLayer${layer}>
+    ${effects.map((effect) => `<a14:imgEffect>${effect}</a14:imgEffect>`).join("")}
+    </a14:imgLayer></a14:imgProps></a:ext></a:extLst>`;
+}
+
 /** The presentation saved above, with shapes added to its first slide that use what each test checks. */
 function deckWithShapes() {
   const { payload } = call("save", { format: "pptx" });
@@ -256,7 +271,12 @@ function deckWithShapes() {
       <p:spPr>${frame(2743200)}<a:prstGeom prst="cloudCallout"><a:avLst/></a:prstGeom>
         <a:blipFill><a:blip r:embed="rIdTile"/><a:tile tx="12700" ty="25400" sx="50000" sy="25000" flip="xy" algn="ctr"/></a:blipFill>
         <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
-    </p:sp>`;
+    </p:sp>
+    ${picture(903, "Recoloured", 4572000, `
+      <a:clrChange><a:clrFrom><a:srgbClr val="FFFFFF"/></a:clrFrom><a:clrTo><a:srgbClr val="FFFFFF"><a:alpha val="0"/></a:srgbClr></a:clrTo></a:clrChange>
+      <a:biLevel thresh="50000"/><a:hsl hue="7200000" sat="0" lum="0"/><a:tint hue="14400000" amt="50000"/>
+      ${artistic("", '<a14:artisticPencilSketch trans="20000" pressure="40"/>', '<a14:saturation sat="0"/>')}`)}
+    ${picture(904, "Stylised", 6400800, artistic(' r:embed="rIdTile"', '<a14:artisticWatercolorSponge brushSize="4"/>'))}`;
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
   encode("ppt/slides/slide1.xml", root.replace("</p:spTree>", `${shapes}</p:spTree>`));
@@ -273,7 +293,8 @@ const drawn = (() => {
   try {
     const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
     const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
-    return { info: opened.result, lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled") };
+    const named = (name) => shapes.find((node) => node.name === name);
+    return { info: opened.result, lined: named("Lined"), tiled: named("Tiled"), recoloured: named("Recoloured"), stylised: named("Stylised") };
   } catch (error) {
     return { error };
   }
@@ -312,6 +333,38 @@ test("fills a cloud callout as one and strokes its puffs", () => {
 test("names the typefaces the presentation doesn't carry", () => {
   if (drawn.error) throw drawn.error;
   assert.ok(drawn.info.typefaces.includes("Calibri"));
+});
+
+test("recolours pictures and applies the artistic effects still to be applied", () => {
+  if (drawn.error) throw drawn.error;
+  const fx = drawn.recoloured.fx;
+  assert.deepEqual(fx.change.from, [1, 1, 1, 1], "the colour change starts from white");
+  assert.equal(fx.change.to[3], 0, "and makes it transparent");
+  assert.ok(fx.change.tol > 0, "near colours too");
+  assert.equal(fx.biLevel, 0.5);
+  assert.equal(fx.hsl.length, 20, "hue, saturation and luminance as a colour matrix");
+  assert.ok(fx.hsl[5] > fx.hsl[0] && fx.hsl[5] > fx.hsl[10], "a third of the way round makes red green");
+  assert.deepEqual(fx.tint.c.map((value) => Math.round(value * 255)), [0, 0, 255, 255], "the tint's hue is blue");
+  assert.equal(fx.tint.amt, 0.5);
+  assert.deepEqual(fx.art.map((art) => art.k), ["sketch", "matrix"], "a sketch, then saturation");
+  assert.equal(fx.art[0].trans, 0.2);
+  assert.ok(Math.abs(fx.art[1].m[0] - 0.213) < 0.001, "no saturation is grey");
+  assert.equal(drawn.stylised.fx?.art, undefined, "a picture Office already drew its effects on is shown as it is");
+});
+
+test("saves picture effects as they were read", () => {
+  if (drawn.error) throw drawn.error;
+  // Cropping rewrites the picture's blip fill, around its effects.
+  const { recoloured } = drawn;
+  call("setCrop", { shape: recoloured.id, crop: [0.1, 0, 0, 0], frame: { x: recoloured.x, y: recoloured.y, w: recoloured.w, h: recoloured.h } });
+  const entries = unzip(call("save", { format: "pptx" }).payload);
+  const xml = new TextDecoder().decode(entries.get("ppt/slides/slide1.xml"));
+  assert.match(xml, /<a:srcRect l="10000"/, "the crop was written");
+  for (const part of [/<a:clrChange>.*<a:alpha val="0"\/>/s, /<a:biLevel thresh="50000"/, /<a:hsl hue="7200000"/, /<a:tint amt="50000" hue="14400000"/,
+    /<a14:artisticPencilSketch[^>]*pressure="40"/, /<a14:imgLayer r:embed="rIdTile">\s*<a14:imgEffect><a14:artisticWatercolorSponge/]) {
+    assert.match(xml, part);
+  }
+  assert.equal(xml.match(/<a:clrChange>/g).length, 1, "once");
 });
 
 for (const path of process.argv.slice(2)) {
