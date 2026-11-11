@@ -689,6 +689,11 @@ body {
   margin: 0;
 }
 
+/* A tab whose width is laid out to reach its stop. */
+.text__tab {
+  tab-size: 0;
+}
+
 .text__bullet {
   display: inline-block;
   text-indent: 0;
