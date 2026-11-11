@@ -65,6 +65,8 @@ struct WebRenderer {
         groupFill: SlideStyleContext.ResolvedFill? = nil
     ) -> [String: Any]? {
         guard !shape.isHidden else { return nil }
+        // Effects its style gives it, drawn as though its own.
+        let shape = style.resolvingEffects(of: shape, sources: sources)
         let frame = shape.frame.points
         var node: [String: Any] = [
             "id": shape.id.uuidString, "sid": shape.shapeID, "name": shape.name,
@@ -83,6 +85,7 @@ struct WebRenderer {
                 "dist": EMU.points(reflection.distance), "blur": EMU.points(reflection.blur), "turns": reflection.rotatesWithShape,
             ]
         }
+        if let effects = effects(shape.effects, size: frame.size, style: style) { node["effects"] = effects }
         if let link = shape.link, let json = Self.link(link) { node["link"] = json }
 
         switch shape.kind {
@@ -122,23 +125,19 @@ struct WebRenderer {
     }
 
     /// The outline, in the shape's own space, as SVG and as the path its stroke follows.
-    private func outline(of shape: SlideShape, size: CGSize) -> (fill: String, stroke: String, isOpen: Bool, strokePath: CGPath) {
+    private func outline(
+        of shape: SlideShape, size: CGSize
+    ) -> (fill: String, stroke: String, isOpen: Bool, strokePath: CGPath, shades: [PresetGeometry.Shade]) {
         let rect = CGRect(origin: .zero, size: size)
         switch shape.geometry {
         case .preset(let name, let adjustments):
-            let path = PresetGeometry.path(name, adjustments: adjustments, in: rect)
-            // Lines drawn over the fill with the outline's stroke: a ribbon's folds, a cloud's puffs.
-            var stroke: CGPath = path
-            if let details = PresetGeometry.detailPath(name, adjustments: adjustments, in: rect) {
-                let combined = CGMutablePath()
-                combined.addPath(path)
-                combined.addPath(details)
-                stroke = combined
-            }
-            return (path.svgData, stroke.svgData, PresetGeometry.isOpen(name) || shape.kind == .connector, stroke)
+            // The stroke may add lines over the fill (a ribbon's folds, a cloud's puffs) or leave out parts only filled.
+            let outline = PresetGeometry.outline(name, adjustments: adjustments, in: rect)
+            return (outline.fill.svgData, outline.stroke.svgData, PresetGeometry.isOpen(name) || shape.kind == .connector,
+                    outline.stroke, outline.shades)
         case .custom(let paths):
             let (fill, stroke) = PresetGeometry.path(paths, in: rect)
-            return (fill.svgData, stroke.svgData, false, stroke)
+            return (fill.svgData, stroke.svgData, false, stroke, [])
         }
     }
 
@@ -146,7 +145,7 @@ struct WebRenderer {
         _ shape: SlideShape, sources: [SlideShape], frame: CGRect, style: SlideStyleContext,
         groupFill: SlideStyleContext.ResolvedFill?, into node: inout [String: Any]
     ) {
-        let (fillPath, strokePath, isOpen, strokeShape) = outline(of: shape, size: frame.size)
+        let (fillPath, strokePath, isOpen, strokeShape, shades) = outline(of: shape, size: frame.size)
         node["path"] = fillPath
         if strokePath != fillPath { node["strokePath"] = strokePath }
         // A cloud callout's bubbles may overlap the cloud. Apple platforms join
@@ -155,7 +154,15 @@ struct WebRenderer {
         if isOpen { node["open"] = true }
         if !isOpen, var fill = style.fill(for: shape, sources: sources) {
             if fill.fill == .group, let groupFill { fill = groupFill }
-            if let paint = paint(fill.fill, placeholder: fill.placeholderColor, style: style) { node["fill"] = paint }
+            if let paint = paint(fill.fill, placeholder: fill.placeholderColor, style: style) {
+                node["fill"] = paint
+                // A cube's sides and a scroll's curls: the fill, darkened or lightened.
+                if !shades.isEmpty {
+                    node["shades"] = shades.map { shade -> [String: Any] in
+                        ["d": shade.path.svgData, "c": shade.tone.isLighter ? "#fff" : "#000", "o": Double(shade.tone.opacity)]
+                    }
+                }
+            }
             if case .solid(let color) = fill.fill { node["fillColor"] = css(style.color(color, placeholder: fill.placeholderColor)) }
         }
         if let (line, placeholder) = style.line(for: shape, sources: sources),
@@ -192,6 +199,9 @@ struct WebRenderer {
 
     // MARK: - Paint
 
+    /// How many copies of the outline a shape gradient is drawn with, less one.
+    static let shapeGradientSteps = 64
+
     private func paint(_ fill: Fill, placeholder: RGBAColor?, style: SlideStyleContext) -> [String: Any]? {
         switch fill {
         case .none, .group:
@@ -200,10 +210,42 @@ struct WebRenderer {
             return ["t": "solid", "c": css(style.color(color, placeholder: placeholder))]
         case .gradient(let gradient):
             let stops = gradient.stops.map { [n(CGFloat($0.position)), css(style.color($0.color, placeholder: placeholder))] as [Any] }
-            if gradient.isRadial {
-                return ["t": "radial", "fx": gradient.focusX, "fy": gradient.focusY, "stops": stops]
+            // Where a path gradient starts, and the box it spans, as insets from
+            // each edge of the area by fractions of its size.
+            func insets(_ box: Fill.Gradient.Insets) -> [Double] { [box.left, box.top, box.right, box.bottom] }
+            var json: [String: Any] = ["stops": stops]
+            if gradient.tileRect != .zero { json["tile"] = insets(gradient.tileRect) }
+            guard let path = gradient.path else {
+                json["t"] = "linear"
+                json["angle"] = gradient.angle
+                if gradient.isScaled { json["scaled"] = true }
+                return json
             }
-            return ["t": "linear", "angle": gradient.angle, "stops": stops]
+            json["focus"] = insets(gradient.fillToRect)
+            let resolve = { (color: DrawingColor) in style.color(color, placeholder: placeholder) }
+            switch path {
+            case .circle:
+                json["t"] = "radial"
+            case .rect:
+                json["t"] = "rect"
+                json["from"] = css(gradient.color(at: 0, resolve: resolve))
+                json["to"] = css(gradient.color(at: 1, resolve: resolve))
+            case .shape:
+                // Copies of the outline, from the tile in to the start, each a colour.
+                json["t"] = "shape"
+                json["rings"] = (0...Self.shapeGradientSteps).reversed().map {
+                    css(gradient.color(at: Double($0) / Double(Self.shapeGradientSteps), resolve: resolve))
+                }
+            }
+            return json
+        case .pattern(let pattern):
+            // Its eight rows of cells, top first, each a byte with the
+            // leftmost cell its highest bit; set cells are the foreground.
+            return [
+                "t": "pattern", "rows": pattern.rows.map(Int.init), "cell": Fill.Pattern.cellSize,
+                "fg": css(style.color(pattern.foreground, placeholder: placeholder)),
+                "bg": css(style.color(pattern.background, placeholder: placeholder)),
+            ]
         case .picture(let path, let effects):
             return ["t": "image", "src": path, "tile": false, "fx": self.effects(effects, placeholder: placeholder, style: style)]
         case .tiledPicture(let path, let effects, let layout):
@@ -227,6 +269,72 @@ struct WebRenderer {
         if effects.duotone.count == 2 { json["duotone"] = effects.duotone.map { css(style.color($0, placeholder: placeholder)) } }
         if effects.brightness != 0 { json["brightness"] = effects.brightness }
         if effects.contrast != 0 { json["contrast"] = effects.contrast }
+        // The rest as the Apple renderer applies them, colours resolved and
+        // adjustments as `feColorMatrix` values.
+        let resolved = effects.resolved { style.color($0, placeholder: placeholder) }
+        func rgba(_ color: RGBAColor) -> [Double] { [color.red, color.green, color.blue, color.alpha] }
+        if let change = resolved.colorChange {
+            json["change"] = ["from": rgba(change.from), "to": rgba(change.to), "tol": BlipEffects.ColorChange.tolerance]
+        }
+        if let threshold = resolved.biLevelThreshold { json["biLevel"] = threshold }
+        if let hsl = resolved.hsl { json["hsl"] = hsl.values }
+        if let tint = resolved.tint { json["tint"] = ["c": rgba(tint.color), "amt": tint.amount] }
+        if !resolved.artistic.isEmpty { json["art"] = resolved.artistic.map(artistic) }
+        return json
+    }
+
+    /// An artistic effect's look, for `effects()` in slide.js to draw as an
+    /// SVG filter; sizes are fractions of the picture's longer side.
+    private func artistic(_ effect: ResolvedPictureEffects.Artistic) -> [String: Any] {
+        var json: [String: Any] = effect.transparency > 0 ? ["trans": effect.transparency] : [:]
+        switch effect.look {
+        case .matrix(let matrix): json["k"] = "matrix"; json["m"] = matrix.values
+        case .blur(let sigma): json["k"] = "blur"; json["s"] = sigma
+        case .sharpen(let amount): json["k"] = "sharpen"; json["v"] = amount
+        case .sketch(let width, let inverted): json["k"] = "sketch"; json["s"] = width; json["inv"] = inverted
+        case .edges(let smoothness): json["k"] = "edges"; json["v"] = smoothness
+        case .paint(let levels, let softness): json["k"] = "paint"; json["n"] = levels; json["v"] = softness
+        case .grain(let strength): json["k"] = "grain"; json["v"] = strength
+        case .distort(let scale): json["k"] = "distort"; json["v"] = scale
+        case .glow(let strength): json["k"] = "glow"; json["v"] = strength
+        }
+        return json
+    }
+
+    /// A glow, soft edges, an inner shadow, a preset shadow and a blur, in
+    /// the shape's own space: the preset shadow as where each copy of the
+    /// shape's silhouette goes, farthest first.
+    private func effects(_ effects: ShapeEffects, size: CGSize, style: SlideStyleContext) -> [String: Any]? {
+        guard !effects.isEmpty else { return nil }
+        var json: [String: Any] = [:]
+        if let glow = effects.glow {
+            json["glow"] = ["r": n(CGFloat(EMU.points(glow.radius))), "c": css(style.color(glow.color))]
+        }
+        if let softEdge = effects.softEdge { json["soft"] = n(CGFloat(EMU.points(softEdge))) }
+        if let blur = effects.blur { json["blur"] = ["r": n(CGFloat(EMU.points(blur.radius))), "grow": blur.grows] }
+        var inner = effects.innerShadow.map { shadow -> (offset: CGSize, blur: Double, color: DrawingColor) in
+            let radians = shadow.direction * .pi / 180, distance = EMU.points(shadow.distance)
+            return (CGSize(width: cos(radians) * distance, height: sin(radians) * distance), EMU.points(shadow.blur), shadow.color)
+        }
+        if let preset = effects.presetShadow {
+            if preset.cast.isInner {
+                // The inner box preset is a hard inner shadow.
+                inner = inner ?? (preset.offset, 0, preset.color)
+            } else {
+                json["preset"] = [
+                    "c": css(style.color(preset.color)),
+                    "casts": preset.transforms(in: CGRect(origin: .zero, size: size)).map { t in
+                        [t.a, t.b, t.c, t.d, t.tx, t.ty].map { n(CGFloat($0)) }
+                    },
+                ]
+            }
+        }
+        if let inner {
+            json["inner"] = [
+                "dx": n(inner.offset.width), "dy": n(inner.offset.height), "blur": n(CGFloat(inner.blur)),
+                "c": css(style.color(inner.color)),
+            ]
+        }
         return json
     }
 
@@ -255,6 +363,8 @@ struct WebRenderer {
             resolved = css(style.color(color, placeholder: placeholder))
         case .gradient(let gradient):
             resolved = css(style.color(gradient.stops.first?.color ?? .scheme("tx1"), placeholder: placeholder))
+        case .pattern(let pattern):
+            resolved = css(style.color(pattern.foreground, placeholder: placeholder))
         default:
             resolved = css(style.color(.scheme("tx1"), placeholder: placeholder))
         }
@@ -368,7 +478,7 @@ struct WebRenderer {
     private func picturePart(
         _ picture: SlideShape.Picture, shape: SlideShape, frame: CGRect, style: SlideStyleContext, into node: inout [String: Any]
     ) {
-        let (outlinePath, _, _, outlineShape) = outline(of: shape, size: frame.size)
+        let (outlinePath, _, _, outlineShape, _) = outline(of: shape, size: frame.size)
         node["path"] = outlinePath
         if let path = picture.imagePath, presentation.data(at: path) != nil {
             let image = SlideShape.Picture.imageRect(frame: CGRect(origin: .zero, size: frame.size), picture: picture)

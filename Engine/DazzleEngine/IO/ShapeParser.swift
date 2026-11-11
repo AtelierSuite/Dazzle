@@ -128,8 +128,7 @@ public final class ShapeParser {
         shape.geometry = geometry(in: properties)
         shape.fill = Fill.parse(in: properties, image: target(of:))
         shape.line = properties?.firstChild(named: "ln").map(LineStyle.init(element:))
-        shape.shadow = Shadow(element: properties?.firstChild(named: "effectLst")?.firstChild(named: "outerShdw"))
-        shape.reflection = Reflection(element: properties?.firstChild(named: "effectLst")?.firstChild(named: "reflection"))
+        applyEffects(properties, to: &shape)
         shape.style = StyleReferences(element: element.firstChild(named: "style"))
         shape.text = element.firstChild(named: "txBody").map(textBody)
         if let textTransform = element.firstChild(named: "txXfrm") {
@@ -164,10 +163,19 @@ public final class ShapeParser {
         applyTransform(properties?.firstChild(named: "xfrm"), to: &shape)
         shape.geometry = geometry(in: properties)
         shape.line = properties?.firstChild(named: "ln").map(LineStyle.init(element:))
-        shape.shadow = Shadow(element: properties?.firstChild(named: "effectLst")?.firstChild(named: "outerShdw"))
-        shape.reflection = Reflection(element: properties?.firstChild(named: "effectLst")?.firstChild(named: "reflection"))
+        applyEffects(properties, to: &shape)
         inheritFrame(&shape)
         return shape
+    }
+
+    /// The shadow, reflection and other effects a shape's properties list.
+    private func applyEffects(_ properties: XMLElement?, to shape: inout SlideShape) {
+        let list = properties?.firstChild(named: "effectLst")
+        let style = EffectStyle(element: list)
+        shape.shadow = style.shadow
+        shape.reflection = style.reflection
+        shape.effects = style.effects
+        shape.hasOwnEffects = list != nil || properties?.firstChild(named: "effectDag") != nil
     }
 
     /// A picture's video or sound: the copy in the package PowerPoint 2010
