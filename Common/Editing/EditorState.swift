@@ -1008,12 +1008,31 @@ final class EditorState {
     // MARK: - Text
 
     func setText(_ text: String, in presentation: inout Presentation) {
+        let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
         updateShape(selectedShapeID, edits: [.text], in: &presentation) { shape in
             var body = shape.text ?? TextBody(paragraphs: [])
             guard body.plainText != text else { return }
             body.setPlainText(text)
-            shape.text = body
+            shape.text = style.map { Self.shrunkToFit(body, shape: shape, style: $0) } ?? body
         }
+    }
+
+    /// `body` with how far it shrinks to fit `shape` worked out afresh, when
+    /// its text shrinks on overflow, as PowerPoint does after an edit: the file
+    /// then says so, and other apps set the text the same size.
+    static func shrunkToFit(_ body: TextBody, shape: SlideShape, style: SlideStyleContext) -> TextBody {
+        #if canImport(CoreText)
+        let renderer = TextRenderer(style: style, slideNumber: 1)
+        guard let fit = renderer.shrinkFit(of: body, shape: shape, sources: style.sources(for: shape)) else { return body }
+        var body = body
+        // Text that fits as it is leaves what it inherits alone.
+        if body.properties.autofit != nil || fit != .normal(fontScale: 1, lineSpacingReduction: 0) {
+            body.properties.autofit = fit
+        }
+        return body
+        #else
+        return body
+        #endif
     }
 
     /// Starts typing into a shape, over the slide.
@@ -1057,23 +1076,25 @@ final class EditorState {
             }
             return
         }
+        let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
         updateShape(selectedShapeID, edits: [.text], in: &presentation) { shape in
             var body = shape.text ?? TextBody(paragraphs: [Paragraph(runs: [])])
             change(&body)
-            shape.text = body
+            shape.text = style.map { Self.shrunkToFit(body, shape: shape, style: $0) } ?? body
         }
     }
 
     /// Replaces the text being typed into. A shape that grows to fit its
     /// text grows, or shrinks, with it: down, or for vertical text across,
-    /// away from the side its first line is on.
+    /// away from the side its first line is on. WordArt warped over its box
+    /// keeps the box, which its letters are laid over, as PowerPoint does.
     func setTextBody(_ body: TextBody, in presentation: inout Presentation) {
         guard let slide = selectedSlide(in: presentation), let current = selectedShape(in: presentation),
               current.text != body else { return }
         var extent: Double?
         let style = SlideStyleContext(presentation: presentation, slide: slide)
         let properties = style.bodyProperties(for: current, sources: style.sources(for: current)).merged(over: body.properties)
-        if case .shape = body.properties.autofit, current.rotation == 0 {
+        if case .shape = body.properties.autofit, current.rotation == 0, TextWarpGeometry.isFlat(properties.warp) {
             var measured = current
             measured.text = body
             let frame = measured.frame.points
@@ -1087,6 +1108,7 @@ final class EditorState {
             extent = measuredTextExtent
             #endif
         }
+        let body = extent == nil ? Self.shrunkToFit(body, shape: current, style: style) : body
         updateShape(current.id, edits: extent == nil ? [.text] : [.text, .transform], in: &presentation) { shape in
             shape.text = body
             guard let extent else { return }

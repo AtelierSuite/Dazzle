@@ -6,6 +6,8 @@
 // The same drawing serves the editor's canvas, the navigator's thumbnails, the
 // presenter view and the audience window.
 
+import { bandForLine, letterTransform, placement, warpBands } from "./warp.js";
+
 const SVG = "http://www.w3.org/2000/svg";
 let uniqueId = 0;
 const nextId = (prefix) => `${prefix}${++uniqueId}`;
@@ -242,6 +244,7 @@ export class SlideDrawer {
     for (const flow of root.querySelectorAll(".text__flow[data-columns]")) layoutColumns(flow.parentElement);
     alignTabs(root);
     for (const box of root.querySelectorAll(".text[data-fit='shrink']")) fitText(box);
+    for (const box of root.querySelectorAll(".text[data-warp]")) warpText(box);
     for (const table of root.querySelectorAll(".table")) drawTableBorders(table);
   }
 
@@ -297,6 +300,7 @@ export class SlideDrawer {
     const geometry = svg("svg", {
       class: "shape__outline", width: node.w, height: node.h, viewBox: `0 0 ${Math.max(node.w, 0.01)} ${Math.max(node.h, 0.01)}`, overflow: "visible",
     }, parent);
+    if (node.path) this.depth(node, node.path, node.rule ?? "evenodd", geometry);
     if (node.fill && node.path) {
       const fill = svg("path", { d: node.path, "fill-rule": node.rule ?? "evenodd" }, geometry);
       this.paint(fill, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
@@ -308,6 +312,7 @@ export class SlideDrawer {
         base.classList.add("shape__fill");
         svg("path", { d: shade.d, "fill-rule": "evenodd", fill: shade.c, "fill-opacity": shade.o, class: "shape__shade" }, geometry);
       }
+      this.bevel(node, node.path, node.rule ?? "evenodd", geometry, context);
     }
     if (node.line && (node.strokePath ?? node.path)) this.stroke(node.strokePath ?? node.path, node.line, geometry, context, node);
     if (node.text && !(node.prompt && isEmptyText(node.text))) {
@@ -678,12 +683,14 @@ export class SlideDrawer {
     const geometry = svg("svg", { class: "shape__outline", width: node.w, height: node.h, viewBox: `0 0 ${Math.max(node.w, 0.01)} ${Math.max(node.h, 0.01)}`, overflow: "visible" }, parent);
     const clip = nextId("c");
     svg("path", { d: node.path }, svg("clipPath", { id: clip }, context.defs));
+    this.depth(node, node.path, "nonzero", geometry);
     const group = svg("g", { "clip-path": `url(#${clip})` }, geometry);
     const image = svg("image", {
       x: node.image.x, y: node.image.y, width: node.image.w, height: node.image.h, preserveAspectRatio: "none",
     }, group);
     this.setImage(image, node.src);
     this.effects(image, node.fx, context);
+    this.bevel(node, node.path, "nonzero", geometry, context);
     if (node.line) this.stroke(node.path, node.line, geometry, context, node);
     if (node.media) {
       parent.dataset.media = JSON.stringify(node.media);
@@ -792,6 +799,8 @@ export class SlideDrawer {
       box.dataset.vertical = body.vert;
     }
     box.textBody = body;
+    // WordArt: laid out flat, then each letter placed along the warp once the slide is on the page (warpText).
+    if (body.warp && !prompt) box.dataset.warp = "1";
     const flow = html("div", "text__flow", box);
     if (!body.wrap) {
       flow.style.inlineSize = "max-content";
@@ -811,6 +820,7 @@ export class SlideDrawer {
   fillFlow(flow, body, { scale = 1, reduce = 0, prompt = false, editable = false } = {}) {
     flow.replaceChildren();
     flow.dataset.scale = scale;
+    flow.dataset.reduce = reduce;
     for (const paragraph of body.paras) flow.append(this.paragraph(paragraph, { scale, reduce, prompt, editable }));
     if (flow.isConnected) alignTabs(flow);
   }
@@ -911,6 +921,48 @@ export class SlideDrawer {
       end.append(document.createElement("br"));
     }
     return element;
+  }
+
+  // MARK: - 3D
+
+  /** A shape's sides, as copies of its outline set off behind it and darkened, and its contour round its edge, as the engine draws them. */
+  depth(node, d, rule, parent) {
+    const look = node.look3d;
+    if (!look) return;
+    (look.sides?.casts ?? []).forEach(([a, b, c, e, f, g], index) => {
+      svg("path", {
+        d, "fill-rule": rule, fill: look.sides.cs[index], transform: `matrix(${a} ${b} ${c} ${e} ${f} ${g})`, class: "shape__side",
+      }, parent);
+    });
+    if (look.contour) {
+      svg("path", {
+        d, fill: "none", stroke: look.contour.c, "stroke-width": look.contour.w, "stroke-linejoin": "round", class: "shape__contour",
+      }, parent);
+    }
+  }
+
+  /**
+   * A shape's bevel, as bands of white or black over its face: each what stays inside the outline when it is set off
+   * by `k` (a clip) but not when it is set off by `x` (a mask).
+   */
+  bevel(node, d, rule, parent, context) {
+    const bands = node.look3d?.bands;
+    if (!bands?.length) return;
+    const reach = Math.max(...bands.map((band) => Math.max(Math.abs(band.xx), Math.abs(band.xy)))) + 1;
+    const area = { x: -reach, y: -reach, width: node.w + 2 * reach, height: node.h + 2 * reach };
+    for (const band of bands) {
+      const element = svg("path", { d, "fill-rule": rule, fill: band.c, "fill-opacity": band.o, class: "shape__bevel" }, parent);
+      if (band.kx || band.ky) {
+        const clip = nextId("c");
+        svg("path", { d, "clip-rule": rule, transform: `translate(${band.kx} ${band.ky})` }, svg("clipPath", { id: clip }, context.defs));
+        element.setAttribute("clip-path", `url(#${clip})`);
+      }
+      const mask = nextId("m");
+      const cut = svg("mask", { id: mask, maskUnits: "userSpaceOnUse", ...area }, context.defs);
+      svg("rect", { ...area, fill: "#fff" }, cut);
+      svg("path", { d, "fill-rule": rule, fill: "#000", transform: `translate(${band.xx} ${band.xy})` }, cut);
+      element.setAttribute("mask", `url(#${mask})`);
+    }
   }
 
   // MARK: - Effects
@@ -1096,34 +1148,154 @@ function channels(color) {
   return values.slice(0, 3).map((value) => value / 255);
 }
 
+/** Measures letters' ink and fonts' ascent, as a canvas sets them. */
+let measuring = null;
+function fontMetrics(font, text) {
+  measuring ??= document.createElement("canvas").getContext("2d");
+  measuring.font = font;
+  const metrics = measuring.measureText(text);
+  return {
+    ascent: metrics.fontBoundingBoxAscent ?? metrics.actualBoundingBoxAscent,
+    descent: metrics.fontBoundingBoxDescent ?? metrics.actualBoundingBoxDescent,
+    inkAscent: metrics.actualBoundingBoxAscent, inkDescent: metrics.actualBoundingBoxDescent,
+  };
+}
+
+/**
+ * Lays a WordArt box's letters along its warp, as the Apple apps do: the text
+ * stays laid out flat, unseen, and each letter is measured there (offsets,
+ * which zoom and turned shapes leave alone) and drawn again in SVG where the
+ * warp puts it. Text being typed stays flat, and shows its own letters.
+ */
+export function warpText(box) {
+  const body = box.textBody;
+  const flow = box.querySelector(":scope > .text__flow");
+  box.querySelector(":scope > .text__warp")?.remove();
+  delete box.dataset.warped;
+  if (!body?.warp || !flow || box.classList.contains("is-editing")) return;
+  // Every letter in a span of its own, so it can be measured where it lies, none joined to the next.
+  flow.style.fontVariantLigatures = "none";
+  flow.style.fontKerning = "none";
+  const segmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+  for (const run of flow.querySelectorAll(".text__run, .text__bullet")) {
+    if (run.querySelector(".text__glyph") || !run.textContent) continue;
+    const text = run.textContent;
+    const letters = segmenter ? Array.from(segmenter.segment(text), (part) => part.segment) : Array.from(text);
+    run.replaceChildren(...letters.map((letter) => {
+      const span = html("span", "text__glyph");
+      span.textContent = letter;
+      return span;
+    }));
+  }
+  // The letters line by line: a line ends at a break, a new paragraph, or where the text wraps back.
+  const lines = [];
+  let line = null;
+  let paragraph = null;
+  for (const element of flow.querySelectorAll(".text__glyph, br")) {
+    const inParagraph = element.closest(".text__p");
+    if (element.localName === "br") {
+      line = null;
+      continue;
+    }
+    const style = getComputedStyle(element);
+    const size = parseFloat(style.fontSize) || 0;
+    const font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const metrics = fontMetrics(font, element.textContent);
+    const letter = {
+      element, style, font, size, text: element.textContent, left: element.offsetLeft, right: element.offsetLeft + element.offsetWidth,
+      baseline: element.offsetTop + metrics.ascent, metrics, blank: !element.textContent.trim(),
+    };
+    if (!line || inParagraph !== paragraph || letter.left < line.letters[line.letters.length - 1].left - 1) {
+      line = { letters: [] };
+      lines.push(line);
+      paragraph = inParagraph;
+    }
+    line.letters.push(letter);
+  }
+  for (const each of lines) {
+    const inked = each.letters.filter((letter) => !letter.blank);
+    each.start = Math.min(...each.letters.map((letter) => letter.left));
+    each.width = Math.max(...(inked.length ? inked : each.letters).map((letter) => letter.right)) - each.start;
+    each.baseline = Math.max(...each.letters.map((letter) => letter.baseline));
+    each.top = Math.min(...each.letters.map((letter) => (letter.blank ? letter.baseline - letter.metrics.ascent : letter.baseline - letter.metrics.inkAscent)));
+    each.bottom = Math.max(...each.letters.map((letter) => (letter.blank ? letter.baseline + letter.metrics.descent : letter.baseline + letter.metrics.inkDescent)));
+  }
+  const bands = warpBands(body.warp);
+  // Each band's lines: how high and low their letters reach, and the first one's baseline.
+  const reaches = new Map();
+  lines.forEach((each, index) => {
+    const band = bandForLine(bands, index, lines.length);
+    const reach = reaches.get(band);
+    reaches.set(band, reach
+      ? { top: Math.min(reach.top, each.top), bottom: Math.max(reach.bottom, each.bottom), baseline: reach.baseline }
+      : { top: each.top, bottom: each.bottom, baseline: each.baseline });
+  });
+  // Drawn in the shape's own space, which the box sits in at the text's inset rectangle.
+  const drawing = svg("svg", { class: "text__warp", width: 1, height: 1, overflow: "visible", "aria-hidden": "true" });
+  Object.assign(drawing.style, { left: `${-body.x}px`, top: `${-body.y}px` });
+  lines.forEach((each, index) => {
+    const band = bandForLine(bands, index, lines.length);
+    const reach = reaches.get(band);
+    const place = placement(bands, band, reach.top, reach.bottom, reach.baseline);
+    for (const letter of each.letters) {
+      if (letter.blank) continue;
+      const [a, b, c, d, e, f] = letterTransform(
+        bands, place, letter.left - each.start, letter.right - each.start, each.width, letter.baseline, letter.size,
+      );
+      // SVG letters stand on a y axis pointing down.
+      const glyph = svg("text", { transform: `matrix(${a} ${b} ${-c} ${-d} ${e} ${f})` }, drawing);
+      glyph.textContent = letter.text;
+      Object.assign(glyph.style, {
+        font: letter.font, fill: letter.style.color, fontKerning: "none",
+      });
+      const stroke = letter.style.webkitTextStrokeWidth;
+      if (stroke && parseFloat(stroke) > 0) {
+        Object.assign(glyph.style, { stroke: letter.style.webkitTextStrokeColor, strokeWidth: stroke, paintOrder: "stroke fill" });
+      }
+      if (letter.style.textShadow && letter.style.textShadow !== "none") {
+        const [color, dx, dy, blur] = parseShadow(letter.style.textShadow);
+        if (color) glyph.style.filter = `drop-shadow(${dx} ${dy} ${blur} ${color})`;
+      }
+    }
+  });
+  box.append(drawing);
+  box.dataset.warped = "1";
+}
+
+/** A computed `text-shadow`'s colour and offsets, as `drop-shadow()` takes them. */
+function parseShadow(shadow) {
+  const color = shadow.match(/rgba?\([^)]*\)|#[0-9a-f]+/i)?.[0];
+  const lengths = shadow.replace(color ?? "", "").trim().split(/\s+/).filter(Boolean);
+  return [color, lengths[0] ?? "0px", lengths[1] ?? "0px", lengths[2] ?? "0px"];
+}
+
 /**
  * Shrinks the text in a box that shrinks on overflow, as PowerPoint would have
- * when it last saved, a tenth at a time.
+ * when it last saved: a step at a time, closing its lines up and then setting
+ * it smaller, down to the least step, which stands even if the text still
+ * overflows. The engine gives the steps, none when the file said how far.
  */
 export function fitText(box) {
   const body = box.textBody;
   const flow = box.querySelector(".text__flow");
-  if (!body || !flow || body.fit !== "shrink" || (body.scale ?? 1) !== 1) return;
+  if (!body || !flow || body.fit !== "shrink" || !body.steps?.length) return;
+  const drawer = new SlideDrawer(null);
+  const shrink = (fits) => {
+    for (const [scale, reduce] of body.steps) {
+      drawer.fillFlow(flow, body, { scale, reduce });
+      if (fits()) return;
+    }
+  };
   if (body.cols > 1 && !box.dataset.vertical) {
     // Text in columns overflows only when the last column runs past the bottom.
-    if (layoutColumns(box)) return;
-    const drawer = new SlideDrawer(null);
-    for (let scale = 0.9; scale >= 0.3 - 0.001; scale -= 0.1) {
-      drawer.fillFlow(flow, body, { scale, reduce: 0.1 });
-      if (layoutColumns(box)) return;
-    }
+    if (!layoutColumns(box)) shrink(() => layoutColumns(box));
     return;
   }
   // Lines stack down the box, or across it when they run vertically.
   const across = Boolean(box.dataset.vertical);
   const room = across ? box.clientWidth : box.clientHeight;
-  const used = () => (across ? flow.scrollWidth : flow.scrollHeight);
-  if (!room || used() <= room + 1) return;
-  const drawer = new SlideDrawer(null);
-  for (let scale = 0.9; scale >= 0.3 - 0.001; scale -= 0.1) {
-    drawer.fillFlow(flow, body, { scale, reduce: 0.1 });
-    if (used() <= room + 1) return;
-  }
+  const fits = () => (across ? flow.scrollWidth : flow.scrollHeight) <= room + 1;
+  if (room && !fits()) shrink(fits);
 }
 
 /**

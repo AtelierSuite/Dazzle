@@ -460,10 +460,11 @@ struct SlideCanvas: View {
         let style = SlideStyleContext(presentation: presentation, slide: slide)
         let sources = style.sources(for: shape)
         let slideNumber = (presentation.index(of: slide.id) ?? 0) + 1
-        let (area, properties) = TextRenderer(style: style, slideNumber: slideNumber).textArea(of: shape, sources: sources)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let (area, properties) = renderer.textArea(of: shape, sources: sources)
         let frame = shape.frame.points
-        var fontScale = 1.0
-        if case .normal(let scale, _) = properties.autofit { fontScale = scale }
+        // Shrunk to fit as the slide draws it.
+        let shrink = renderer.drawnShrink(of: shape, sources: sources)
         // Vertical text is typed across the area's height, turned as the slide turns it.
         let vertical = properties.runsVertically
         let turn: Double = vertical ? (properties.vertical == "vert270" ? -90 : 90) : 0
@@ -478,7 +479,8 @@ struct SlideCanvas: View {
         }
         return InPlaceTextEditor(
             body: shape.text ?? TextBody(paragraphs: [Paragraph(runs: [])]),
-            shape: shape, sources: sources, style: style, slideNumber: slideNumber, scale: scale, fontScale: fontScale,
+            shape: shape, sources: sources, style: style, slideNumber: slideNumber, scale: scale, fontScale: shrink.fontScale,
+            lineSpacingReduction: shrink.lineSpacingReduction,
             anchor: anchor, vertical: properties.vertical, selection: state.textSelection,
             onChange: { state.setTextBody($0, in: &presentation) },
             onSelectionChange: { state.textSelection = $0 },

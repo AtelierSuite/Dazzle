@@ -12,6 +12,7 @@ import { basename } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { strict as assert } from "node:assert";
 import { Engine } from "../engine.js";
+import { bandForLine, letterTransform, placement, warpBands, warpPoint } from "../../app/warp.js";
 import { COLUMN_LIMIT, INITIAL_GRID, LARGEST_GRID, ROW_LIMIT, TableSizeSelection, cellAt } from "../../app/table-size.js";
 
 const web = new URL("../../", import.meta.url);
@@ -340,7 +341,8 @@ function deckWithShapes() {
     <p:sp><p:nvSpPr><p:cNvPr id="932" name="Vertical"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
       <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
       <p:txBody><a:bodyPr vert="eaVert"><a:spAutoFit/></a:bodyPr><a:p><a:r><a:rPr lang="ja-JP"/><a:t>縦書きText</a:t></a:r></a:p></p:txBody>
-    </p:sp>`;
+    </p:sp>
+    ${wordArtShapes(frame)}`;
   const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
@@ -353,6 +355,21 @@ function deckWithShapes() {
   const types = decode("[Content_Types].xml");
   if (!/Extension="png"/i.test(types)) encode("[Content_Types].xml", types.replace("<Default ", '<Default Extension="png" ContentType="image/png"/><Default '));
   return zip(entries);
+}
+
+/** WordArt warped along an arch and a wave, and text that says it has no warp. */
+function wordArtShapes(frame) {
+  const warps = {
+    Arched: '<a:prstTxWarp prst="textArchUp"><a:avLst><a:gd name="adj" fmla="val 12000000"/></a:avLst></a:prstTxWarp>',
+    Waved: '<a:prstTxWarp prst="textWave1"><a:avLst><a:gd name="adj1" fmla="val 20000"/><a:gd name="adj2" fmla="val 0"/></a:avLst></a:prstTxWarp>',
+    Unwarped: '<a:prstTxWarp prst="textNoShape"><a:avLst/></a:prstTxWarp>',
+  };
+  return Object.entries(warps).map(([name, warp], index) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${940 + index}" name="${name}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200 + 2286000 * index)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
+      <p:txBody><a:bodyPr wrap="none">${warp}</a:bodyPr><a:lstStyle/>
+        <a:p><a:r><a:rPr lang="en-US" sz="3600"/><a:t>${name}</a:t></a:r></a:p><a:p><a:r><a:rPr lang="en-US" sz="3600"/><a:t>Two</a:t></a:r></a:p></p:txBody>
+    </p:sp>`).join("");
 }
 
 /** Shapes filled with each kind of path gradient, and a scaled linear one, named for what they hold. */
@@ -383,6 +400,7 @@ const drawn = (() => {
       cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
       recoloured: named("Recoloured"), stylised: named("Stylised"),
       columned: named("Columned"), tabbed: named("Tabbed"), vertical: named("Vertical"),
+      arched: named("Arched"), waved: named("Waved"), unwarped: named("Unwarped"),
     };
   } catch (error) {
     return { error };
@@ -628,6 +646,55 @@ function deckWithEffects() {
   return zip(entries);
 }
 
+test("passes WordArt warps to the page as the paths its letters are laid along", () => {
+  if (drawn.error) throw drawn.error;
+  // The text's inset rectangle in the 144 × 108 point shape: 7.2 points in at the sides, 3.6 at the top and bottom.
+  const inner = { x: 7.2, y: 3.6, w: 129.6, h: 100.8 };
+  const inside = (flat) => flat.every((value, index) => (index % 2
+    ? value >= inner.y - 0.01 && value <= inner.y + inner.h + 0.01
+    : value >= inner.x - 0.01 && value <= inner.x + inner.w + 0.01));
+
+  const arch = drawn.arched.text.warp;
+  assert.equal(arch.length, 1, "an arch is one path to follow");
+  assert.ok(arch[0].along.length > 20 && inside(arch[0].along), "an arc cut into short pieces, inside the text's box");
+  assert.equal(arch[0].out, true, "its letters would stand out of the top, so they hang inside it");
+  // adj moves where the arch starts: 200° clockwise from the right, a little above the middle on the left.
+  const [startX, startY] = arch[0].along;
+  assert.ok(startX < inner.x + inner.w * 0.1 && startY < inner.y + inner.h / 2 && startY > inner.y + inner.h * 0.25);
+
+  const wave = drawn.waved.text.warp;
+  assert.equal(wave.length, 1, "a wave is one band, between two paths");
+  assert.ok(inside(wave[0].top) && inside(wave[0].bottom));
+  const tops = wave[0].top.filter((_, index) => index % 2);
+  assert.ok(Math.max(...tops) - Math.min(...tops) > 10, "its top edge waves");
+
+  assert.equal(drawn.unwarped.text.warp, undefined, "textNoShape leaves the text flat");
+  assert.equal(drawn.lined.text.warp, undefined);
+});
+
+test("places letters on a warp as the Apple apps do", () => {
+  if (drawn.error) throw drawn.error;
+  const bands = warpBands(drawn.waved.text.warp);
+  assert.deepEqual([0, 1].map((index) => bandForLine(bands, index, 2)), [0, 0], "both lines share the one band");
+  const place = placement(bands, 0, 10, 50, 40);
+  // The text's corners land on the paths' ends; its middle half way between them.
+  const [top, bottom] = [bands[0].top.points, bands[0].bottom.points];
+  const topLeft = warpPoint(bands, place, 0, 100, 10);
+  const bottomRight = warpPoint(bands, place, 100, 100, 50);
+  assert.ok(Math.hypot(topLeft.x - top[0].x, topLeft.y - top[0].y) < 0.01);
+  assert.ok(Math.hypot(bottomRight.x - bottom.at(-1).x, bottomRight.y - bottom.at(-1).y) < 0.01);
+  // A letter stands upright, from its baseline towards the top path.
+  const [a, , c, d] = letterTransform(bands, place, 45, 55, 100, 50, 40);
+  assert.ok(a > 0 && d < 0 && Math.abs(c) < Math.abs(d), "runs right, and up is up the page");
+
+  const arch = warpBands(drawn.arched.text.warp);
+  const hanging = placement(arch, 0, 10, 50, 40);
+  assert.equal(hanging.baseline, 10, "letters hang from the arch by their tops");
+  const [width, , , , e, f] = letterTransform(arch, hanging, 0, 10, 30, 40, 36);
+  assert.ok(Math.abs(width) <= 1.0001, "a letter on a path keeps its width");
+  assert.ok(Number.isFinite(e) && Number.isFinite(f));
+});
+
 test("draws glows, soft edges, inner, preset and themed shadows and blurs, and saves them as they were", () => {
   const opened = call("open", { name: "Effects.pptx" }, deckWithEffects());
   const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
@@ -656,6 +723,59 @@ test("draws glows, soft edges, inner, preset and themed shadows and blurs, and s
   const saved = unzip(call("save", { format: "pptx" }).payload);
   const slide = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
   for (const element of ["<a:glow ", "<a:innerShdw ", "<a:softEdge ", "<a:blur ", 'prst="shdw13"', 'prst="shdw18"']) {
+    assert.ok(slide.includes(element), `keeps ${element}`);
+  }
+});
+
+/** A deck of shapes in 3D: bevelled, set in depth, contoured, and one with none. */
+function deckWithDepth() {
+  const { payload } = call("save", { format: "pptx" });
+  const entries = unzip(payload);
+  const decode = (name) => new TextDecoder().decode(entries.get(name));
+  const encode = (name, text) => entries.set(name, new TextEncoder().encode(text));
+  const shape = (id, name, extra) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/></a:xfrm>
+        <a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="3366CC"/></a:solidFill>${extra}</p:spPr>
+    </p:sp>`;
+  const scene = (camera, light) => `<a:scene3d><a:camera prst="${camera}"/><a:lightRig rig="threePt" dir="${light}"/></a:scene3d>`;
+  const shapes = shape(941, "Bevelled", `${scene("orthographicFront", "t")}<a:sp3d prstMaterial="metal"><a:bevelT w="127000" h="63500" prst="cross"/></a:sp3d>`)
+    + shape(942, "Deep", `${scene("obliqueTopLeft", "tl")}<a:sp3d extrusionH="381000"><a:extrusionClr><a:srgbClr val="00FF00"/></a:extrusionClr></a:sp3d>`)
+    + shape(943, "Contoured", `${scene("orthographicFront", "t")}<a:sp3d contourW="25400"><a:contourClr><a:srgbClr val="FF0000"/></a:contourClr></a:sp3d>`)
+    + shape(944, "Flat", "");
+  encode("ppt/slides/slide1.xml", decode("ppt/slides/slide1.xml").replace("</p:spTree>", `${shapes}</p:spTree>`));
+  return zip(entries);
+}
+
+test("draws bevels, depth and contours in 3D, and saves them as they were", () => {
+  const opened = call("open", { name: "Depth.pptx" }, deckWithDepth());
+  const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
+  const named = (name) => shapes.find((node) => node.name === name);
+
+  const bands = named("Bevelled").look3d?.bands;
+  assert.ok(bands?.length > 0, "a bevel is drawn as bands over the face");
+  // Lit from the top: the bands kept by moving the outline down are the top edge's.
+  const top = bands.filter((band) => band.xy > 0);
+  const bottom = bands.filter((band) => band.xy < 0);
+  assert.ok(top.length && bottom.length && bands.every((band) => band.xx === 0 && band.kx === 0), "along the top and bottom edges only");
+  assert.equal(top.find((band) => band.ky === 0)?.c, "#fff", "the top edge's outer band catches the light");
+  assert.equal(bottom.find((band) => band.ky === 0)?.c, "#000", "the bottom edge's is in shade");
+  assert.ok(top.some((band) => band.c === "#000"), "a cross turns away from the light further in");
+  assert.ok(bands.every((band) => band.o > 0 && band.o < 1));
+
+  const sides = named("Deep").look3d?.sides;
+  assert.ok(sides?.casts.length > 1 && sides.casts.length === sides.cs.length, "the sides are copies of the outline, each its colour");
+  const [far] = sides.casts;
+  assert.ok(far[4] < 0 && far[5] < 0, "seen from the top left, they stand out up and to the left");
+  assert.match(sides.cs[0], /^#00[0-9a-f]{2}00$/, "in the extrusion colour, darkened");
+  assert.equal(named("Deep").look3d.bands, undefined, "no bevel, no bands");
+
+  assert.deepEqual(named("Contoured").look3d?.contour, { w: 4, c: "#ff0000" }, "the contour straddles the edge");
+  assert.equal(named("Flat").look3d, undefined, "a shape without 3D draws as before");
+
+  const saved = unzip(call("save", { format: "pptx" }).payload);
+  const slide = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
+  for (const element of ['<a:camera prst="obliqueTopLeft"/>', 'prst="cross"', 'extrusionH="381000"', 'contourW="25400"', 'prstMaterial="metal"']) {
     assert.ok(slide.includes(element), `keeps ${element}`);
   }
 });
@@ -760,6 +880,97 @@ test("draws every Keynote chart it reads, and a stand-in for one it can't", () =
     const reopened = call("open", { name: `Charts.${format}` }, saved.payload);
     assert.equal(reopened.state.slides.length, 3, `saved as ${format}`);
   }
+});
+
+/** A chart part of `plot`, with the axes it names, as PowerPoint writes one. */
+function chartPart(plot, { axes = "cat", view3D = "" } = {}) {
+  const axis = (id, cross, pos, name = "valAx", extra = "") =>
+    `<c:${name}><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${pos}"/>`
+    + `${extra}<c:crossAx val="${cross}"/></c:${name}>`;
+  const axisXML = {
+    cat: axis(1, 2, "b", "catAx") + axis(2, 1, "l", "valAx", "<c:majorGridlines/>"),
+    xy: axis(1, 2, "b", "valAx", "<c:majorGridlines/>") + axis(2, 1, "l", "valAx", "<c:majorGridlines/>"),
+    surface: axis(1, 2, "b", "catAx") + axis(2, 1, "l", "valAx", "<c:majorGridlines/>") + axis(3, 2, "b", "serAx"),
+    none: "",
+  }[axes];
+  return new TextEncoder().encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+    + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:chart><c:autoTitleDeleted val="1"/>'
+    + `${view3D}<c:plotArea><c:layout/>${plot}${axisXML}</c:plotArea><c:legend><c:legendPos val="b"/></c:legend></c:chart></c:chartSpace>`);
+}
+
+/** A series of a category chart: its name, categories (or dates) and values. */
+function chartSeries(index, name, values, { categories = ["North", "East", "South", "West", "Middle"], dates = false, extra = "" } = {}) {
+  const points = (list) => list.map((value, at) => `<c:pt idx="${at}"><c:v>${value}</c:v></c:pt>`).join("");
+  const category = dates
+    ? `<c:cat><c:numRef><c:f>Sheet1!$A$2:$A$6</c:f><c:numCache><c:formatCode>m/d/yyyy</c:formatCode><c:ptCount val="5"/>${points([45292, 45293, 45294, 45295, 45296])}</c:numCache></c:numRef></c:cat>`
+    : `<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$${categories.length + 1}</c:f><c:strCache><c:ptCount val="${categories.length}"/>${points(categories)}</c:strCache></c:strRef></c:cat>`;
+  return `<c:ser><c:idx val="${index}"/><c:order val="${index}"/><c:tx><c:v>${name}</c:v></c:tx>${extra}${category}`
+    + `<c:val><c:numRef><c:f>Sheet1!$B$2:$B$6</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${values.length}"/>${points(values)}</c:numCache></c:numRef></c:val></c:ser>`;
+}
+
+const FRUIT = [["Apples", [4.3, 2.5, 3.5, 4.5, 3]], ["Pears", [2.4, 4.4, 1.8, 2.8, 3.6]], ["Plums", [2, 2, 3, 5, 1.5]]];
+const literal = (values) => `<c:numLit><c:ptCount val="${values.length}"/>${values.map((v, i) => `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`).join("")}</c:numLit>`;
+const NEW_CHART_KINDS = [
+  chartPart(`<c:radarChart><c:radarStyle val="filled"/>${FRUIT.map(([name, values], index) => chartSeries(index, name, values)).join("")}<c:axId val="1"/><c:axId val="2"/></c:radarChart>`),
+  chartPart(`<c:stockChart>${[["Open", [44, 25, 38, 50, 36]], ["High", [55, 57, 57, 58, 58]], ["Low", [11, 12, 13, 11, 25]], ["Close", [25, 38, 50, 35, 43]]]
+    .map(([name, values], index) => chartSeries(index, name, values, { dates: true, extra: "<c:spPr><a:ln><a:noFill/></a:ln></c:spPr>" })).join("")}`
+    + "<c:hiLowLines/><c:upDownBars><c:upBars/><c:downBars/></c:upDownBars><c:axId val=\"1\"/><c:axId val=\"2\"/></c:stockChart>"),
+  chartPart("<c:bubbleChart><c:varyColors val=\"0\"/><c:ser><c:idx val=\"0\"/><c:order val=\"0\"/><c:tx><c:v>Sales</c:v></c:tx>"
+    + `<c:xVal>${literal([1, 2, 3])}</c:xVal><c:yVal>${literal([2, 3, 1])}</c:yVal><c:bubbleSize>${literal([1, 4, 9])}</c:bubbleSize>`
+    + "</c:ser><c:bubbleScale val=\"100\"/><c:axId val=\"1\"/><c:axId val=\"2\"/></c:bubbleChart>", { axes: "xy" }),
+  chartPart(`<c:ofPieChart><c:ofPieType val="pie"/><c:varyColors val="1"/>${chartSeries(0, "Drinks", [42, 25, 15, 8, 6, 4], { categories: ["Tea", "Coffee", "Juice", "Water", "Milk", "Soda"] })}`
+    + "<c:gapWidth val=\"100\"/><c:splitType val=\"pos\"/><c:splitPos val=\"3\"/><c:secondPieSize val=\"75\"/><c:serLines/></c:ofPieChart>", { axes: "none" }),
+  chartPart(`<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/>${FRUIT.map(([name, values], index) => chartSeries(index, name, values)).join("")}<c:axId val="1"/><c:axId val="2"/></c:bar3DChart>`,
+    { view3D: "<c:view3D><c:rotX val=\"15\"/><c:rotY val=\"20\"/><c:rAngAx val=\"1\"/></c:view3D>" }),
+  chartPart(`<c:surfaceChart><c:wireframe val="0"/>${[["Morning", [10, 20, 30, 25, 15]], ["Noon", [20, 40, 55, 45, 25]], ["Night", [5, 10, 15, 12, 8]]]
+    .map(([name, values], index) => chartSeries(index, name, values)).join("")}<c:axId val="1"/><c:axId val="2"/><c:axId val="3"/></c:surfaceChart>`, { axes: "surface" }),
+];
+
+/** A deck of one chart of each kind above: column charts inserted and saved, their parts then swapped for these. */
+function deckOfNewChartKinds() {
+  call("new", { name: "Kinds.pptx" });
+  for (let index = 0; index < NEW_CHART_KINDS.length; index++) call("insertChart", { kind: "column" });
+  const entries = unzip(call("save", { format: "pptx", keep: true }).payload);
+  NEW_CHART_KINDS.forEach((part, index) => entries.set(`ppt/charts/chart${index + 1}.xml`, part));
+  return zip(entries);
+}
+
+test("draws radar, stock, bubble, of-pie, 3D and surface charts as themselves, and keeps their kind when edited", () => {
+  const opened = call("open", { name: "Kinds.pptx" }, deckOfNewChartKinds());
+  const charts = call("scene", { slide: opened.state.slides[0].id }).result.shapes.filter((node) => node.kind === "chart");
+  assert.equal(charts.length, NEW_CHART_KINDS.length);
+  const [radar, stock, bubble, ofPie, column3D, surface] = charts.map((node) => node.chart);
+  const filled = (items) => items.filter((item) => item.k === "path" && item.fill);
+  const texts = (items) => items.filter((item) => item.k === "text").map((item) => item.t);
+
+  assert.equal(filled(radar).length, 3, "a filled radar fills each series");
+  assert.ok(radar.some((item) => item.k === "path" && !item.fill && item.d.split("L").length > 4), "inside polygon gridlines");
+  assert.ok(["North", "East", "South", "West", "Middle"].every((name) => texts(radar).includes(name)), "with its categories round the outside");
+  assert.equal(filled(stock).length, 5, "a stock chart draws a bar from each open to close");
+  assert.ok(texts(stock).includes("1/1/2024"), "and its dates as dates");
+  const diameters = filled(bubble).map((item) => item.d);
+  assert.equal(new Set(diameters).size, 3, "a bubble of its own size per point");
+  assert.ok(texts(ofPie).includes(strings["Chart.Other"] ?? "Other"), "an of-pie chart's legend names the slice it splits out");
+  assert.equal(filled(ofPie).length, 7, "three slices and the rest in the first pie, three in the second");
+  assert.equal(filled(column3D).length, 30, "3D columns show a top and a side each");
+  assert.ok(surface.filter((item) => item.k === "rect").length > 50, "a surface is a map of its value bands");
+  assert.ok(texts(surface).includes("0-10"), "which its legend lists");
+
+  call("select", { shapes: [charts[0].id] });
+  const before = call("inspect").result.shape.chart;
+  assert.equal(before.kind, "radar");
+  assert.equal(before.hasGrouping, false);
+  assert.equal(before.kinds.at(-1).kind, "radar", "the chart's own kind is offered beside those a chart can be made as");
+  call("chart", { set: { series: [{ name: "Apples", values: ["1", "1", "1", "1", "1"] }, { name: "Pears" }, { name: "Plums" }] } });
+  const after = call("inspect").result.shape.chart;
+  assert.equal(after.kind, "radar", "Edit Data keeps the kind");
+  assert.equal(after.series[0].values[0], "1");
+
+  const reopened = call("open", { name: "Again.pptx" }, call("save", { format: "pptx", keep: true }).payload);
+  const again = call("scene", { slide: reopened.state.slides[0].id }).result.shapes.filter((node) => node.kind === "chart");
+  assert.equal(filled(again[0].chart).length, 3, "and saving keeps it");
+  assert.equal(filled(again[4].chart).length, 30);
 });
 
 /**
@@ -986,6 +1197,81 @@ test("clips patterned transitions, plays unknown ones as a fade, and saves them 
   const none = call("open", { name: "None.pptx" }, deckWithTransition(""));
   assert.equal(call("timeline", { slide: none.state.slides[0].id }).result.transition, 0);
   assert.ok(call("transition", { slide: none.state.slides[0].id }).result == null, "a slide without one cuts");
+});
+
+/** Text boxes that shrink on overflow, some saying how far and some not, and a table whose cell says to shrink. */
+function deckWithShrinkingText() {
+  call("new", { name: "Shrinking.pptx" });
+  const entries = unzip(call("save", { format: "pptx" }).payload);
+  const name = "ppt/slides/slide1.xml";
+  const box = (id, label, fit, bodyAttributes = "") => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${label}"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr><a:xfrm><a:off x="457200" y="457200"/><a:ext cx="1828800" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+      <p:txBody><a:bodyPr wrap="square"${bodyAttributes}>${fit}</a:bodyPr><a:lstStyle/>
+        <a:p><a:r><a:rPr lang="en-US"/><a:t>Text that runs on past the bottom of its box</a:t></a:r></a:p></p:txBody>
+    </p:sp>`;
+  const shapes = box(950, "Unsaid", "<a:normAutofit/>")
+    + box(951, "Said", '<a:normAutofit fontScale="62500" lnSpcReduction="20000"/>')
+    + box(952, "Closed up", '<a:normAutofit lnSpcReduction="10000"/>')
+    + box(953, "Columns", "<a:normAutofit/>", ' numCol="2"')
+    + box(954, "Upright", "<a:normAutofit/>", ' vert="eaVert"')
+    + `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="955" name="Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+      <p:xfrm><a:off x="457200" y="3200400"/><a:ext cx="914400" cy="370332"/></p:xfrm>
+      <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr/>
+        <a:tblGrid><a:gridCol w="914400"/></a:tblGrid>
+        <a:tr h="370332"><a:tc><a:txBody><a:bodyPr><a:normAutofit fontScale="40000"/></a:bodyPr><a:p><a:r><a:rPr lang="en-US"/><a:t>Cell</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+      </a:tbl></a:graphicData></a:graphic></p:graphicFrame>`;
+  entries.set(name, new TextEncoder().encode(new TextDecoder().decode(entries.get(name)).replace("</p:spTree>", `${shapes}</p:spTree>`)));
+  return zip(entries);
+}
+
+test("shrinks overflowing text in PowerPoint's steps unless the file says how far, but never in a table", () => {
+  const opened = call("open", { name: "Shrinking.pptx" }, deckWithShrinkingText());
+  const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
+  const body = (label) => shapes.find((node) => node.name === label)?.text;
+  const steps = body("Unsaid").steps;
+  assert.deepEqual(steps[0], [1, 0.1], "lines close up a tenth first");
+  assert.deepEqual(steps[1], [1, 0.2], "and then a fifth");
+  assert.deepEqual(steps.map(([scale]) => scale).filter((scale, index, all) => all.indexOf(scale) === index),
+    [1, 0.925, 0.85, 0.775, 0.7, 0.625, 0.55, 0.475, 0.4, 0.25], "then the letters shrink as PowerPoint's fontScale steps");
+  assert.ok(steps.slice(6).every(([, reduce]) => reduce === 0.2), "a fifth closer from 77.5% down");
+  assert.deepEqual(steps.at(-1), [0.25, 0.2], "a quarter is the least");
+
+  const said = body("Said");
+  assert.equal(said.steps, undefined, "a file that says how far is drawn as it says");
+  assert.deepEqual([said.scale, said.reduce], [0.625, 0.2]);
+  assert.deepEqual(body("Closed up").steps[0], [1, 0.2], "lines PowerPoint closed up go on from there");
+  assert.equal(body("Columns").cols, 2);
+  assert.deepEqual(body("Columns").steps, steps, "text in columns shrinks the same way");
+  assert.equal(body("Upright").vert, "eaVert");
+  assert.deepEqual(body("Upright").steps, steps, "and vertical text");
+
+  const cell = shapes.find((node) => node.name === "Table").table.cells[0].text;
+  assert.equal(cell.fit, undefined, "a table's rows grow rather than its text shrink");
+  assert.equal(cell.steps, undefined);
+});
+
+test("keeps WordArt warps when the text is typed into, saved and reopened", () => {
+  call("new", { name: "Untitled.pptx" });
+  const opened = call("open", { name: "WordArt.pptx" }, deckWithShapes());
+  const slide = opened.state.slides[0].id;
+  const waved = call("scene", { slide }).result.shapes.find((node) => node.name === "Waved");
+  call("select", { slide, shapes: [waved.id] });
+  call("beginText", { shape: waved.id });
+  call("setText", { paras: [{ src: 0, runs: [{ src: [0, 0], t: "Typed" }] }, { src: 1, runs: [{ src: [1, 0], t: "Over" }] }] });
+  call("endText");
+  const saved = call("save", { format: "pptx" }).payload;
+  const xml = new TextDecoder().decode(unzip(saved).get("ppt/slides/slide1.xml"));
+  const shape = xml.slice(xml.indexOf('name="Waved"'));
+  assert.match(shape, /<a:bodyPr[^>]*><a:prstTxWarp prst="textWave1"><a:avLst><a:gd fmla="val 20000" name="adj1"\/><a:gd fmla="val 0" name="adj2"\/><\/a:avLst><\/a:prstTxWarp>/, "kept as it was");
+  assert.match(shape, /<a:t>Typed<\/a:t>/);
+
+  const reopened = call("open", { name: "WordArt again.pptx" }, saved);
+  const again = call("scene", { slide: reopened.state.slides[0].id }).result.shapes;
+  const wave = again.find((node) => node.name === "Waved").text;
+  assert.equal(text(wave), "Typed\nOver");
+  assert.deepEqual(wave.warp, waved.text.warp, "warped just as before");
+  assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
 for (const path of process.argv.slice(2)) {
