@@ -1273,7 +1273,10 @@ final class EditorState {
     func setShadow(_ shadow: Shadow?, in presentation: inout Presentation) {
         updateSelectedShapes(edits: [.effects], in: &presentation) { shape in
             switch shape.kind {
-            case .shape, .connector, .picture: shape.shadow = shadow
+            case .shape, .connector, .picture:
+                shape.shadow = shadow
+                // Saving puts a shadow in place of any preset one.
+                if shadow != nil { shape.effects.presetShadow = nil }
             default: break
             }
         }

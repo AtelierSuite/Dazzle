@@ -162,6 +162,20 @@ enum EditableText {
         }
         style.headIndent = margin
         style.firstLineHeadIndent = !hasBullet ? firstLine : (margin > firstLine ? margin : firstLine + fontSize * 0.6)
+        // Tabs stop where the slide's do.
+        style.tabStops = TabLayout.stops(properties, fontSize: Double(fontSize / max(scale, 0.0001)), hasBullet: hasBullet).map { stop in
+            let location = CGFloat(stop.location) * scale
+            return switch stop.alignment {
+            case .left: NSTextTab(textAlignment: .left, location: location)
+            case .center: NSTextTab(textAlignment: .center, location: location)
+            case .right: NSTextTab(textAlignment: .right, location: location)
+            case .decimal:
+                NSTextTab(textAlignment: .right, location: location, options: [
+                    .columnTerminators: CharacterSet(charactersIn: String(TabLayout.decimalSeparator)),
+                ])
+            }
+        }
+        style.defaultTabInterval = CGFloat(TabLayout.defaultInterval(properties)) * scale
         switch properties.lineSpacing {
         case .percent(let value): style.lineHeightMultiple = CGFloat(max(value, 0.5))
         case .points(let value):

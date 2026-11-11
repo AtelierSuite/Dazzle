@@ -135,6 +135,11 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
     public var shadow: Shadow?
     /// A reflection the shape's own properties cast.
     public var reflection: Reflection?
+    /// The glow, soft edges, inner or preset shadow and blur its own properties give it.
+    public var effects = ShapeEffects()
+    /// Whether its properties list effects of their own, even none, which
+    /// take the place of any its style gives it.
+    public var hasOwnEffects = false
     public var style: StyleReferences?
     public var text: TextBody?
     /// For SmartArt shapes, where the text goes when it is not the whole shape.

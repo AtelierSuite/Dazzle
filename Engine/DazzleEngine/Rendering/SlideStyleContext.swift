@@ -94,6 +94,39 @@ public struct SlideStyleContext: Sendable {
         return line.map { ($0, nil) }
     }
 
+    /// The shadow, reflection and other effects a shape is drawn with: its
+    /// own, if its properties list any (even none), or else the theme's
+    /// effect style its `p:style` names, in the colour that names it.
+    public func effects(for shape: SlideShape, sources: [SlideShape] = []) -> EffectStyle {
+        // Once edited, effects are written as the shape's own.
+        if shape.hasOwnEffects || shape.edits.contains(.effects) {
+            return EffectStyle(shadow: shape.shadow, reflection: shape.reflection, effects: shape.effects)
+        }
+        for candidate in [shape] + sources {
+            guard let reference = candidate.style?.effect else { continue }
+            guard reference.index > 0, theme.effectStyles.indices.contains(reference.index - 1) else { break }
+            var themed = theme.effectStyles[reference.index - 1]
+            if let color = reference.color {
+                if let shadow = themed.shadow { themed.shadow?.color = shadow.color.replacingPlaceholder(with: color) }
+                themed.effects = themed.effects.replacingPlaceholder(with: color)
+            }
+            return themed
+        }
+        return EffectStyle(shadow: shape.shadow, reflection: shape.reflection, effects: shape.effects)
+    }
+
+    /// The shape with the effects it is drawn with made its own.
+    public func resolvingEffects(of shape: SlideShape, sources: [SlideShape] = []) -> SlideShape {
+        guard !shape.hasOwnEffects else { return shape }
+        let resolved = effects(for: shape, sources: sources)
+        var shape = shape
+        shape.shadow = resolved.shadow
+        shape.reflection = resolved.reflection
+        shape.effects = resolved.effects
+        shape.hasOwnEffects = true
+        return shape
+    }
+
     public func background(of slide: Slide) -> ResolvedFill {
         let background = slide.background ?? layout?.background ?? master?.background
         switch background {

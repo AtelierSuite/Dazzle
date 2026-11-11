@@ -186,3 +186,126 @@ struct BannerGeometryTests {
         #expect(!stroked.contains(point(0.5, 0.5)))
     }
 }
+
+@Suite("Presets drawn from ECMA-376's definitions")
+struct GeneratedPresetGeometryTests {
+    private let rect = CGRect(x: 10, y: 20, width: 400, height: 200)
+
+    private func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+        CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+    }
+
+    @Test("Every preset in the specification is read and drawn near its frame")
+    func everyPreset() {
+        #expect(PresetShapeDefinition.encoded.count == 187)
+        for name in PresetShapeDefinition.encoded.keys.sorted() {
+            #expect(PresetShapeDefinition.named(name) != nil, "\(name)")
+            let outline = PresetGeometry.outline(name, adjustments: [:], in: rect)
+            #expect(!outline.stroke.isEmpty || !outline.fill.isEmpty, "\(name)")
+            // Callouts' lines and arrows' heads may reach outside the frame, but not far.
+            let bounds = outline.fill.boundingBoxOfPath.union(outline.stroke.boundingBoxOfPath)
+            #expect(rect.insetBy(dx: -rect.width, dy: -rect.height).contains(bounds), "\(name)")
+            let text = PresetGeometry.textRect(name, adjustments: [:], in: rect)
+            #expect(text.width >= 1 && text.height >= 1, "\(name)")
+            #expect(rect.insetBy(dx: -1, dy: -1).contains(text) || name.contains("Callout"), "\(name)")
+        }
+    }
+
+    @Test("Presets that fell back to a rectangle now follow their outlines")
+    func noLongerRectangles() {
+        // Shapes whose frame corners lie outside the outline.
+        for name in ["gear6", "gear9", "blockArc", "moon", "teardrop", "flowChartOr", "sun", "heptagon", "decagon",
+                     "irregularSeal1", "lightningBolt", "pie", "chord", "smileyFace", "noSmoking", "flowChartDelay"] {
+            let path = PresetGeometry.path(name, adjustments: [:], in: rect)
+            #expect(!path.contains(point(0.005, 0.005), using: .evenOdd) || !path.contains(point(0.995, 0.995), using: .evenOdd),
+                    "\(name)")
+            #expect(!path.isEmpty, "\(name)")
+        }
+        // Holes.
+        for name in ["frame", "donut", "blockArc"] {
+            #expect(!PresetGeometry.path(name, adjustments: [:], in: rect).contains(point(0.5, 0.5), using: .evenOdd), "\(name)")
+        }
+        #expect(PresetGeometry.path("frame", adjustments: [:], in: rect).contains(point(0.02, 0.5), using: .evenOdd))
+        // The document's wavy bottom edge dips below its left half and rises on its right.
+        let document = PresetGeometry.path("flowChartDocument", adjustments: [:], in: rect)
+        #expect(document.contains(point(0.25, 0.9), using: .evenOdd))
+        #expect(!document.contains(point(0.75, 0.9), using: .evenOdd))
+    }
+
+    @Test("Adjust values reach the generated outlines")
+    func adjustments() {
+        let thin = PresetGeometry.path("frame", adjustments: ["adj1": 5_000], in: rect)
+        let thick = PresetGeometry.path("frame", adjustments: ["adj1": 30_000], in: rect)
+        #expect(!thin.contains(point(0.5, 0.2), using: .evenOdd))
+        #expect(thick.contains(point(0.5, 0.2), using: .evenOdd))
+        // The block arc's adj3 is its thickness.
+        let arc = PresetGeometry.path("blockArc", adjustments: ["adj3": 40_000], in: rect)
+        #expect(arc.contains(point(0.5, 0.3), using: .evenOdd))
+        #expect(!PresetGeometry.path("blockArc", adjustments: [:], in: rect).contains(point(0.5, 0.3), using: .evenOdd))
+    }
+
+    @Test("Text rectangles come from the definitions")
+    func textRects() {
+        let frame = PresetGeometry.textRect("frame", adjustments: [:], in: rect)
+        // Inside the 12.5% border, measured on the short side.
+        #expect(abs(frame.minX - (rect.minX + 25)) < 0.01 && abs(frame.maxY - (rect.maxY - 25)) < 0.01)
+        let ellipse = PresetGeometry.textRect("ellipse", adjustments: [:], in: rect)
+        #expect(abs(ellipse.minX - point(0.146_45, 0).x) < 0.1)
+        let cube = PresetGeometry.textRect("cube", adjustments: [:], in: rect)
+        #expect(abs(cube.minY - point(0, 0.25).y) < 0.01 && abs(cube.maxX - (rect.maxX - 50)) < 0.01)
+    }
+
+    @Test("Lines are never filled, and parts only filled are not stroked")
+    func fillAndStroke() {
+        for name in ["leftBrace", "rightBrace", "bracketPair", "bracePair", "lineInv", "line", "straightConnector1"] {
+            #expect(PresetGeometry.isOpen(name), "\(name)")
+        }
+        for name in ["can", "cube", "gear6", "ellipse"] {
+            #expect(!PresetGeometry.isOpen(name), "\(name)")
+        }
+        // The curved arrow's fill has no outline along the body's inner curve...
+        let curved = PresetGeometry.outline("curvedRightArrow", adjustments: [:], in: rect)
+        #expect(!curved.shades.isEmpty)
+        #expect(curved.stroke.boundingBoxOfPath.width > 0)
+        // ...and the bracket pair strokes both brackets with nothing between.
+        let brackets = PresetGeometry.outline("bracketPair", adjustments: [:], in: rect)
+        let stroked = brackets.stroke.copy(strokingWithWidth: 2, lineCap: .butt, lineJoin: .miter, miterLimit: 10)
+        #expect(stroked.contains(point(0, 0.5)) && stroked.contains(point(1, 0.5)))
+        #expect(!stroked.contains(point(0.5, 0)))
+    }
+
+    @Test("Cubes, cans and scrolls shade their sides")
+    func shades() {
+        let cube = PresetGeometry.outline("cube", adjustments: [:], in: rect)
+        #expect(cube.shades.map(\.tone) == [.darkenLess, .lightenLess])
+        // The top face is lightened, the right face darkened.
+        #expect(cube.shades[1].path.contains(point(0.5, 0.1), using: .evenOdd))
+        #expect(cube.shades[0].path.contains(point(0.95, 0.5), using: .evenOdd))
+        #expect(cube.fill.contains(point(0.4, 0.6), using: .evenOdd))
+        #expect(PresetGeometry.outline("rect", adjustments: [:], in: rect).shades.isEmpty)
+        #expect(PresetGeometry.Shade.Tone.darken.opacity > PresetGeometry.Shade.Tone.darkenLess.opacity)
+        #expect(PresetGeometry.Shade.Tone.lighten.isLighter && !PresetGeometry.Shade.Tone.darken.isLighter)
+    }
+
+    @Test("The circular arrow's extra formula argument is ignored")
+    func circularArrow() {
+        let arrow = PresetGeometry.path("circularArrow", adjustments: [:], in: rect)
+        #expect(!arrow.isEmpty)
+        #expect(!arrow.contains(point(0.5, 0.5), using: .evenOdd))
+    }
+
+    @Test("Hand-drawn presets the definitions match are drawn from them")
+    func replacedPresets() {
+        let ellipse = PresetGeometry.path("ellipse", adjustments: [:], in: rect)
+        #expect(ellipse.contains(point(0.5, 0.01), using: .evenOdd) && !ellipse.contains(point(0.05, 0.05), using: .evenOdd))
+        let diamond = PresetGeometry.path("flowChartDecision", adjustments: [:], in: rect)
+        #expect(diamond.contains(point(0.5, 0.5), using: .evenOdd) && !diamond.contains(point(0.2, 0.2), using: .evenOdd))
+        let rounded = PresetGeometry.path("roundRect", adjustments: ["adj": 50_000], in: rect)
+        #expect(!rounded.contains(point(0.02, 0.05), using: .evenOdd) && rounded.contains(point(0.5, 0.01), using: .evenOdd))
+        let triangle = PresetGeometry.path("triangle", adjustments: ["adj": 0], in: rect)
+        #expect(triangle.contains(point(0.05, 0.2), using: .evenOdd) && !triangle.contains(point(0.95, 0.2), using: .evenOdd))
+        let bent = PresetGeometry.path("bentConnector3", adjustments: ["adj1": 25_000], in: rect)
+        let stroked = bent.copy(strokingWithWidth: 2, lineCap: .butt, lineJoin: .miter, miterLimit: 10)
+        #expect(stroked.contains(point(0.25, 0.5)) && !stroked.contains(point(0.5, 0.5)))
+    }
+}

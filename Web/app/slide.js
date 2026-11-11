@@ -10,6 +10,20 @@ const SVG = "http://www.w3.org/2000/svg";
 let uniqueId = 0;
 const nextId = (prefix) => `${prefix}${++uniqueId}`;
 
+/** `box` set in from each edge by `[l, t, r, b]`, fractions of its size; the whole box without them. */
+const insetBox = (box, insets) => {
+  const [l, t, r, b] = insets ?? [0, 0, 0, 0];
+  return { x: box.x + box.w * l, y: box.y + box.h * t, w: box.w * (1 - l - r), h: box.h * (1 - t - b) };
+};
+
+/** The outline an SVG path or rectangle draws, as path data. */
+const outlineOf = (element) => {
+  if (element.localName === "path") return element.getAttribute("d");
+  if (element.localName !== "rect") return null;
+  const [x, y, w, h] = ["x", "y", "width", "height"].map((name) => Number(element.getAttribute(name) ?? 0));
+  return `M${x} ${y}H${x + w}V${y + h}H${x}Z`;
+};
+
 /** Text turned a quarter, letters and all, by how far. Other vertical text is set in vertical lines (app.css). */
 export const TURNED_TEXT = { vert: 90, vert270: -90 };
 
@@ -94,6 +108,33 @@ function svg(name, attributes = {}, parent = null) {
   }
   parent?.append(element);
   return element;
+}
+
+/**
+ * A preset pattern's tile, `cell` × 8 slide points square: the background, then a rectangle for each run of
+ * foreground cells along a row. `rows` are the eight rows, top first, each a byte with the leftmost cell its highest bit.
+ */
+function patternRects({ rows, cell, fg, bg }) {
+  const size = cell * 8;
+  const rects = [{ x: 0, y: 0, width: size, height: size, fill: bg }];
+  rows.forEach((bits, row) => {
+    for (let column = 0; column < 8; column++) {
+      if (!(bits & (0x80 >> column))) continue;
+      let end = column;
+      while (end + 1 < 8 && bits & (0x80 >> (end + 1))) end++;
+      rects.push({ x: column * cell, y: row * cell, width: (end - column + 1) * cell, height: cell, fill: fg });
+      column = end;
+    }
+  });
+  return rects;
+}
+
+/** A preset pattern as a CSS background, for a table cell: an SVG tile repeated from the top left. */
+function patternBackground(paint) {
+  const size = paint.cell * 8;
+  const rects = patternRects(paint).map((r) => `<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="${r.fill}"/>`);
+  const markup = `<svg xmlns="${SVG}" width="${size}" height="${size}" shape-rendering="crispEdges">${rects.join("")}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(markup)}") 0 0 / ${size}px ${size}px repeat`;
 }
 
 function html(name, className, parent = null) {
@@ -196,8 +237,10 @@ export class SlideDrawer {
     return root;
   }
 
-  /** Shrinks text that says it shrinks to fit, once the slide is laid out on the page. */
+  /** Sets text in its columns, puts tabbed text on its stops and shrinks text that says it shrinks to fit, once the slide is laid out on the page. */
   fit(root) {
+    for (const flow of root.querySelectorAll(".text__flow[data-columns]")) layoutColumns(flow.parentElement);
+    alignTabs(root);
     for (const box of root.querySelectorAll(".text[data-fit='shrink']")) fitText(box);
     for (const table of root.querySelectorAll(".table")) drawTableBorders(table);
   }
@@ -241,6 +284,7 @@ export class SlideDrawer {
       default:
         this.shape(node, inner, context);
     }
+    if (node.effects) this.applyEffects(node, outer, inner, context);
     if (node.reflection) this.reflect(node, outer, inner);
     if (node.link && context.interactive) {
       outer.dataset.link = JSON.stringify(node.link);
@@ -257,6 +301,13 @@ export class SlideDrawer {
       const fill = svg("path", { d: node.path, "fill-rule": node.rule ?? "evenodd" }, geometry);
       this.paint(fill, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
       fill.classList.add("shape__fill");
+      // Shaded parts (a cube's sides, a scroll's curls): the fill again, with black or white over it.
+      for (const shade of node.shades ?? []) {
+        const base = svg("path", { d: shade.d, "fill-rule": "evenodd" }, geometry);
+        this.paint(base, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
+        base.classList.add("shape__fill");
+        svg("path", { d: shade.d, "fill-rule": "evenodd", fill: shade.c, "fill-opacity": shade.o, class: "shape__shade" }, geometry);
+      }
     }
     if (node.line && (node.strokePath ?? node.path)) this.stroke(node.strokePath ?? node.path, node.line, geometry, context, node);
     if (node.text && !(node.prompt && isEmptyText(node.text))) {
@@ -297,7 +348,7 @@ export class SlideDrawer {
     return path;
   }
 
-  /** Fills `element` with a scene's paint, or strokes it when `attribute` is "stroke": a colour, a gradient or a picture. */
+  /** Fills `element` with a scene's paint, or strokes it when `attribute` is "stroke": a colour, a gradient, a pattern or a picture. */
   paint(element, paint, box, context, owner, attribute = "fill") {
     if (!paint) {
       element.setAttribute(attribute, "none");
@@ -309,24 +360,98 @@ export class SlideDrawer {
     }
     if (paint.t === "linear" || paint.t === "radial") {
       const id = nextId("g");
+      const tile = insetBox(box, paint.tile);
       let gradient;
       if (paint.t === "radial") {
-        const cx = box.x + box.w * paint.fx;
-        const cy = box.y + box.h * paint.fy;
-        const r = Math.max(...[[box.x, box.y], [box.x + box.w, box.y], [box.x, box.y + box.h], [box.x + box.w, box.y + box.h]]
-          .map(([x, y]) => Math.hypot(x - cx, y - cy)));
-        gradient = svg("radialGradient", { id, gradientUnits: "userSpaceOnUse", cx, cy, r }, context.defs);
-      } else {
-        const angle = (paint.angle * Math.PI) / 180;
-        const half = (Math.abs(Math.cos(angle)) * box.w + Math.abs(Math.sin(angle)) * box.h) / 2;
-        const cx = box.x + box.w / 2;
-        const cy = box.y + box.h / 2;
-        gradient = svg("linearGradient", {
+        // From a circle around `focus` (fillToRect) to one around the tile.
+        const focus = insetBox(box, paint.focus);
+        gradient = svg("radialGradient", {
           id, gradientUnits: "userSpaceOnUse",
-          x1: cx - Math.cos(angle) * half, y1: cy - Math.sin(angle) * half, x2: cx + Math.cos(angle) * half, y2: cy + Math.sin(angle) * half,
+          cx: tile.x + tile.w / 2, cy: tile.y + tile.h / 2, r: Math.hypot(tile.w, tile.h) / 2,
+          fx: focus.x + focus.w / 2, fy: focus.y + focus.h / 2, fr: Math.hypot(focus.w, focus.h) / 2,
+        }, context.defs);
+      } else {
+        // Across the tile; a scaled gradient's angle is set for a unit square, then stretched to the tile.
+        const angle = (paint.angle * Math.PI) / 180;
+        const w = paint.scaled ? 1 : tile.w;
+        const h = paint.scaled ? 1 : tile.h;
+        const half = (Math.abs(Math.cos(angle)) * w + Math.abs(Math.sin(angle)) * h) / 2;
+        const dx = Math.cos(angle) * half;
+        const dy = Math.sin(angle) * half;
+        gradient = svg("linearGradient", {
+          id, gradientUnits: "userSpaceOnUse", x1: -dx, y1: -dy, x2: dx, y2: dy,
+          gradientTransform: `translate(${tile.x + tile.w / 2} ${tile.y + tile.h / 2})${paint.scaled ? ` scale(${tile.w} ${tile.h})` : ""}`,
         }, context.defs);
       }
       for (const [offset, color] of paint.stops) svg("stop", { offset, "stop-color": color }, gradient);
+      element.setAttribute(attribute, `url(#${id})`);
+      return;
+    }
+    if (paint.t === "rect" || paint.t === "shape") {
+      // Drawn as a pattern of one tile over the area: its end colour throughout, then on top
+      // either the four bands from the start rectangle (fillToRect) out to the tile's edges,
+      // each its own linear gradient, or copies of the outline from the tile in to the start.
+      const id = nextId("p");
+      const pattern = svg("pattern", { id, patternUnits: "userSpaceOnUse", x: box.x, y: box.y, width: box.w, height: box.h }, context.defs);
+      const layer = svg("g", { transform: `translate(${-box.x} ${-box.y})` }, pattern);
+      const focus = insetBox(box, paint.focus);
+      const tile = insetBox(box, paint.tile);
+      const outline = paint.t === "shape" && attribute === "fill" ? outlineOf(element) : null;
+      if (outline) {
+        const rule = element.getAttribute("fill-rule") ?? "nonzero";
+        const steps = paint.rings.length - 1;
+        svg("rect", { x: box.x, y: box.y, width: box.w, height: box.h, fill: paint.rings[0] }, layer);
+        paint.rings.forEach((color, index) => {
+          const position = 1 - index / steps;
+          const x = focus.x + (tile.x - focus.x) * position;
+          const y = focus.y + (tile.y - focus.y) * position;
+          const w = focus.w + (tile.w - focus.w) * position;
+          const h = focus.h + (tile.h - focus.h) * position;
+          if (w <= 0 || h <= 0 || box.w <= 0 || box.h <= 0) return;
+          svg("path", {
+            d: outline, fill: color, "fill-rule": rule,
+            transform: `translate(${x} ${y}) scale(${w / box.w} ${h / box.h}) translate(${-box.x} ${-box.y})`,
+          }, layer);
+        });
+      } else {
+        const from = paint.from ?? paint.rings?.[paint.rings.length - 1];
+        const to = paint.to ?? paint.rings?.[0];
+        const stops = paint.stops;
+        svg("rect", { x: box.x, y: box.y, width: box.w, height: box.h, fill: to }, layer);
+        svg("rect", { x: focus.x, y: focus.y, width: Math.max(focus.w, 0), height: Math.max(focus.h, 0), fill: from }, layer);
+        const outer = [[tile.x, tile.y], [tile.x + tile.w, tile.y], [tile.x + tile.w, tile.y + tile.h], [tile.x, tile.y + tile.h]];
+        const inner = [[focus.x, focus.y], [focus.x + focus.w, focus.y], [focus.x + focus.w, focus.y + focus.h], [focus.x, focus.y + focus.h]];
+        const midX = focus.x + focus.w / 2;
+        const midY = focus.y + focus.h / 2;
+        // Top, right, bottom, left: each running from the start rectangle's edge to the tile's.
+        const lines = [
+          [midX, focus.y, midX, tile.y], [focus.x + focus.w, midY, tile.x + tile.w, midY],
+          [midX, focus.y + focus.h, midX, tile.y + tile.h], [focus.x, midY, tile.x, midY],
+        ];
+        lines.forEach(([x1, y1, x2, y2], side) => {
+          if (Math.hypot(x2 - x1, y2 - y1) < 0.001) return;
+          const next = (side + 1) % 4;
+          const band = nextId("g");
+          const gradient = svg("linearGradient", { id: band, gradientUnits: "userSpaceOnUse", x1, y1, x2, y2 }, context.defs);
+          for (const [offset, color] of stops) svg("stop", { offset, "stop-color": color }, gradient);
+          // Bands meet along the diagonals; softened edges would show there as seams.
+          svg("polygon", {
+            points: [outer[side], outer[next], inner[next], inner[side]].map((point) => point.join(",")).join(" "),
+            fill: `url(#${band})`, "shape-rendering": "crispEdges",
+          }, layer);
+        });
+      }
+      element.setAttribute(attribute, `url(#${id})`);
+      return;
+    }
+    if (paint.t === "pattern") {
+      // Two colours in a grid of eight by eight cells, repeated from the top left of the area.
+      const id = nextId("p");
+      const size = paint.cell * 8;
+      const pattern = svg("pattern", {
+        id, patternUnits: "userSpaceOnUse", x: box.x, y: box.y, width: size, height: size, "shape-rendering": "crispEdges",
+      }, context.defs);
+      for (const rect of patternRects(paint)) svg("rect", rect, pattern);
       element.setAttribute(attribute, `url(#${id})`);
       return;
     }
@@ -386,22 +511,155 @@ export class SlideDrawer {
     else this.media.url(src).then(apply);
   }
 
-  /** Greyscale, duotone, brightness and contrast, as SVG filters. */
+  /**
+   * A picture's effects as one SVG filter, in the order the Apple renderer
+   * (ArtisticRenderer and ResolvedPictureEffects) applies them: artistic
+   * effects, the colour change, black and white, grey or duotone, hue,
+   * saturation and luminance, tint, then brightness and contrast.
+   */
   effects(target, fx, context) {
     if (!fx) return;
     if (fx.opacity !== undefined) target.setAttribute("opacity", fx.opacity);
-    if (!fx.grey && !fx.duotone && !fx.brightness && !fx.contrast) return;
+    if (!fx.grey && !fx.duotone && !fx.brightness && !fx.contrast && !fx.change && fx.biLevel === undefined
+      && !fx.hsl && !fx.tint && !fx.art) return;
     const id = nextId("f");
-    const filter = svg("filter", { id, "color-interpolation-filters": "sRGB" }, context.defs);
-    if (fx.grey || fx.duotone) {
-      svg("feColorMatrix", { type: "matrix", values: "0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0 0 0 1 0" }, filter);
+    // Effects stay within the picture, as they do on Apple platforms.
+    const filter = svg("filter", { id, "color-interpolation-filters": "sRGB", x: 0, y: 0, width: 1, height: 1 }, context.defs);
+    let step = 0;
+    let current = "SourceGraphic";
+    /** Adds a primitive, reading `current` unless told otherwise, and makes its result current. */
+    const add = (name, attributes = {}, parent = filter) => {
+      const result = `r${step++}`;
+      const element = svg(name, { in: current, ...attributes, result }, parent);
+      current = result;
+      return element;
+    };
+    const transfer = (attributes) => {
+      const element = add("feComponentTransfer");
+      for (const channel of ["R", "G", "B"]) svg(`feFunc${channel}`, attributes(channel), element);
+    };
+    /** A blur that keeps the picture's own edges and transparency, as Core Image's clamped blur does. */
+    const blur = (deviation) => {
+      add("feGaussianBlur", { stdDeviation: deviation });
+      svg("feFuncA", { type: "linear", slope: 0, intercept: 1 }, add("feComponentTransfer"));
+      add("feComposite", { in2: "SourceGraphic", operator: "in" });
+    };
+    const GREY = "0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0 0 0 1 0";
+
+    // Sizes are fractions of the picture's longer side.
+    const side = Math.max(Number(target.getAttribute("width")) || 0, Number(target.getAttribute("height")) || 0, 1);
+    for (const art of fx.art ?? []) {
+      const before = current;
+      switch (art.k) {
+        case "matrix":
+          add("feColorMatrix", { type: "matrix", values: art.m.join(" ") });
+          break;
+        case "blur":
+          blur(art.s * side);
+          break;
+        case "sharpen": {
+          const a = art.v * 0.5;
+          add("feConvolveMatrix", { order: 3, kernelMatrix: `0 ${-a} 0 ${-a} ${1 + 4 * a} ${-a} 0 ${-a} 0`, preserveAlpha: "true" });
+          break;
+        }
+        case "sketch": {
+          // Grey, dodged by its own blurred negative: only edges stay dark.
+          add("feColorMatrix", { type: "saturate", values: 0 });
+          const grey = current;
+          transfer(() => ({ type: "table", tableValues: "1 0" }));
+          blur(art.s * side);
+          add("feBlend", { in2: grey, mode: "color-dodge" });
+          if (art.inv) transfer(() => ({ type: "table", tableValues: "1 0" }));
+          break;
+        }
+        case "edges":
+          if (art.v > 0) blur(art.v * 0.003 * side);
+          add("feConvolveMatrix", { order: 3, kernelMatrix: "-1 -1 -1 -1 8 -1 -1 -1 -1", preserveAlpha: "true" });
+          transfer(() => ({ type: "linear", slope: 4 }));
+          break;
+        case "paint": {
+          blur(art.v * 0.004 * side);
+          const levels = Math.max(art.n, 2);
+          const steps = Array.from({ length: levels }, (_, index) => index / (levels - 1)).join(" ");
+          transfer(() => ({ type: "discrete", tableValues: steps }));
+          break;
+        }
+        case "grain":
+        case "distort": {
+          // Noise in grains about a 600th of the picture across, or a 60th to ripple it.
+          const grain = art.k === "grain" ? side / 600 : side / 60;
+          const image = current;
+          add("feTurbulence", { in: null, type: "fractalNoise", baseFrequency: 0.5 / Math.max(grain, 1), numOctaves: 1, seed: 7 });
+          if (art.k === "grain") {
+            const s = art.v;
+            const row = `${s} 0 0 0 ${0.5 - s / 2}`;
+            add("feColorMatrix", { type: "matrix", values: `${row} ${row} ${row} 0 0 0 0 1` });
+            // The noise laid over the picture, as Core Image's overlay.
+            add("feBlend", { in2: image, mode: "overlay" });
+          } else {
+            add("feGaussianBlur", { stdDeviation: side * 0.004 });
+            add("feDisplacementMap", { in: image, in2: current, scale: art.v * side, xChannelSelector: "R", yChannelSelector: "G" });
+          }
+          break;
+        }
+        case "glow": {
+          const sharp = current;
+          blur(side * 0.01);
+          add("feComposite", { in: sharp, in2: current, operator: "arithmetic", k1: 0, k2: 1, k3: art.v * 0.75, k4: 0 });
+          break;
+        }
+        default:
+          break;
+      }
+      if (art.trans > 0 && current !== before) {
+        // `trans`: the picture as it was showing through the effect.
+        add("feComposite", { in2: before, operator: "arithmetic", k1: 0, k2: 1 - art.trans, k3: art.trans, k4: 0 });
+      }
     }
-    if (fx.duotone) {
-      const [dark, light] = fx.duotone.map(channels);
-      const transfer = svg("feComponentTransfer", {}, filter);
-      ["R", "G", "B"].forEach((channel, index) => {
-        svg(`feFunc${channel}`, { type: "table", tableValues: `${dark[index]} ${light[index]}` }, transfer);
-      });
+
+    if (fx.change) {
+      // Where the channels' differences from the colour add to no more than
+      // the tolerance, the picture takes the new colour, keeping its alpha.
+      const source = current;
+      const [r, g, b] = fx.change.from;
+      add("feColorMatrix", { type: "matrix", values: `1 0 0 0 ${-r} 0 1 0 0 ${-g} 0 0 1 0 ${-b} 0 0 0 0 1` });
+      const above = current;
+      add("feColorMatrix", { in: source, type: "matrix", values: `-1 0 0 0 ${r} 0 -1 0 0 ${g} 0 0 -1 0 ${b} 0 0 0 0 1` });
+      add("feComposite", { in: above, in2: current, operator: "arithmetic", k1: 0, k2: 1, k3: 1, k4: 0 });
+      const distance = current;
+      const sharpness = 200;
+      add("feColorMatrix", { in: distance, type: "matrix", values: `0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${sharpness} ${sharpness} ${sharpness} 0 ${-sharpness * fx.change.tol}` });
+      add("feComposite", { in: source, in2: current, operator: "in" });
+      const kept = current;
+      add("feColorMatrix", { in: distance, type: "matrix", values: `0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${-sharpness} ${-sharpness} ${-sharpness} 0 ${sharpness * fx.change.tol + 1}` });
+      const swapped = current;
+      const [tr, tg, tb, ta] = fx.change.to;
+      add("feFlood", { in: null, "flood-color": `rgb(${tr * 255} ${tg * 255} ${tb * 255})`, "flood-opacity": ta });
+      add("feComposite", { in2: swapped, operator: "in" });
+      add("feComposite", { in2: source, operator: "in" });
+      const replaced = current;
+      const merge = add("feMerge", { in: null });
+      svg("feMergeNode", { in: kept }, merge);
+      svg("feMergeNode", { in: replaced }, merge);
+    }
+    if (fx.biLevel !== undefined) {
+      add("feColorMatrix", { type: "matrix", values: GREY });
+      transfer(() => ({ type: "linear", slope: 1000, intercept: -1000 * fx.biLevel }));
+    } else if (fx.grey || fx.duotone) {
+      add("feColorMatrix", { type: "matrix", values: GREY });
+      if (fx.duotone && !fx.grey) {
+        const [dark, light] = fx.duotone.map(channels);
+        transfer((channel) => ({ type: "table", tableValues: `${dark["RGB".indexOf(channel)]} ${light["RGB".indexOf(channel)]}` }));
+      }
+    }
+    if (fx.hsl) add("feColorMatrix", { type: "matrix", values: fx.hsl.join(" ") });
+    if (fx.tint) {
+      // Grey mapped from black through the hue to white (or grey, away from it), mixed in by the amount.
+      const before = current;
+      add("feColorMatrix", { type: "matrix", values: GREY });
+      if (fx.tint.amt > 0) transfer((channel) => ({ type: "table", tableValues: `0 ${fx.tint.c["RGB".indexOf(channel)]} 1` }));
+      const amount = Math.abs(fx.tint.amt);
+      add("feComposite", { in2: before, operator: "arithmetic", k1: 0, k2: amount, k3: 1 - amount, k4: 0 });
     }
     if (fx.brightness || fx.contrast) {
       // Office centres contrast on mid-grey, with half the brightness before it and half after.
@@ -409,8 +667,7 @@ export class SlideDrawer {
       const slope = c >= 0 ? 128 / (128 - 127 * c) : (128 + 127 * c) / 128;
       const shift = Math.min(Math.max(fx.brightness ?? 0, -1), 1) / 2;
       const intercept = shift * slope + 0.5 - 0.5 * slope + shift;
-      const transfer = svg("feComponentTransfer", {}, filter);
-      for (const channel of ["R", "G", "B"]) svg(`feFunc${channel}`, { type: "linear", slope, intercept }, transfer);
+      transfer(() => ({ type: "linear", slope, intercept }));
     }
     target.setAttribute("filter", `url(#${id})`);
   }
@@ -501,6 +758,7 @@ export class SlideDrawer {
       if (cell.fill) {
         if (cell.fill.t === "solid") element.style.background = cell.fill.c;
         else if (cell.fill.t === "linear") element.style.background = `linear-gradient(${cell.fill.angle + 90}deg, ${cell.fill.stops.map(([o, c]) => `${c} ${o * 100}%`).join(", ")})`;
+        else if (cell.fill.t === "pattern") element.style.background = patternBackground(cell.fill);
       }
       if (cell.borders) element.dataset.borders = JSON.stringify(cell.borders);
       if (cell.text) element.append(this.text(cell.text, null, { cell: true }));
@@ -540,6 +798,12 @@ export class SlideDrawer {
       const align = body.paras[0]?.align ?? "l";
       flow.style.alignSelf = align === "ctr" ? "center" : align === "r" ? "flex-end" : "flex-start";
     }
+    if (body.cols > 1) {
+      // Text in columns, balanced across them until the slide is laid out and layoutColumns fills them in turn.
+      flow.dataset.columns = body.cols;
+      Object.assign(flow.style, { columnCount: String(body.cols), columnGap: `${body.colGap ?? 0}px` });
+      if (body.rtlCols) flow.dataset.rtlColumns = "1";
+    }
     this.fillFlow(flow, body, { scale: scale ?? body.scale ?? 1, reduce: reduce ?? body.reduce ?? 0, prompt });
     return box;
   }
@@ -548,6 +812,7 @@ export class SlideDrawer {
     flow.replaceChildren();
     flow.dataset.scale = scale;
     for (const paragraph of body.paras) flow.append(this.paragraph(paragraph, { scale, reduce, prompt, editable }));
+    if (flow.isConnected) alignTabs(flow);
   }
 
   paragraph(paragraph, { scale = 1, reduce = 0, prompt = false, editable = false }) {
@@ -575,6 +840,33 @@ export class SlideDrawer {
       const tab = paragraph.ml > first ? paragraph.ml : first + size * 0.6;
       bullet.style.minWidth = `${Math.max(tab - first, 0)}px`;
     }
+    // Default tab stops, until the stops are laid out once the paragraph is on the page.
+    if (paragraph.dts) element.style.tabSize = `${paragraph.dts}px`;
+    // With tabs, the text between them is held in segments, so each can be
+    // measured and the tab before it widened to put it on its stop; for
+    // decimal stops, the part before the decimal point is held apart too.
+    const tabbed = Boolean(paragraph.tabs) && !prompt;
+    const decimal = tabbed && paragraph.tabs.some(([, alignment]) => alignment === "dec");
+    let segment = element;
+    let lead = null;
+    const startSegment = () => {
+      segment = html("span", "text__seg", element);
+      lead = decimal ? html("span", "text__lead", segment) : null;
+    };
+    if (tabbed) {
+      element.dataset.tabs = JSON.stringify(paragraph.tabs);
+      element.dataset.dts = paragraph.dts;
+      startSegment();
+    }
+    const piece = (run, text, parent, className = "text__run") => {
+      const span = html("span", className, parent);
+      span.dataset.p = paragraph.i;
+      span.dataset.r = run.r;
+      span.textContent = text;
+      runStyle(span, run, scale);
+      if (run.link) span.dataset.link = JSON.stringify(run.link);
+      return span;
+    };
     let hasText = false;
     for (const run of paragraph.runs) {
       if (run.br) {
@@ -582,20 +874,35 @@ export class SlideDrawer {
         br.dataset.p = paragraph.i;
         br.dataset.r = run.r;
         element.append(br);
+        if (tabbed) startSegment();
         continue;
       }
-      const span = html("span", "text__run", element);
-      span.dataset.p = paragraph.i;
-      span.dataset.r = run.r;
-      span.textContent = run.t;
-      runStyle(span, run, scale);
-      if (run.field) {
-        span.dataset.field = run.field;
-        span.dataset.len = run.len ?? run.t.length;
-        if (editable) span.contentEditable = "false";
-      }
-      if (run.link) span.dataset.link = JSON.stringify(run.link);
       if (run.t) hasText = true;
+      if (run.field || !tabbed) {
+        const span = piece(run, run.t, lead ?? segment);
+        if (run.field) {
+          span.dataset.field = run.field;
+          span.dataset.len = run.len ?? run.t.length;
+          if (editable) span.contentEditable = "false";
+        }
+        continue;
+      }
+      for (const [index, part] of run.t.split("\t").entries()) {
+        if (index > 0) {
+          piece(run, "\t", element, "text__run text__tab");
+          startSegment();
+        }
+        if (!part) continue;
+        const point = lead ? part.indexOf(".") : -1;
+        if (point < 0) {
+          piece(run, part, lead ?? segment);
+          continue;
+        }
+        if (point > 0) piece(run, part.slice(0, point), lead);
+        lead = null;
+        piece(run, ".", segment, "text__run text__point");
+        if (point + 1 < part.length) piece(run, part.slice(point + 1), segment);
+      }
     }
     if (!hasText) {
       // An empty paragraph still takes a line, as tall as its end-of-paragraph text.
@@ -604,6 +911,84 @@ export class SlideDrawer {
       end.append(document.createElement("br"));
     }
     return element;
+  }
+
+  // MARK: - Effects
+
+  /**
+   * A preset shadow, as copies of the shape's silhouette beneath it; and a glow, soft edges, an inner shadow and a
+   * blur, as an SVG filter on the shape itself: the glow round it, its edges feathered or blurred, the inner shadow
+   * over it. The outer shadow falls from all of it, as the engine draws it.
+   */
+  applyEffects(node, outer, inner, context) {
+    const fx = node.effects;
+    if (fx.preset) {
+      const flood = nextId("f");
+      const filter = svg("filter", {
+        id: flood, x: "-50%", y: "-50%", width: "200%", height: "200%", "color-interpolation-filters": "sRGB",
+      }, context.defs);
+      svg("feFlood", { "flood-color": fx.preset.c, result: "colour" }, filter);
+      svg("feComposite", { in: "colour", in2: "SourceAlpha", operator: "in" }, filter);
+      const turn = inner.style.transform;
+      for (const [a, b, c, d, e, f] of fx.preset.casts) {
+        const copy = inner.cloneNode(true);
+        // Not a body, so the shape's own is the one found by what looks for it.
+        copy.classList.replace("shape__body", "shape__preset-shadow");
+        copy.setAttribute("aria-hidden", "true");
+        copy.style.filter = `url(#${flood})`;
+        // Cast in the shape's own space, from its top left, then turned with it about its middle.
+        copy.style.transform = `${turn} translate(${-node.w / 2}px, ${-node.h / 2}px) matrix(${a}, ${b}, ${c}, ${d}, ${e}, ${f}) translate(${node.w / 2}px, ${node.h / 2}px)`;
+        outer.insertBefore(copy, inner);
+      }
+    }
+    if (!fx.glow && fx.soft === undefined && !fx.blur && !fx.inner) return;
+    // Room round the shape for the effects to spread, and for outlines and text that stand out past it.
+    const reach = Math.max((fx.glow?.r ?? 0) * 1.5, (fx.blur?.r ?? 0) * 2, fx.inner ? Math.hypot(fx.inner.dx, fx.inner.dy) + fx.inner.blur * 2 : 0);
+    const margin = reach + 12 + Math.max(node.w, node.h) * 0.1;
+    const id = nextId("f");
+    const filter = svg("filter", {
+      id, filterUnits: "userSpaceOnUse", x: -margin, y: -margin, width: node.w + 2 * margin, height: node.h + 2 * margin,
+      "color-interpolation-filters": "sRGB",
+    }, context.defs);
+    let body = "SourceGraphic";
+    if (fx.soft !== undefined) {
+      // Faded out from a little in from the edge to the edge.
+      svg("feMorphology", { in: "SourceAlpha", operator: "erode", radius: fx.soft / 2, result: "inset" }, filter);
+      svg("feGaussianBlur", { in: "inset", stdDeviation: fx.soft / 4, result: "feather" }, filter);
+      svg("feComposite", { in: body, in2: "feather", operator: "in", result: "soft" }, filter);
+      body = "soft";
+    }
+    if (fx.blur) {
+      // Cut off at the shape's bounds, unless the blur may grow past them.
+      const bounds = fx.blur.grow ? {} : { x: 0, y: 0, width: node.w, height: node.h };
+      svg("feGaussianBlur", { in: body, stdDeviation: fx.blur.r / 2, result: "blurred", ...bounds }, filter);
+      body = "blurred";
+    }
+    if (fx.inner) {
+      // What lies outside the shape, set off and softened, falls inside it.
+      const outside = svg("feComponentTransfer", { in: "SourceAlpha", result: "outside" }, filter);
+      svg("feFuncA", { type: "table", tableValues: "1 0" }, outside);
+      svg("feOffset", { in: "outside", dx: fx.inner.dx, dy: fx.inner.dy, result: "cast" }, filter);
+      svg("feGaussianBlur", { in: "cast", stdDeviation: fx.inner.blur / 2, result: "falling" }, filter);
+      svg("feFlood", { "flood-color": fx.inner.c, result: "inner-colour" }, filter);
+      svg("feComposite", { in: "inner-colour", in2: "falling", operator: "in", result: "inner-shadow" }, filter);
+      svg("feComposite", { in: "inner-shadow", in2: body, operator: "in", result: "inner-inside" }, filter);
+      const merge = svg("feMerge", { result: "shaded" }, filter);
+      svg("feMergeNode", { in: body }, merge);
+      svg("feMergeNode", { in: "inner-inside" }, merge);
+      body = "shaded";
+    }
+    if (fx.glow) {
+      // Grown by half the radius and softened over the rest, beneath the shape.
+      svg("feMorphology", { in: "SourceAlpha", operator: "dilate", radius: fx.glow.r / 2, result: "grown" }, filter);
+      svg("feGaussianBlur", { in: "grown", stdDeviation: fx.glow.r / 4, result: "halo" }, filter);
+      svg("feFlood", { "flood-color": fx.glow.c, result: "glow-colour" }, filter);
+      svg("feComposite", { in: "glow-colour", in2: "halo", operator: "in", result: "glow" }, filter);
+      const merge = svg("feMerge", {}, filter);
+      svg("feMergeNode", { in: "glow" }, merge);
+      svg("feMergeNode", { in: body }, merge);
+    }
+    inner.style.filter = `url(#${id})`;
   }
 
   // MARK: - Reflections
@@ -635,7 +1020,8 @@ export class SlideDrawer {
     const mask = `linear-gradient(to top, rgba(0,0,0,${reflection.start}) 0%, rgba(0,0,0,${reflection.end}) ${end}%, transparent ${Math.min(end + 0.1, 100)}%)`;
     copy.style.maskImage = mask;
     copy.style.webkitMaskImage = mask;
-    if (reflection.blur > 0) copy.style.filter = `blur(${reflection.blur / 2}px)`;
+    // Glows, soft edges and the like come across with the copy; a blur goes after them.
+    if (reflection.blur > 0) copy.style.filter = [inner.style.filter, `blur(${reflection.blur / 2}px)`].filter(Boolean).join(" ");
     outer.append(copy);
   }
 }
@@ -660,6 +1046,45 @@ export function runStyle(element, run, scale = 1) {
   if (run.shadow) element.style.textShadow = `${run.shadow.dx}px ${run.shadow.dy}px ${run.shadow.blur / 2}px ${run.shadow.c}`;
 }
 
+/**
+ * Widens each tab in the paragraphs under `root` so the text after it lies on
+ * its stop as PowerPoint lays it: from the left of the text, by its left
+ * edge, middle or right edge, or with its decimal point centred on the stop;
+ * past the paragraph's own stops, on every multiple of the default tab size.
+ * Measured with offsets, which slide zoom and turned text leave alone.
+ * Text set in vertical lines keeps the page's own tabs.
+ */
+export function alignTabs(root) {
+  for (const paragraph of root.querySelectorAll(".text__p[data-tabs]")) {
+    if (paragraph.closest(".text[data-vertical]")) continue;
+    const stops = JSON.parse(paragraph.dataset.tabs);
+    const interval = Number(paragraph.dataset.dts) || 72;
+    const tabs = [...paragraph.querySelectorAll(":scope > .text__tab")];
+    for (const tab of tabs) tab.style.paddingInlineStart = "0px";
+    for (const tab of tabs) {
+      const at = tab.offsetLeft - paragraph.offsetLeft;
+      const [stop, alignment] = stops.find(([location]) => location > at + 0.5)
+        ?? [(Math.floor(at / interval + 0.001) + 1) * interval, "l"];
+      const segment = tab.nextElementSibling?.classList.contains("text__seg") ? tab.nextElementSibling : null;
+      let before = 0;
+      if (segment && alignment === "ctr") before = segment.offsetWidth / 2;
+      if (segment && alignment === "r") before = segment.offsetWidth;
+      if (segment && alignment === "dec") {
+        const point = segment.querySelector(".text__point");
+        const lead = segment.querySelector(".text__lead");
+        before = point ? (lead?.offsetWidth ?? 0) + point.offsetWidth / 2 : segment.offsetWidth;
+      }
+      // Widened, then corrected by where the text after it actually lands, as
+      // some browsers still give a tab of no size a space's width.
+      const target = stop - before;
+      tab.style.paddingInlineStart = `${Math.max(target - at, 0)}px`;
+      if (!segment) continue;
+      const off = segment.offsetLeft - paragraph.offsetLeft - Math.max(target, at);
+      if (Math.abs(off) > 0.25) tab.style.paddingInlineStart = `${Math.max(target - at - off, 0)}px`;
+    }
+  }
+}
+
 function isEmptyText(body) {
   return body.paras.every((paragraph) => paragraph.runs.every((run) => !run.t || run.br));
 }
@@ -679,6 +1104,16 @@ export function fitText(box) {
   const body = box.textBody;
   const flow = box.querySelector(".text__flow");
   if (!body || !flow || body.fit !== "shrink" || (body.scale ?? 1) !== 1) return;
+  if (body.cols > 1 && !box.dataset.vertical) {
+    // Text in columns overflows only when the last column runs past the bottom.
+    if (layoutColumns(box)) return;
+    const drawer = new SlideDrawer(null);
+    for (let scale = 0.9; scale >= 0.3 - 0.001; scale -= 0.1) {
+      drawer.fillFlow(flow, body, { scale, reduce: 0.1 });
+      if (layoutColumns(box)) return;
+    }
+    return;
+  }
   // Lines stack down the box, or across it when they run vertically.
   const across = Boolean(box.dataset.vertical);
   const room = across ? box.clientWidth : box.clientHeight;
@@ -689,6 +1124,50 @@ export function fitText(box) {
     drawer.fillFlow(flow, body, { scale, reduce: 0.1 });
     if (used() <= room + 1) return;
   }
+}
+
+/**
+ * Lays text set in columns out as PowerPoint does: each column filled to the
+ * bottom of the box before the next, and text that fits in the first column
+ * only as tall as it is, so the box's anchor places it. Text running past the
+ * last column is balanced across the columns, running on below the box, and
+ * so is text in a shape that grows to fit it. Says whether the text fits.
+ */
+export function layoutColumns(box) {
+  const body = box.textBody;
+  const flow = box.querySelector(".text__flow");
+  if (!body || !flow || !(body.cols > 1)) return true;
+  Object.assign(flow.style, { columnCount: String(body.cols), columnFill: "", blockSize: "", inlineSize: "" });
+  const room = box.clientHeight;
+  if (body.fit === "grow" || box.dataset.vertical || !room) return true;
+  // How tall the text stands in one column.
+  const gap = body.colGap ?? 0;
+  const width = (flow.clientWidth - gap * (body.cols - 1)) / body.cols;
+  Object.assign(flow.style, { columnCount: "1", inlineSize: `${Math.max(width, 1)}px` });
+  const single = flow.scrollHeight;
+  Object.assign(flow.style, { columnCount: String(body.cols), inlineSize: "", columnFill: "auto" });
+  if (single <= room + 1) {
+    flow.style.blockSize = `${single + 1}px`;
+    return true;
+  }
+  // Text past the last column is set in more columns beside the box, where the last paragraph ends.
+  const fitsAt = (height) => {
+    flow.style.blockSize = `${height}px`;
+    const bounds = flow.getBoundingClientRect();
+    const end = [...(flow.lastElementChild?.getClientRects() ?? [])];
+    return !end.some((rect) => rect.left >= bounds.right - 1 || rect.right <= bounds.left + 1);
+  };
+  if (fitsAt(room)) return true;
+  // Overflowing, the columns run on below the box, as short as they can be and hold it all.
+  let low = room;
+  let high = single + 1;
+  while (high - low > 1) {
+    const middle = (low + high) / 2;
+    if (fitsAt(middle)) high = middle;
+    else low = middle;
+  }
+  flow.style.blockSize = `${Math.ceil(high)}px`;
+  return false;
 }
 
 /** Draws each table cell's borders over the grid, once its rows have their heights. */

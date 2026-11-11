@@ -628,6 +628,12 @@ body {
   pointer-events: none;
 }
 
+.shape__preset-shadow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 .text {
   position: absolute;
   display: flex;
@@ -673,6 +679,15 @@ body {
   white-space: pre-wrap;
 }
 
+/* Columns running right to left, the text in them still running as it would. */
+.text__flow[data-rtl-columns] {
+  direction: rtl;
+}
+
+.text__flow[data-rtl-columns] > .text__p {
+  direction: ltr;
+}
+
 .text[data-nowrap] .text__flow {
   white-space: pre;
 }
@@ -687,6 +702,11 @@ body {
 
 .text__p {
   margin: 0;
+}
+
+/* A tab whose width is laid out to reach its stop. */
+.text__tab {
+  tab-size: 0;
 }
 
 .text__bullet {

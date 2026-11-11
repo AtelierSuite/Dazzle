@@ -52,6 +52,8 @@ public struct Theme: Equatable, Sendable {
     /// `bgFillStyleLst`, used by background references 1001…1003.
     public var backgroundFillStyles: [Fill]
     public var lineStyles: [LineStyle]
+    /// `effectStyleLst`, used by shape style references 1…3.
+    public var effectStyles: [EffectStyle] = []
 
     /// A theme font reference such as `+mj-lt` made a typeface name, or
     /// any other name as it is.
