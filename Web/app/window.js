@@ -8,7 +8,8 @@ import * as files from "./files.js";
 import * as storage from "./storage.js";
 import { attachMenuBar, attachToolbarOverflow, openMenu } from "../design/menus.js";
 import { dismissSheet } from "../design/sheets.js";
-import { MediaStore, SlideDrawer, applyFrame } from "./slide.js";
+import { MediaStore, SlideDrawer, applyFrame, substituteFor } from "./slide.js";
+import { isInstalled } from "./fonts.js";
 import { SlideCanvas } from "./canvas.js";
 import { SlideNavigator } from "./navigator.js";
 import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js";
@@ -474,7 +475,11 @@ export class PresentationWindow {
         label: t(appStorePlatform === "mac" ? "Web.Help.DownloadMacApp" : "Web.Help.DownloadiOSApp"),
         run: () => window.open(`${APP_STORE_URL}?platform=${appStorePlatform === "mac" ? "mac" : "iphone"}`, "_blank", "noopener"),
       },
-      unsupported: { label: t("Toolbar.UnsupportedFeatures"), enabled: has && Boolean(info?.unsupported?.length || info?.omissions?.length), run: () => this.showNotices({ always: true }) },
+      unsupported: {
+        label: t("Toolbar.UnsupportedFeatures"),
+        enabled: has && Boolean(info?.unsupported?.length || info?.omissions?.length || this.fontSubstitutions().length),
+        run: () => this.showNotices({ always: true }),
+      },
     };
   }
 
@@ -1330,6 +1335,27 @@ export class PresentationWindow {
     if (info.omissions?.length) {
       this.showMessage(`${t("Notice.Omitted.Intro")} ${info.omissions.join(" ")}`, "warning", { sticky: always });
     }
+    const substitutions = this.fontSubstitutions();
+    if (substitutions.length) {
+      this.showMessage(`${t("Notice.Fonts.Intro")} ${substitutions.join(", ")}`, "info", { sticky: always });
+    }
+  }
+
+  /** The presentation's typefaces this device doesn't have, each as "Requested → what it's set in". */
+  fontSubstitutions() {
+    const typefaces = this.engine.info?.typefaces ?? [];
+    if (!typefaces.length) return [];
+    // Typefaces are checked once each, as a check measures text.
+    this.installedTypefaces ??= new Map();
+    const has = (family) => {
+      if (!this.installedTypefaces.has(family)) this.installedTypefaces.set(family, isInstalled(family));
+      return this.installedTypefaces.get(family);
+    };
+    const generic = { sans: "Notice.Fonts.Generic.Sans", serif: "Notice.Fonts.Generic.Serif", monospace: "Notice.Fonts.Generic.Monospace" }; // design-lint-allow (document content)
+    return typefaces.filter((family) => !has(family)).map((family) => {
+      const substitute = substituteFor(family, has);
+      return `${family} → ${substitute.family ?? t(generic[substitute.generic])}`;
+    });
   }
 
   /** A window-modal sheet from `html`, added to the window, closing on Escape or its Cancel button. */

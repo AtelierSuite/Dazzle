@@ -921,6 +921,12 @@ final class Bridge {
             "loop": presentation.loopsSlideshow,
             "fonts": fonts.sorted(),
             "hasEmbeddedFonts": !presentation.resources.embeddedFonts.isEmpty,
+            // The typefaces the slides ask for that the presentation doesn't carry,
+            // for the page to say which this device draws in others.
+            "typefaces": {
+                let carried = Set(presentation.resources.embeddedFonts.typefaces.map { $0.lowercased() })
+                return presentation.typefaces.filter { !carried.contains($0.lowercased()) }.sorted()
+            }(),
             "unsupported": UnsupportedFeatureReport.Feature.allCases.filter(report.features.contains).map(\.message),
             "omissions": UnsupportedFeatureReport.Omission.allCases.filter(report.omissions.contains).map(\.message),
             "keynote": presentation.keynoteSource != nil,

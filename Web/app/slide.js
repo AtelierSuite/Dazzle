@@ -13,18 +13,34 @@ const nextId = (prefix) => `${prefix}${++uniqueId}`;
 /** Text turned a quarter, letters and all, by how far. Other vertical text is set in vertical lines (app.css). */
 const TURNED_TEXT = { vert: 90, vert270: -90 };
 
-/** Office faces that devices other than Windows rarely have, and what to set them in instead. */
+/**
+ * Office and Windows faces that other devices rarely have, and what to set them in instead, best first: the
+ * engine's FontResolver choices on Apple platforms (metric-compatible ones such as Carlito for Calibri first),
+ * then their counterparts elsewhere. Whole names for the ones whose longer names are other faces.
+ */
 const SUBSTITUTES = [
   [/^calibri/, ["Carlito"]],
   [/^cambria/, ["Caladea", "Georgia"]],
   [/^(aptos|segoe|arial nova|tahoma|candara|corbel|franklin gothic)/, []],
   [/^century gothic/, ["Avenir Next", "Futura", "URW Gothic"]],
   [/^gill sans/, ["Gill Sans", "Gill Sans MT"]],
+  [/^constantia/, ["Georgia"]],
   [/^(book antiqua|palatino)/, ["Palatino", "Palatino Linotype", "TeX Gyre Pagella"]],
-  [/^garamond/, ["Garamond", "EB Garamond", "Baskerville"]],
+  [/^garamond/, ["Baskerville", "Garamond", "EB Garamond"]],
   [/^(consolas|lucida console)/, ["Menlo", "Monaco", "Consolas"]],
-  [/^(meiryo|yu gothic|ms gothic|ms pgothic|游ゴシック|メイリオ|ｍｓ ｐゴシック)/, ["Hiragino Sans", "Yu Gothic", "Meiryo", "Noto Sans JP", "Noto Sans CJK JP"]],
-  [/^(ms mincho|ms pmincho|yu mincho|游明朝|ｍｓ 明朝)/, ["Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif CJK JP"]],
+  [/^courier/, ["Courier New", "Courier"]],
+  [/^(meiryo|yu gothic|ms gothic|ms pgothic|ms ui gothic|游ゴシック|メイリオ|ｍｓ ゴシック|ｍｓ ｐゴシック)/, ["Hiragino Sans", "Yu Gothic", "Meiryo", "Noto Sans JP", "Noto Sans CJK JP"]],
+  [/^(ms mincho|ms pmincho|yu mincho|游明朝|ｍｓ 明朝|ｍｓ ｐ明朝)/, ["Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif CJK JP"]],
+  [/^microsoft yahei/, ["PingFang SC", "Noto Sans SC", "Noto Sans CJK SC"]],
+  [/^microsoft jhenghei/, ["PingFang TC", "Noto Sans TC", "Noto Sans CJK TC"]],
+  [/^malgun gothic/, ["Apple SD Gothic Neo", "Noto Sans KR", "Noto Sans CJK KR"]],
+  [/^arial$/, ["Helvetica", "Liberation Sans", "Arimo"]],
+  [/^helvetica$/, ["Arial", "Liberation Sans", "Arimo"]],
+  [/^(liberation sans|arimo)$/, ["Arial", "Helvetica"]],
+  [/^(liberation serif|tinos)$/, ["Times New Roman", "Times"]],
+  [/^(liberation mono|cousine)$/, ["Courier New", "Courier"]],
+  [/^carlito$/, ["Calibri"]],
+  [/^caladea$/, ["Cambria", "Georgia"]],
 ];
 
 const SERIF_WORDS = ["serif", "times", "georgia", "garamond", "baskerville", "caslon", "bodoni", "didot", "minion", "playfair",
@@ -43,6 +59,18 @@ function generic(family) {
   if (begins(["sans", "grotesk", "grotesque", "gothic"])) return "system-ui, sans-serif";
   if (begins(SERIF_WORDS) || words.some((word) => word.endsWith("serif"))) return "serif";
   return "system-ui, sans-serif";
+}
+
+/**
+ * What a device without `family` sets it in: `{ family }`, the first substitute `has` says it has, or
+ * `{ generic }`, "sans", "serif" or "monospace", for the closest of its own. design-lint-allow (document content)
+ */
+export function substituteFor(family, has) {
+  const substitute = SUBSTITUTES.find(([pattern]) => pattern.test(family.toLowerCase()));
+  const found = substitute?.[1].find((other) => has(other));
+  if (found) return { family: found };
+  const kind = generic(family);
+  return { generic: kind.includes("monospace") ? "monospace" : kind === "serif" ? "serif" : "sans" }; // design-lint-allow (document content)
 }
 
 const quote = (family) => `"${String(family).replace(/["\\]/g, "\\$&")}"`;

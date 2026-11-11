@@ -1,4 +1,3 @@
-#if canImport(CoreText)
 import Foundation
 
 /// A typeface a presentation's text asks for that this device draws in another.
@@ -72,6 +71,7 @@ extension Presentation {
         return names
     }
 
+    #if canImport(CoreText)
     /// The typefaces this presentation uses that are neither carried in it
     /// nor on this device, with what each is drawn in instead, by name.
     public var fontSubstitutions: [FontSubstitution] {
@@ -81,5 +81,5 @@ extension Presentation {
         }
         .sorted { $0.requested.localizedStandardCompare($1.requested) == .orderedAscending }
     }
+    #endif
 }
-#endif
