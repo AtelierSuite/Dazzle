@@ -70,7 +70,7 @@ window.addEventListener("message", async (event) => {
       break;
     case "media":
       if (message.action === "stop") for (const player of stage.querySelectorAll(".slideshow__media")) player.remove();
-      else toggleMedia(current, message.id, media);
+      else toggleMedia(current, message.id, media, message.action);
       break;
     case "fonts": {
       const bytes = new Uint8Array(message.data);

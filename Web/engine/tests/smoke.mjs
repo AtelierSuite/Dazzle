@@ -806,6 +806,96 @@ test("draws Keynote tables saved before 2019, and a stand-in for one it can't re
   }
 });
 
+// Protocol buffer fields, for building a Keynote document object by object.
+const proto = {
+  varint(value) {
+    const bytes = [];
+    let rest = BigInt(value);
+    do {
+      let byte = Number(rest & 0x7fn);
+      rest >>= 7n;
+      if (rest) byte |= 0x80;
+      bytes.push(byte);
+    } while (rest);
+    return bytes;
+  },
+  uint: (field, value) => [...proto.varint(field << 3), ...proto.varint(value)],
+  float(field, value) {
+    const buffer = new DataView(new ArrayBuffer(4));
+    buffer.setFloat32(0, value, true);
+    return [...proto.varint((field << 3) | 5), ...new Uint8Array(buffer.buffer)];
+  },
+  bytes: (field, value) => [...proto.varint((field << 3) | 2), ...proto.varint(value.length), ...value],
+  string: (field, value) => proto.bytes(field, [...new TextEncoder().encode(value)]),
+  message: (field, ...parts) => proto.bytes(field, parts.flat()),
+  reference: (field, id) => proto.message(field, proto.uint(1, id)),
+  frame: (x, y, w, h) => proto.message(1, proto.message(1, proto.message(1, proto.float(1, x), proto.float(2, y)),
+    proto.message(2, proto.float(1, w), proto.float(2, h)), proto.uint(3, 3))),
+};
+
+/** Objects as an `.iwa`: each behind its ArchiveInfo, compressed as Snappy literals. */
+function iwaOfBytes(objects) {
+  const stream = [];
+  for (const [id, type, body] of objects) {
+    const info = [...proto.uint(1, id), ...proto.message(2, proto.uint(1, type), proto.uint(3, body.length))];
+    stream.push(...proto.varint(info.length), ...info, ...body);
+  }
+  const block = proto.varint(stream.length);
+  for (let offset = 0; offset < stream.length; offset += 65536) {
+    const length = Math.min(65536, stream.length - offset);
+    block.push(61 << 2, (length - 1) & 0xff, (length - 1) >> 8, ...stream.slice(offset, offset + length));
+  }
+  return new Uint8Array([0, block.length & 0xff, (block.length >> 8) & 0xff, block.length >> 16, ...block]);
+}
+
+/** A Keynote deck of one slide: a movie that starts by itself and a sound a Start Movie build starts on a tap. */
+function keynoteWithMovies() {
+  const objects = [
+    [1, 1, proto.reference(2, 2)],
+    [2, 2, [...proto.message(3, proto.reference(2, 10)), ...proto.message(4, proto.float(1, 1024), proto.float(2, 768))]],
+    [10, 4, proto.reference(2, 11)],
+    [11, 5, [...proto.reference(42, 13), ...proto.reference(42, 14), ...proto.reference(43, 80)]],
+    [13, 3007, [...proto.frame(100, 100, 320, 180), ...proto.reference(14, 901), ...proto.reference(15, 900), ...proto.uint(24, 1)]],
+    [14, 3007, [...proto.frame(500, 100, 100, 100), ...proto.reference(14, 902), ...proto.reference(16, 900), ...proto.uint(9, 1)]],
+    [80, 153, proto.reference(1, 81)],
+    [81, 8, [...proto.reference(1, 14), ...proto.string(2, "All at Once"),
+      ...proto.message(4, proto.message(18, proto.string(1, "In"), proto.string(2, "apple:movie-start")))]],
+  ];
+  const files = [[900, "poster.png"], [901, "clip.mov"], [902, "sound.m4a"]];
+  const metadata = files.flatMap(([id, name]) => proto.message(4, proto.uint(1, id), proto.string(3, name), proto.string(4, name)));
+  return zip(new Map([
+    ["Index/Document.iwa", iwaOfBytes(objects)],
+    ["Index/Metadata.iwa", iwaOfBytes([[50, 11006, metadata]])],
+    ["Data/poster.png", PIXEL],
+    ["Data/clip.mov", new TextEncoder().encode("movie")],
+    ["Data/sound.m4a", new TextEncoder().encode("sound")],
+  ]));
+}
+
+test("plays a Keynote movie as the slide appears and its sound on a tap, and saves them into PowerPoint", () => {
+  const opened = call("open", { name: "Movies.key" }, keynoteWithMovies());
+  const slide = opened.state.slides[0].id;
+  const scene = call("scene", { slide }).result;
+  const [movie, sound] = scene.shapes;
+  assert.equal(movie.media?.kind, "video");
+  assert.equal(movie.media.auto, true, "the movie starts by itself");
+  assert.equal(sound.media?.kind, "audio");
+  assert.equal(sound.media.auto, false, "the sound waits for its build");
+  assert.ok(movie.src, "the movie shows its poster frame");
+  const clip = call("media", { path: movie.media.path });
+  assert.equal(clip.result.mime, "video/quicktime");
+  assert.equal(new TextDecoder().decode(clip.payload), "movie");
+  const timeline = call("timeline", { slide }).result;
+  assert.equal(timeline.initial, 1, "the movie's play command runs with the slide");
+  assert.deepEqual(timeline.media, [[movie.id], [sound.id]]);
+  assert.equal(opened.result.omissions.length, 0, "nothing is left behind");
+
+  const saved = unzip(call("save", { format: "pptx", keep: true }).payload);
+  const media = [...saved.keys()].filter((name) => name.startsWith("ppt/media/media"));
+  assert.deepEqual(media.map((name) => new TextDecoder().decode(saved.get(name))).sort(), ["movie", "sound"]);
+  assert.match(new TextDecoder().decode(saved.get("ppt/slides/slide1.xml")), /p14:media/);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));

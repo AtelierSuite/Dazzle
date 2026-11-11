@@ -671,7 +671,7 @@ enum KeynoteFixture {
 
     /// Objects as an `.iwa`: each behind its `TSP.ArchiveInfo`, the lot
     /// compressed as Snappy literals.
-    private static func iwa(_ objects: [(id: UInt64, type: UInt32, message: ProtoWriter)]) -> Data {
+    static func iwa(_ objects: [(id: UInt64, type: UInt32, message: ProtoWriter)]) -> Data {
         var stream: [UInt8] = []
         for object in objects {
             var info = ProtoWriter()
