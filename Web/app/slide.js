@@ -230,7 +230,7 @@ export class SlideDrawer {
       this.paint(fill, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
       fill.classList.add("shape__fill");
     }
-    if (node.line && (node.strokePath ?? node.path)) this.stroke(node.strokePath ?? node.path, node.line, geometry);
+    if (node.line && (node.strokePath ?? node.path)) this.stroke(node.strokePath ?? node.path, node.line, geometry, context, node);
     if (node.text && !(node.prompt && isEmptyText(node.text))) {
       parent.append(this.text(node.text, node));
     } else if (node.prompt && context.editing) {
@@ -242,27 +242,34 @@ export class SlideDrawer {
     }
   }
 
-  stroke(d, line, parent) {
+  /** Strokes an outline: in its colour, or with a gradient or picture laid across the line's bounds. */
+  stroke(d, line, parent, context, node) {
     const path = svg("path", {
       d, fill: "none", stroke: line.c, "stroke-width": line.w, "stroke-linejoin": "round",
       "stroke-dasharray": line.dash?.join(" "), class: "shape__line",
     }, parent);
+    const box = line.box ?? { x: 0, y: 0, w: node.w, h: node.h };
+    if (line.paint) this.paint(path, line.paint, box, context, parent, "stroke");
     for (const head of line.heads ?? []) {
-      svg("path", {
+      const element = svg("path", {
         d: head.d, fill: head.filled ? line.c : "none", stroke: line.c, "stroke-width": line.w, "stroke-linejoin": "round",
       }, parent);
+      if (line.paint) {
+        this.paint(element, line.paint, box, context, parent, "stroke");
+        if (head.filled) this.paint(element, line.paint, box, context, parent, "fill");
+      }
     }
     return path;
   }
 
-  /** Fills `element` with a scene's paint: a colour, a gradient or a picture. */
-  paint(element, paint, box, context, owner) {
+  /** Fills `element` with a scene's paint, or strokes it when `attribute` is "stroke": a colour, a gradient or a picture. */
+  paint(element, paint, box, context, owner, attribute = "fill") {
     if (!paint) {
-      element.setAttribute("fill", "none");
+      element.setAttribute(attribute, "none");
       return;
     }
     if (paint.t === "solid") {
-      element.setAttribute("fill", paint.c);
+      element.setAttribute(attribute, paint.c);
       return;
     }
     if (paint.t === "linear" || paint.t === "radial") {
@@ -285,7 +292,7 @@ export class SlideDrawer {
         }, context.defs);
       }
       for (const [offset, color] of paint.stops) svg("stop", { offset, "stop-color": color }, gradient);
-      element.setAttribute("fill", `url(#${id})`);
+      element.setAttribute(attribute, `url(#${id})`);
       return;
     }
     if (paint.t === "image") {
@@ -304,8 +311,8 @@ export class SlideDrawer {
         image.setAttribute("height", height);
       });
       this.effects(image, paint.fx, context);
-      element.setAttribute("fill", `url(#${id})`);
-      if (paint.fx?.opacity !== undefined) element.setAttribute("fill-opacity", paint.fx.opacity);
+      element.setAttribute(attribute, `url(#${id})`);
+      if (paint.fx?.opacity !== undefined) element.setAttribute(`${attribute}-opacity`, paint.fx.opacity);
     }
   }
 
@@ -365,7 +372,7 @@ export class SlideDrawer {
     }, group);
     this.setImage(image, node.src);
     this.effects(image, node.fx, context);
-    if (node.line) this.stroke(node.path, node.line, geometry);
+    if (node.line) this.stroke(node.path, node.line, geometry, context, node);
     if (node.media) {
       parent.dataset.media = JSON.stringify(node.media);
       if (context.editing) {

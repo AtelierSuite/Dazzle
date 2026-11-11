@@ -221,10 +221,29 @@ struct WebRenderer {
 
     /// An outline's look, with its arrowheads drawn at the ends of `path`.
     private func stroke(_ line: LineStyle, path: [CGPoint], placeholder: RGBAColor?, style: SlideStyleContext) -> [String: Any]? {
-        guard case .solid(let color) = line.fill ?? .none else { return nil }
+        let fill = line.fill ?? .none
+        if fill == .none || fill == .group { return nil }
         let width = max(EMU.points(line.width ?? 9_525), 0.25)
-        let resolved = css(style.color(color, placeholder: placeholder))
+        // A gradient or picture is laid over the line as over a filled area,
+        // across the line's bounds; `c` is its colour where only one will do.
+        let resolved: String
+        switch fill {
+        case .solid(let color):
+            resolved = css(style.color(color, placeholder: placeholder))
+        case .gradient(let gradient):
+            resolved = css(style.color(gradient.stops.first?.color ?? .scheme("tx1"), placeholder: placeholder))
+        default:
+            resolved = css(style.color(.scheme("tx1"), placeholder: placeholder))
+        }
         var json: [String: Any] = ["c": resolved, "w": n(CGFloat(width))]
+        if case .solid = fill {} else if let paint = paint(fill, placeholder: placeholder, style: style) {
+            json["paint"] = paint
+            if let first = path.first {
+                var bounds = CGRect(origin: first, size: .zero)
+                for point in path.dropFirst() { bounds = bounds.union(CGRect(origin: point, size: .zero)) }
+                json["box"] = rect(bounds.insetBy(dx: -CGFloat(width) / 2, dy: -CGFloat(width) / 2))
+            }
+        }
         let dashes: [Double]? = switch line.dash {
         case "dash", "sysDash": [4, 3]
         case "lgDash": [8, 3]
