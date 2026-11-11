@@ -271,9 +271,11 @@ public enum PPTXReader {
         var slide = Slide(layoutPath: layoutPath, relationships: relationships, shapes: parser.shapes(in: tree))
         slide.background = Background(element: root.firstChild(named: "cSld")?.firstChild(named: "bg"), image: parser.target(of:))
         slide.isHidden = root.attribute("show") == "0"
-        if let transition = transitions(in: root).first {
-            // An effect inside it is a transition Dazzle shows as a cut.
-            if !transition.children.isEmpty { features.insert(.transitions) }
+        let versions = transitions(in: root)
+        if let transition = versions.first {
+            slide.transition = SlideTransition(versions: versions)
+            // An effect Dazzle has no drawing for is played as a fade.
+            if slide.transition?.approximates != nil { features.insert(.transitions) }
             slide.autoAdvanceAfter = transition.attribute("advTm").flatMap(Double.init).map { $0 / 1_000 }
             slide.advancesOnClick = transition.attribute("advClick") != "0"
         }

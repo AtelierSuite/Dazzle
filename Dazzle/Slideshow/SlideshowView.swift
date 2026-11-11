@@ -305,8 +305,13 @@ struct ShowingSlideView: View {
     var slide: Slide
 
     var body: some View {
-        TimelineView(.animation(paused: !session.isAnimating)) { timeline in
-            SlideView(presentation: presentation, slide: slide, options: options(at: timeline.date))
+        if let showing = session.transition {
+            TransitionPlayer(showing: showing, presentation: presentation, incoming: slide)
+                .id(showing.id)
+        } else {
+            TimelineView(.animation(paused: !session.isAnimating)) { timeline in
+                SlideView(presentation: presentation, slide: slide, options: options(at: timeline.date))
+            }
         }
     }
 
@@ -314,6 +319,56 @@ struct ShowingSlideView: View {
         var options = SlideRenderer.Options.presentation
         options.animation = session.animationFrame(at: date)
         return options
+    }
+}
+
+/// A slide's transition playing: the slide left and the slide arriving,
+/// drawn as pictures for each moment of the effect.
+private struct TransitionPlayer: View {
+    var showing: PresentationSession.ShowingTransition
+    var presentation: Presentation
+    var incoming: Slide
+    @State private var pictures: (width: Int, outgoing: CGImage?, incoming: CGImage?)?
+    @Environment(\.displayScale) private var displayScale
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas(rendersAsynchronously: false) { context, size in
+                let slideSize = presentation.slideSize.points
+                guard slideSize.width > 0, slideSize.height > 0 else { return }
+                let frame = showing.transition.frame(progress: showing.progress(at: timeline.date), size: slideSize)
+                context.withCGContext { cgContext in
+                    cgContext.scaleBy(x: size.width / slideSize.width, y: size.height / slideSize.height)
+                    if let pictures {
+                        frame.draw(in: cgContext, size: slideSize, outgoing: pictures.outgoing, incoming: pictures.incoming)
+                    } else {
+                        frame.draw(in: cgContext, size: slideSize) { content, cgContext in
+                            renderer(for: content).draw(in: cgContext, size: slideSize)
+                        }
+                    }
+                }
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { draw(width: $0) }
+        .accessibilityElement()
+        .accessibilityLabel(incoming.title ?? String(localized: "Slide.Untitled"))
+    }
+
+    private func renderer(for content: TransitionFrame.Content) -> SlideRenderer {
+        var options = SlideRenderer.Options.presentation
+        options.animation = content == .outgoing ? showing.outgoingFrame : showing.incomingFrame
+        return SlideRenderer(presentation: presentation, slide: content == .outgoing ? showing.outgoing : incoming, options: options)
+    }
+
+    /// Pictures of both slides at the size they show, drawn once.
+    private func draw(width: CGFloat) {
+        let pixels = Int((width * displayScale).rounded())
+        guard pixels > 0, pictures?.width != pixels else { return }
+        func picture(_ content: TransitionFrame.Content) -> CGImage? {
+            let renderer = renderer(for: content)
+            return SlideExporter.cgImage(of: renderer.slide, in: presentation, width: pixels, options: renderer.options)
+        }
+        pictures = (pixels, picture(.outgoing), picture(.incoming))
     }
 }
 

@@ -6,6 +6,7 @@ import "../design/base.js";
 import { loadStrings, t } from "./i18n.js";
 import { SlideDrawer, MediaStore, applyFrame } from "./slide.js";
 import { toggleMedia } from "./slideshow.js";
+import { TransitionPlayer } from "./transition.js";
 
 const stage = document.querySelector(".audience__stage");
 const fill = document.querySelector(".audience__fill");
@@ -13,6 +14,10 @@ const fill = document.querySelector(".audience__fill");
 const media = new MediaStore(null);
 const drawer = new SlideDrawer(media);
 let current = null;
+const transitions = new TransitionPlayer(stage, (slide) => {
+  current = slide;
+  fit();
+});
 
 const owner = window.opener;
 const tell = (message) => {
@@ -53,17 +58,24 @@ window.addEventListener("message", async (event) => {
   switch (message.type) {
     case "show": {
       for (const [path, blob] of Object.entries(message.media ?? {})) media.adopt(path, blob);
+      transitions.finish();
+      const previous = current;
       const slide = drawer.draw(message.scene, { interactive: true });
       stage.replaceChildren(slide);
       current = slide;
       fit();
       drawer.fit(slide);
       applyFrame(slide, message.frame);
+      // The slide arrives with the transition the presenter's window worked out.
+      if (message.transition && previous) transitions.play(message.transition, previous, slide);
       document.title = t("Slideshow.Position", message.number, message.count);
       break;
     }
     case "frame":
       if (current) applyFrame(current, message.frame);
+      break;
+    case "transitionEnd":
+      transitions.finish();
       break;
     case "blank":
       document.body.classList.toggle("is-blanked", Boolean(message.on));

@@ -291,9 +291,10 @@ struct KeynoteConversionTests {
         #expect(KeynoteBuilds.nearestEffect(type: nil) == (.entrance, .fade))
     }
 
-    @Test("Transitions are kept as PowerPoint's nearest, and automatic ones move on by themselves")
+    @Test("Transitions are kept as PowerPoint's nearest and played, and automatic ones move on by themselves")
     func transitions() {
-        #expect(presentation.unsupportedFeatures.features == [.transitions])
+        #expect(presentation.unsupportedFeatures.features.isEmpty)
+        #expect(presentation.slides[0].transition?.isAnimated == true)
         #expect(presentation.slides[0].autoAdvanceAfter == 2)
         #expect(!presentation.slides[0].advancesOnClick)
         #expect(presentation.slides[1].autoAdvanceAfter == nil)

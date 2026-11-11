@@ -316,6 +316,15 @@ final class EditorState {
         updateTransitions(toAll: toAll, in: &presentation) { $0.advancesOnClick = isOn }
     }
 
+    /// How the show moves onto the slide; `nil` for straight on. Applied to
+    /// every slide with `toAll`.
+    func setTransition(_ transition: SlideTransition?, toAll: Bool = false, in presentation: inout Presentation) {
+        updateTransitions(toAll: toAll, in: &presentation) { slide in
+            slide.transition = transition
+            slide.isTransitionEffectModified = true
+        }
+    }
+
     private func updateTransitions(toAll: Bool, in presentation: inout Presentation, _ change: (inout Slide) -> Void) {
         let indices = toAll ? Array(presentation.slides.indices) : [selectedIndex(in: presentation)]
         for index in indices where presentation.slides.indices.contains(index) {
