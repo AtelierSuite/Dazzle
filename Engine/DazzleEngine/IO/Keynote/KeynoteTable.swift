@@ -150,6 +150,29 @@ public struct KeynoteTable {
         return (xml, size)
     }
 
+    /// The size, in points, a table model's visible rows and columns add up
+    /// to, for a table the rest of which can't be read.
+    public func size(model: KeynoteArchive.Object) -> CGSize? {
+        let message = model.message
+        let rowCount = message.int(6) ?? 0
+        let columnCount = message.int(7) ?? 0
+        guard rowCount > 0, columnCount > 0, rowCount <= Self.maximumCount, columnCount <= Self.maximumCount else { return nil }
+        let store = message.message(4)
+        let rows = headers(store?.message(1)?.references(2).compactMap { archive[$0]?.message } ?? [], count: rowCount,
+                           default: message.float(16) ?? 20)
+        let columns = headers(archive[store?.reference(2)].map { [$0.message] } ?? [], count: columnCount,
+                              default: message.float(17) ?? 100)
+        let size = CGSize(
+            width: columns.filter { !$0.hidden }.reduce(0) { $0 + $1.size },
+            height: rows.filter { !$0.hidden }.reduce(0) { $0 + $1.size }
+        )
+        return size.width > 0 && size.height > 0 ? size : nil
+    }
+
+    /// The most rows or columns a table is read with; Numbers allows a
+    /// million rows, which no slide could show.
+    static let maximumCount = 65_536
+
     // MARK: - Data store
 
     /// Row or column sizes, in points, and whether each is hidden.

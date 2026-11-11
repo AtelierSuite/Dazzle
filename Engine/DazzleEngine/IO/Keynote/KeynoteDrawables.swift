@@ -18,6 +18,8 @@ public struct KeynoteSlideWriter {
 
     public private(set) var relationships: [Relationship]
     public private(set) var skipped: Set<UInt32> = []
+    /// Whether a table Dazzle can't read was written as a stand-in.
+    public private(set) var hasTableStandIns = false
     private var nextShapeID = 2
     /// Measured frames for text that grows to fit, by shape id.
     private let fittedFrames: [Int: EMURect]
@@ -121,10 +123,14 @@ public struct KeynoteSlideWriter {
                 return nil
             }()
         case KeynoteType.table:
-            return table(object.message) ?? {
-                skipped.insert(object.type)
-                return nil
-            }()
+            if let table = table(object.message) { return table }
+            // A table Dazzle can't read keeps its place, shown as a stand-in.
+            if let standIn = tableStandIn(object.message) {
+                hasTableStandIns = true
+                return standIn
+            }
+            skipped.insert(object.type)
+            return nil
         default:
             skipped.insert(object.type)
             return nil
@@ -286,6 +292,23 @@ public struct KeynoteSlideWriter {
             <p:graphicFrame><p:nvGraphicFramePr>\(nonVisual)<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/>\
             </p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>\
             \(frame.xml().replacingOccurrences(of: "a:xfrm", with: "p:xfrm"))\(table.xml)</p:graphicFrame>
+            """
+    }
+
+    /// A table frame with no table in it, which reads as a table stand-in.
+    /// It takes the size the table's rows and columns would give it, or the
+    /// drawable's own when they say nothing.
+    private mutating func tableStandIn(_ info: ProtoMessage) -> String? {
+        guard var frame = Frame(info.message(1)?.message(1)) else { return nil }
+        let table = KeynoteTable(archive: archive, styles: styles, text: text, locale: locale)
+        if let size = archive[info.reference(2)].flatMap({ table.size(model: $0) }) { frame.size = size }
+        guard frame.size.width > 0, frame.size.height > 0 else { return nil }
+        let nonVisual = nonVisual(info.message(1), name: "Table")
+        return """
+            <p:graphicFrame><p:nvGraphicFramePr>\(nonVisual)<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/>\
+            </p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>\
+            \(frame.xml().replacingOccurrences(of: "a:xfrm", with: "p:xfrm"))<a:graphic>\
+            <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"/></a:graphic></p:graphicFrame>
             """
     }
 
