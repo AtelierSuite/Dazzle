@@ -140,4 +140,23 @@ struct ShrinkToFitTests {
         let refit = try #require(try fit(said))
         #expect(refit.fontScale < 0.625)
     }
+
+    @Test("Text in a table never shrinks: its row grows instead")
+    func tables() throws {
+        let frame = try #require(shapes("""
+            <p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="3" name="Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+            <p:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="370332"/></p:xfrm>
+            <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr/>
+            <a:tblGrid><a:gridCol w="914400"/></a:tblGrid><a:tr h="370332"><a:tc><a:txBody>\
+            <a:bodyPr><a:normAutofit fontScale="40000"/></a:bodyPr><a:p><a:r><a:rPr lang="en-US"/><a:t>Cell</a:t></a:r></a:p>\
+            </a:txBody><a:tcPr/></a:tc></a:tr></a:tbl></a:graphicData></a:graphic></p:graphicFrame>
+            """).first)
+        guard case .table(let table) = frame.kind else { Issue.record("not a table"); return }
+        let presentation = Presentation.blank
+        let layout = TableLayout(table: table, frame: frame.frame.points,
+                                 style: SlideStyleContext(presentation: presentation, slide: presentation.slides[0]),
+                                 presentation: presentation, slideNumber: 1)
+        let body = try #require(layout.body(for: table.rows[0].cells[0], row: 0))
+        #expect(body.properties.autofit == nil)
+    }
 }
