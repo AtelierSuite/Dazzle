@@ -399,13 +399,36 @@ public struct KeynoteTable {
             return formatter.string(from: date)
         case 6:
             return (cell.number ?? 0) != 0 ? "TRUE" : "FALSE"
-        case 2, 7, 10:
+        case 7:
+            return cell.number.map(duration) ?? ""
+        case 2, 10:
             guard let number = cell.number else { return "" }
             let format = cell.currencyFormat.flatMap { formats[$0] } ?? cell.numberFormat.flatMap { formats[$0] }
             return self.number(number, format: format)
         default:
             return cell.string.flatMap { strings[$0] } ?? ""
         }
+    }
+
+    /// A duration in seconds as Keynote shows it by default: each unit
+    /// from weeks to seconds that it has, such as "1h 30m".
+    private func duration(_ seconds: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = locale
+        formatter.maximumFractionDigits = 3
+        var remaining = abs(seconds)
+        var parts: [String] = []
+        for (unit, length) in [("w", 604_800.0), ("d", 86_400), ("h", 3_600), ("m", 60)] where remaining >= length {
+            let count = (remaining / length).rounded(.down)
+            remaining -= count * length
+            parts.append("\(Int(count))\(unit)")
+        }
+        // Rounding to the millisecond, so that what's left of a whole minute isn't shown.
+        remaining = (remaining * 1_000).rounded() / 1_000
+        if remaining > 0 || parts.isEmpty {
+            parts.append((formatter.string(from: NSNumber(value: remaining)) ?? String(remaining)) + "s")
+        }
+        return (seconds < 0 ? "-" : "") + parts.joined(separator: " ")
     }
 
     /// A number as its `TSK.FormatStructArchive` shows it. Decimal places
