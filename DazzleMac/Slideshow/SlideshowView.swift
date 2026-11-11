@@ -20,6 +20,8 @@ final class SlideshowView: NSView {
     private var observing: Observing?
     private var displayLink: CADisplayLink?
     private var playerViews: [SlideShape.ID: PlayerView] = [:]
+    /// Pictures of the two slides of the transition playing, at the size shown.
+    private var transitionPictures: (id: UUID, width: Int, outgoing: CGImage?, incoming: CGImage?)?
 
     init(session: PresentationSession, role: Role) {
         self.session = session
@@ -58,7 +60,7 @@ final class SlideshowView: NSView {
     // MARK: - Keeping current
 
     private func refresh() {
-        _ = (session.position, session.builds, session.isBlanked, session.currentSlide)
+        _ = (session.position, session.builds, session.isBlanked, session.currentSlide, session.transition?.id)
         if session.isAnimating {
             if displayLink == nil {
                 let link = displayLink(target: self, selector: #selector(frame(_:)))
@@ -120,14 +122,43 @@ final class SlideshowView: NSView {
             if role == .presenter, session.isBlanked { drawBlankedNotice() }
             return
         }
-        var options = SlideRenderer.Options.presentation
-        options.animation = session.animationFrame(at: Date())
         let rect = slideRect
+        if let showing = session.transition {
+            drawTransition(showing, to: slide, in: presentation, rect: rect, context: context)
+        } else {
+            var options = SlideRenderer.Options.presentation
+            options.animation = session.animationFrame(at: Date())
+            context.saveGState()
+            context.translateBy(x: rect.minX, y: rect.minY)
+            SlideRenderer(presentation: presentation, slide: slide, options: options).draw(in: context, size: rect.size)
+            context.restoreGState()
+        }
+        if role == .presenter { drawMediaButtons(on: slide, in: rect) }
+    }
+
+    /// A moment of the slide's transition, from pictures of both slides drawn once.
+    private func drawTransition(
+        _ showing: PresentationSession.ShowingTransition, to slide: Slide, in presentation: Presentation,
+        rect: CGRect, context: CGContext
+    ) {
+        let slideSize = presentation.slideSize.points
+        guard slideSize.width > 0, slideSize.height > 0, rect.width > 0 else { return }
+        let pixels = Int((rect.width * (window?.backingScaleFactor ?? 2)).rounded())
+        if transitionPictures?.id != showing.id || transitionPictures?.width != pixels {
+            func picture(_ slide: Slide, _ frame: AnimationFrame?) -> CGImage? {
+                var options = SlideRenderer.Options.presentation
+                options.animation = frame
+                return SlideExporter.cgImage(of: slide, in: presentation, width: pixels, options: options)
+            }
+            transitionPictures = (showing.id, pixels, picture(showing.outgoing, showing.outgoingFrame),
+                                  picture(slide, showing.incomingFrame))
+        }
+        let frame = showing.transition.frame(progress: showing.progress(at: Date()), size: slideSize)
         context.saveGState()
         context.translateBy(x: rect.minX, y: rect.minY)
-        SlideRenderer(presentation: presentation, slide: slide, options: options).draw(in: context, size: rect.size)
+        context.scaleBy(x: rect.width / slideSize.width, y: rect.height / slideSize.height)
+        frame.draw(in: context, size: slideSize, outgoing: transitionPictures?.outgoing, incoming: transitionPictures?.incoming)
         context.restoreGState()
-        if role == .presenter { drawMediaButtons(on: slide, in: rect) }
     }
 
     private func drawBlankedNotice() {

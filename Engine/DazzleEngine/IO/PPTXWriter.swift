@@ -214,6 +214,7 @@ private struct PackageBuilder {
     /// Sets how the slide advances on its transition, every version of it,
     /// making one if it has none.
     private func writeTransition(of slide: Slide, into root: XMLElement) {
+        if slide.isTransitionEffectModified { return replaceTransition(of: slide, in: root) }
         let advance = slide.autoAdvanceAfter.map { String(Int(($0 * 1_000).rounded())) }
         var transitions = PPTXReader.transitions(in: root)
         if transitions.isEmpty {
@@ -228,6 +229,25 @@ private struct PackageBuilder {
             transition.setAttribute("advTm", advance)
             transition.setAttribute("advClick", slide.advancesOnClick ? nil : "0")
         }
+    }
+
+    /// Writes the slide's transition anew, in place of every version it had.
+    private func replaceTransition(of slide: Slide, in root: XMLElement) {
+        var index: Int?
+        for transition in PPTXReader.transitions(in: root) {
+            // A version offered by an `mc:AlternateContent` goes with it.
+            var element = transition
+            while let parent = element.parent, parent !== root { element = parent }
+            guard element.parent === root else { continue }
+            index = min(index ?? .max, root.children.firstIndex { $0 === element } ?? .max)
+            root.removeChild(element)
+        }
+        guard let xml = TransitionXML.xml(
+            for: slide.transition, advanceAfter: slide.autoAdvanceAfter, advancesOnClick: slide.advancesOnClick
+        ), let created = XMLLite.fragment(xml, namespaces: OOXML.namespaces) else { return }
+        // After the slide's colour mapping; before its timing and extensions.
+        let after = root.children.lastIndex { ["cSld", "clrMapOvr"].contains($0.name) }
+        root.insertChild(created, at: min(index ?? .max, (after ?? 0) + 1))
     }
 
     // MARK: - Show settings

@@ -52,6 +52,37 @@ public struct TextBody: Equatable, Hashable, Sendable {
     }
 }
 
+/// `a:prstTxWarp`: a WordArt warp, the text laid along the preset's paths.
+public struct TextWarp: Equatable, Hashable, Sendable {
+    /// The preset's name, such as `textArchUp`; `textNoShape` leaves the text flat.
+    public var preset: String
+    /// `avLst`'s adjust values, by name.
+    public var adjustments: [String: Int]
+
+    public init(preset: String, adjustments: [String: Int] = [:]) {
+        self.preset = preset
+        self.adjustments = adjustments
+    }
+
+    public init?(element: XMLElement?) {
+        guard let element, let preset = element.attribute("prst") else { return nil }
+        var adjustments: [String: Int] = [:]
+        for guide in element.firstChild(named: "avLst")?.children(named: "gd") ?? [] {
+            if let name = guide.attribute("name"), let formula = guide.attribute("fmla"), formula.hasPrefix("val "),
+               let value = Int(String(formula.dropFirst(4)).trimmed) {
+                adjustments[name] = value
+            }
+        }
+        self.init(preset: preset, adjustments: adjustments)
+    }
+
+    /// The warp as `a:prstTxWarp`.
+    public var xml: String {
+        let guides = adjustments.keys.sorted().map { "<a:gd name=\"\(XMLLite.escape($0))\" fmla=\"val \(adjustments[$0] ?? 0)\"/>" }
+        return "<a:prstTxWarp prst=\"\(XMLLite.escape(preset))\"><a:avLst>\(guides.joined())</a:avLst></a:prstTxWarp>"
+    }
+}
+
 /// `a:bodyPr`: insets, anchoring and fitting.
 public struct BodyProperties: Equatable, Hashable, Sendable {
     public enum Anchor: String, Sendable {
@@ -66,6 +97,42 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
         case normal(fontScale: Double, lineSpacingReduction: Double)
         /// Grow the shape to fit the text.
         case shape
+
+        /// One step PowerPoint takes as it shrinks text that overflows: how
+        /// much of its size the text keeps, and how much less its lines are
+        /// spaced, as fractions.
+        public struct ShrinkStep: Equatable, Hashable, Sendable {
+            public var fontScale: Double
+            public var lineSpacingReduction: Double
+
+            public init(fontScale: Double, lineSpacingReduction: Double) {
+                self.fontScale = fontScale
+                self.lineSpacingReduction = lineSpacingReduction
+            }
+
+            /// As `normAutofit` says it.
+            public var autofit: Autofit { .normal(fontScale: fontScale, lineSpacingReduction: lineSpacingReduction) }
+        }
+
+        /// The steps PowerPoint takes, in turn, until text fits: first it
+        /// closes up the lines by a tenth and then a fifth, then it shrinks
+        /// the letters by 7.5% at a time, at first with lines a tenth closer
+        /// and then a fifth, down to 40%, and last to a quarter, the least it
+        /// goes to. These are the `fontScale` and `lnSpcReduction` values it
+        /// writes (92500, 85000 … 40000, 25000 with 10000 or 20000).
+        public static let shrinkSteps: [ShrinkStep] = [
+            (1, 0.1), (1, 0.2), (0.925, 0.1), (0.925, 0.2), (0.85, 0.1), (0.85, 0.2),
+            (0.775, 0.2), (0.7, 0.2), (0.625, 0.2), (0.55, 0.2), (0.475, 0.2), (0.4, 0.2), (0.25, 0.2),
+        ].map { ShrinkStep(fontScale: $0.0, lineSpacingReduction: $0.1) }
+
+        /// The steps still to try when text set this way overflows. Text the
+        /// file gave a font scale keeps it, as PowerPoint worked it out; text
+        /// whose lines alone were closed up goes on from there; and text the
+        /// file says nothing about starts at the first step.
+        public var shrinkStepsLeft: [ShrinkStep] {
+            guard case .normal(let scale, let reduction) = self, scale >= 1 else { return [] }
+            return Self.shrinkSteps.filter { $0.fontScale < 1 || $0.lineSpacingReduction > reduction + 0.0001 }
+        }
     }
 
     public var anchor: Anchor?
@@ -83,6 +150,8 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
     public var columnSpacing: Int?
     /// `rtlCol`: whether the columns run from right to left.
     public var columnsRightToLeft: Bool?
+    /// `prstTxWarp`: the WordArt warp the text is laid along.
+    public var warp: TextWarp?
 
     public init() {
         // Every property unsaid: inherited.
@@ -100,6 +169,7 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
         columnCount = element.attribute("numCol").flatMap(Int.init).map { min(max($0, 1), 16) }
         columnSpacing = element.attribute("spcCol").flatMap(Int.init).map { max($0, 0) }
         columnsRightToLeft = element.attribute("rtlCol").map { $0 == "1" || $0 == "true" }
+        warp = TextWarp(element: element.firstChild(named: "prstTxWarp"))
         if let normal = element.firstChild(named: "normAutofit") {
             autofit = .normal(
                 fontScale: Double(normal.attribute("fontScale").flatMap(Int.init) ?? 100_000) / 100_000,
@@ -126,6 +196,7 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
         result.columnCount = columnCount ?? base.columnCount
         result.columnSpacing = columnSpacing ?? base.columnSpacing
         result.columnsRightToLeft = columnsRightToLeft ?? base.columnsRightToLeft
+        result.warp = warp ?? base.warp
         return result
     }
 

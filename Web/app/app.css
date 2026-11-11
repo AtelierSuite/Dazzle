@@ -741,6 +741,21 @@ body {
   direction: ltr;
 }
 
+/* WordArt: the text laid out flat, unseen, under its letters drawn along the warp. Typed text shows flat. */
+.text[data-warped]:not(.is-editing) > .text__flow {
+  visibility: hidden;
+}
+
+.text__warp {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.text.is-editing > .text__warp {
+  display: none;
+}
+
 .text[data-nowrap] .text__flow {
   white-space: pre;
 }
@@ -979,6 +994,36 @@ body {
 .audience__stage > .slide {
   position: absolute;
   inset: 0 auto auto 0;
+}
+
+/* A slide's transition: each layer is fitted to the stage like a slide, and
+   faded and clipped there; its content is moved within it (transition.js). */
+.slideshow__transition {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: 0 0;
+  overflow: hidden;
+}
+
+.slideshow__transition-content {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.slideshow__transition-content > .slide {
+  position: absolute;
+  inset: 0 auto auto 0;
+}
+
+.slideshow__transition-fill {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.slideshow__transition-fill--white {
+  background: #fff;
 }
 
 .slideshow__blank,

@@ -103,7 +103,7 @@ final class ChartDataSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate
         let series = chart.allSeries
         switch (row, column) {
         case (0, 0):
-            field.stringValue = String(localized: chart.kind == .scatter ? "Chart.Data.X" : "Chart.Data.Category")
+            field.stringValue = String(localized: chart.kind.isXY ? "Chart.Data.X" : "Chart.Data.Category")
             field.isEditable = false
             field.textColor = .secondaryLabelColor
             field.font = .boldSystemFont(ofSize: NSFont.systemFontSize)

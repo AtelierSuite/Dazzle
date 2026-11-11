@@ -291,9 +291,10 @@ struct KeynoteConversionTests {
         #expect(KeynoteBuilds.nearestEffect(type: nil) == (.entrance, .fade))
     }
 
-    @Test("Transitions are kept as PowerPoint's nearest, and automatic ones move on by themselves")
+    @Test("Transitions are kept as PowerPoint's nearest and played, and automatic ones move on by themselves")
     func transitions() {
-        #expect(presentation.unsupportedFeatures.features == [.transitions])
+        #expect(presentation.unsupportedFeatures.features.isEmpty)
+        #expect(presentation.slides[0].transition?.isAnimated == true)
         #expect(presentation.slides[0].autoAdvanceAfter == 2)
         #expect(!presentation.slides[0].advancesOnClick)
         #expect(presentation.slides[1].autoAdvanceAfter == nil)
@@ -1158,10 +1159,11 @@ struct KeynoteChartKindTests {
         return chart
     }
 
-    @Test("3D charts are drawn flat")
-    func flat() throws {
+    @Test("3D charts are drawn in 3D")
+    func threeD() throws {
         let chart = try #require(try chart(0))
         #expect(chart.kind == .pie)
+        #expect(chart.plots.map(\.isThreeD) == [true])
         #expect(chart.allSeries.map(\.values) == [[1, 4], [2, 5], [3, 6]])
     }
 
@@ -1175,14 +1177,15 @@ struct KeynoteChartKindTests {
         }
     }
 
-    @Test("Bubbles and scatter points are read as points, x then y")
+    @Test("Bubbles and scatter points are read as points, x then y, and a bubble's size")
     func scatter() throws {
         let bubbles = try #require(try chart(3))
-        #expect(bubbles.kind == .scatter)
+        #expect(bubbles.kind == .bubble)
         // x, y and a bubble's size: one series.
         #expect(bubbles.allSeries.map(\.name) == ["B"])
         #expect(bubbles.allSeries.map(\.values) == [[2, 5]])
         #expect(bubbles.allSeries.map(\.xValues) == [[1, 4]])
+        #expect(bubbles.allSeries.map(\.sizes) == [[3, 6]])
 
         let shared = try #require(try chart(4))
         #expect(shared.allSeries.map(\.name) == ["B", "C"])
@@ -1190,10 +1193,10 @@ struct KeynoteChartKindTests {
         #expect(shared.allSeries.map(\.xValues) == [[1, 4], [1, 4]])
     }
 
-    @Test("Radar charts are drawn as lines")
+    @Test("Radar charts are read as radar charts")
     func radar() throws {
         let chart = try #require(try chart(5))
-        #expect(chart.kind == .line)
+        #expect(chart.kind == .radar)
         #expect(chart.allSeries.count == 3)
     }
 
@@ -1221,7 +1224,9 @@ struct KeynoteChartKindTests {
                 continue
             }
             #expect(chart?.plots.map(\.kind) == before?.plots.map(\.kind))
+            #expect(chart?.plots.map(\.isThreeD) == before?.plots.map(\.isThreeD))
             #expect(chart?.allSeries.map(\.values) == before?.allSeries.map(\.values))
+            #expect(chart?.allSeries.map(\.sizes) == before?.allSeries.map(\.sizes))
         }
     }
 }
