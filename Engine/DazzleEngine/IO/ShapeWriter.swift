@@ -602,6 +602,7 @@ public struct ShapeWriter {
         if let underline = properties.isUnderlined { element.setAttribute("u", underline ? "sng" : "none") }
         if let strike = properties.isStruckThrough { element.setAttribute("strike", strike ? "sngStrike" : "noStrike") }
         if let baseline = properties.baseline { element.setAttribute("baseline", baseline == 0 ? nil : String(baseline)) }
+        if let spacing = properties.spacing { element.setAttribute("spc", spacing == 0 ? nil : String(spacing)) }
         if let color = properties.color, let fill = fragment("<a:solidFill>\(color.xml)</a:solidFill>") {
             for child in element.children where Fill.elementNames.contains(child.name) {
                 element.removeChild(child)
