@@ -613,7 +613,8 @@ final class Bridge {
         return color
     }
 
-    /// A fill the inspector describes: `{ kind, color, start, end, angle, radial }`.
+    /// A fill the inspector describes: `{ kind, color, start, end, angle, radial }`,
+    /// or for a pattern `{ kind, preset, color, background }`.
     private func fill(_ value: Any?) throws -> Fill? {
         guard let json = value as? [String: Any] else { return nil }
         switch json["kind"] as? String {
@@ -628,6 +629,12 @@ final class Bridge {
             return .gradient(Fill.Gradient(
                 stops: [.init(position: 0, color: start), .init(position: 1, color: end)],
                 angle: json["angle"] as? Double ?? 90, isRadial: json["radial"] as? Bool ?? false
+            ))
+        case "pattern":
+            return .pattern(Fill.Pattern(
+                preset: json["preset"] as? String ?? "pct50",
+                foreground: (json["color"] as? String).flatMap(Self.color) ?? .rgb(0x000000),
+                background: (json["background"] as? String).flatMap(Self.color) ?? .rgb(0xFFFFFF)
             ))
         default:
             return nil
@@ -1162,6 +1169,12 @@ final class Bridge {
             json["end"] = gradient.stops.last.map { css(style.color($0.color, placeholder: placeholder)) } ?? "#000000"
             json["angle"] = gradient.angle
             json["radial"] = gradient.isRadial
+        case .pattern(let pattern):
+            // Its foreground is its colour, carried over to a solid fill.
+            json["kind"] = "pattern"
+            json["preset"] = pattern.preset
+            json["color"] = css(style.color(pattern.foreground, placeholder: placeholder))
+            json["background"] = css(style.color(pattern.background, placeholder: placeholder))
         case .picture:
             json["kind"] = "picture"
         case .tiledPicture:

@@ -3,7 +3,8 @@ import PhotosUI
 import SwiftUI
 
 /// Choosing how a shape or a slide is filled: not at all, with a colour,
-/// with a gradient between two colours, or with a picture.
+/// with a gradient between two colours, or with a picture. A pattern from
+/// the file keeps a kind of its own, with its two colours to change.
 struct FillEditor: View {
     let identifier: String
     let fill: Fill?
@@ -23,6 +24,7 @@ struct FillEditor: View {
         case solid
         case gradient
         case picture
+        case pattern
     }
 
     private var currentKind: Kind {
@@ -31,6 +33,7 @@ struct FillEditor: View {
         case .solid?: .solid
         case .gradient?: .gradient
         case .picture?, .tiledPicture?: .picture
+        case .pattern?: .pattern
         }
     }
 
@@ -40,6 +43,8 @@ struct FillEditor: View {
             Text("Fill.Solid").tag(Kind.solid)
             Text("Fill.Gradient").tag(Kind.gradient)
             Text("Fill.Picture").tag(Kind.picture)
+            // Patterns are not made here, only kept and recoloured.
+            if currentKind == .pattern { Text("Fill.Pattern").tag(Kind.pattern) }
         }
         .pickerStyle(.segmented)
         .accessibilityIdentifier("\(identifier).kind")
@@ -59,6 +64,8 @@ struct FillEditor: View {
             gradientControls
         case .picture:
             pictureControls
+        case .pattern:
+            patternControls
         }
     }
 
@@ -82,6 +89,8 @@ struct FillEditor: View {
         case .picture:
             // Nothing changes until a picture is picked.
             kind = .picture
+        case .pattern:
+            kind = nil
         }
     }
 
@@ -91,6 +100,7 @@ struct FillEditor: View {
         let color: DrawingColor? = switch fill {
         case .solid(let color)?: color
         case .gradient(let gradient)?: gradient.stops.first?.color
+        case .pattern(let pattern)?: pattern.foreground
         default: nil
         }
         return color?.base == .scheme("phClr") ? nil : color
@@ -143,6 +153,31 @@ struct FillEditor: View {
         }
         change(&gradient)
         onChange(.gradient(gradient))
+    }
+
+    // MARK: - Pattern
+
+    @ViewBuilder
+    private var patternControls: some View {
+        if case .pattern(let pattern)? = fill {
+            Text("Fill.Pattern.Foreground").font(.footnote).foregroundStyle(.secondary)
+            ColorSwatches(identifier: "\(identifier).foreground", choices: choices, selected: pattern.foreground) { color in
+                if let color { recolor { $0.foreground = color } }
+            }
+            Text("Fill.Pattern.Background").font(.footnote).foregroundStyle(.secondary)
+            ColorSwatches(identifier: "\(identifier).background", choices: choices, selected: pattern.background) { color in
+                if let color { recolor { $0.background = color } }
+            }
+        }
+    }
+
+    private func recolor(_ change: (inout Fill.Pattern) -> Void) {
+        guard case .pattern(var pattern)? = fill else { return }
+        // As with a gradient, a style's placeholder colour means nothing on the shape itself.
+        if pattern.foreground.base == .scheme("phClr") { pattern.foreground.base = .scheme("accent1") }
+        if pattern.background.base == .scheme("phClr") { pattern.background.base = .scheme("bg1") }
+        change(&pattern)
+        onChange(.pattern(pattern))
     }
 
     // MARK: - Picture

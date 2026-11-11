@@ -483,6 +483,15 @@ public struct SlideRenderer {
                 )
             }
             context.restoreGState()
+        case .pattern(let pattern):
+            context.saveGState()
+            context.addPath(path)
+            context.clip(using: rule)
+            PatternFill.draw(
+                pattern, foreground: style.color(pattern.foreground, placeholder: placeholderColor),
+                background: style.color(pattern.background, placeholder: placeholderColor), in: bounds, context: context
+            )
+            context.restoreGState()
         case .picture(let imagePath, let effects):
             guard let image = image(at: imagePath, effects: effects, placeholderColor: placeholderColor, style: style) else {
                 return

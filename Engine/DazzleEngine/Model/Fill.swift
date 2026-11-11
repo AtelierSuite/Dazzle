@@ -9,6 +9,8 @@ public enum Fill: Equatable, Hashable, Sendable {
     case picture(path: String, effects: BlipEffects = BlipEffects())
     /// A picture repeated across the area, laid out as `tile` says.
     case tiledPicture(path: String, effects: BlipEffects = BlipEffects(), tile: Tile = Tile())
+    /// One of DrawingML's preset patterns, in two colours.
+    case pattern(Pattern)
     /// Whatever the enclosing group is filled with.
     case group
 
@@ -158,8 +160,7 @@ public enum Fill: Equatable, Hashable, Sendable {
             }
             return .picture(path: path, effects: effects)
         case "pattFill":
-            // A pattern is drawn as its foreground, which is what it reads as at a distance.
-            return DrawingColor.first(in: element.firstChild(named: "fgClr")).map(Fill.solid) ?? Fill.none
+            return .pattern(Pattern(element: element))
         case "grpFill":
             return .group
         default:
@@ -174,6 +175,7 @@ public enum Fill: Equatable, Hashable, Sendable {
         case .none, .picture, .tiledPicture: return "<a:noFill/>"
         case .group: return "<a:grpFill/>"
         case .solid(let color): return "<a:solidFill>\(color.xml)</a:solidFill>"
+        case .pattern(let pattern): return pattern.xml
         case .gradient(let gradient):
             let stops = gradient.stops.map { "<a:gs pos=\"\(Int($0.position * 100_000))\">\($0.color.xml)</a:gs>" }
             let shade = gradient.isRadial

@@ -208,6 +208,14 @@ struct WebRenderer {
                 return ["t": "radial", "fx": gradient.focusX, "fy": gradient.focusY, "stops": stops]
             }
             return ["t": "linear", "angle": gradient.angle, "stops": stops]
+        case .pattern(let pattern):
+            // Its eight rows of cells, top first, each a byte with the
+            // leftmost cell its highest bit; set cells are the foreground.
+            return [
+                "t": "pattern", "rows": pattern.rows.map(Int.init), "cell": Fill.Pattern.cellSize,
+                "fg": css(style.color(pattern.foreground, placeholder: placeholder)),
+                "bg": css(style.color(pattern.background, placeholder: placeholder)),
+            ]
         case .picture(let path, let effects):
             return ["t": "image", "src": path, "tile": false, "fx": self.effects(effects, placeholder: placeholder, style: style)]
         case .tiledPicture(let path, let effects, let layout):
@@ -259,6 +267,8 @@ struct WebRenderer {
             resolved = css(style.color(color, placeholder: placeholder))
         case .gradient(let gradient):
             resolved = css(style.color(gradient.stops.first?.color ?? .scheme("tx1"), placeholder: placeholder))
+        case .pattern(let pattern):
+            resolved = css(style.color(pattern.foreground, placeholder: placeholder))
         default:
             resolved = css(style.color(.scheme("tx1"), placeholder: placeholder))
         }
