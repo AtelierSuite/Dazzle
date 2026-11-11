@@ -71,10 +71,12 @@ final class DeckClipboard {
         #endif
     }
 
-    /// Text another app put on the system pasteboard.
+    /// Text another app put on the system pasteboard, or the address of a
+    /// link it copied.
     static var systemText: String? {
         #if canImport(UIKit)
-        UIPasteboard.general.string
+        let pasteboard = UIPasteboard.general
+        return pasteboard.string ?? pasteboard.url?.absoluteString
         #else
         NSPasteboard.general.string(forType: .string)
         #endif
