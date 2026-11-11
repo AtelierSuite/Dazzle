@@ -1,8 +1,10 @@
 import CoreGraphics
+@testable import Dazzle
 @testable import DazzleEngine
 import Foundation
 import Testing
 
+@MainActor
 @Suite("Vertical text")
 struct VerticalTextTests {
     private func shapes(_ xml: String) throws -> [SlideShape] {
@@ -123,6 +125,30 @@ struct VerticalTextTests {
                 #expect(ink.minX > 300, "\(vertical)")
             } else {
                 #expect(ink.maxX < 200, "\(vertical)")
+            }
+        }
+    }
+
+    @Test("Growing vertical text grows across, away from the side its lines start")
+    func growsAcross() throws {
+        for (vertical, startsAtRight) in [("eaVert", true), ("mongolianVert", false)] {
+            var presentation = Presentation.blank
+            presentation.slides[0].shapes = try shapes(textBox(vertical, text: "一", autofit: "<a:spAutoFit/>"))
+            let before = presentation.slides[0].shapes[0].frame
+            let state = EditorState()
+            state.reconcile(with: presentation)
+            state.selectedShapeID = presentation.slides[0].shapes[0].id
+            var body = try #require(presentation.slides[0].shapes[0].text)
+            body.paragraphs.append(body.paragraphs[0])
+            state.setTextBody(body, in: &presentation)
+            let after = presentation.slides[0].shapes[0].frame
+            // Two lines of 72 points side by side, as tall as before.
+            #expect(after.height == before.height, "\(vertical)")
+            #expect(EMU.points(after.width) > 144 && EMU.points(after.width) < 200, "\(vertical)")
+            if startsAtRight {
+                #expect(after.x + after.width == before.x + before.width, "\(vertical)")
+            } else {
+                #expect(after.x == before.x, "\(vertical)")
             }
         }
     }

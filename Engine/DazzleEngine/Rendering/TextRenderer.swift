@@ -325,6 +325,20 @@ public struct TextRenderer {
         return ceil(size.height) + vertical
     }
 
+    /// How wide vertical `body` lays out at `height`, insets included: how
+    /// far its lines reach across the box when each runs that far down it.
+    public func width(of body: TextBody, shape: SlideShape, height: CGFloat) -> CGFloat {
+        let properties = style.bodyProperties(for: shape, sources: []).merged(over: body.properties)
+        let horizontal = EMU.points((properties.leftInset ?? 91_440) + (properties.rightInset ?? 91_440))
+        let vertical = EMU.points((properties.topInset ?? 45_720) + (properties.bottomInset ?? 45_720))
+        let string = Self.shaped(
+            attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil),
+            vertical: properties.vertical
+        )
+        let size = suggestedSize(CTFramesetterCreateWithAttributedString(string), string: string, width: max(height - vertical, 1))
+        return ceil(size.height) + horizontal
+    }
+
     /// The width `body` takes, insets included, when its lines never wrap.
     public func unwrappedWidth(of body: TextBody, shape: SlideShape) -> CGFloat {
         let properties = style.bodyProperties(for: shape, sources: []).merged(over: body.properties)
