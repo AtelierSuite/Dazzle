@@ -487,7 +487,7 @@ struct WebRenderer {
             node["fx"] = effects(picture.effects, placeholder: nil, style: style)
         } else {
             node["kind"] = "standin"
-            node["label"] = String(localized: "Object.Picture", bundle: .engine)
+            node["label"] = picture.standInLabel
         }
         if let (line, placeholder) = style.line(for: shape, sources: []),
            let stroke = stroke(line, path: Self.elements(outlinePath), shape: outlineShape, placeholder: placeholder, style: style) {
