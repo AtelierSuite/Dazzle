@@ -329,7 +329,7 @@ public struct LineStyle: Equatable, Hashable, Sendable {
     }
 }
 
-/// A shape's `p:style`: which of the theme's fill, line and font styles it
+/// A shape's `p:style`: which of the theme's fill, line, effect and font styles it
 /// uses, and the colour each is drawn in.
 public struct StyleReferences: Equatable, Hashable, Sendable {
     public struct Reference: Equatable, Hashable, Sendable {
@@ -339,6 +339,7 @@ public struct StyleReferences: Equatable, Hashable, Sendable {
 
     public var fill: Reference?
     public var line: Reference?
+    public var effect: Reference?
     /// The font reference only ever matters for its colour.
     public var fontColor: DrawingColor?
 
@@ -351,6 +352,7 @@ public struct StyleReferences: Equatable, Hashable, Sendable {
         }
         fill = reference("fillRef")
         line = reference("lnRef")
+        effect = reference("effectRef")
         fontColor = DrawingColor.first(in: element.firstChild(named: "fontRef"))
     }
 }
