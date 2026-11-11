@@ -539,8 +539,10 @@ public struct SlideRenderer {
             // dashes and arrowheads included, as over a filled area. Each
             // part is painted on its own, as their windings would cancel
             // where they overlap, but all across the same bounds.
-            let dashed = dashes.map { path.copy(dashingWithPhase: 0, lengths: $0) } ?? path
-            var parts = [dashed.copy(strokingWithWidth: width, lineCap: .butt, lineJoin: .round, miterLimit: 10)]
+            var parts = line.compoundStrokes(of: path, width: width).map { band in
+                let dashed = dashes.map { band.path.copy(dashingWithPhase: 0, lengths: $0) } ?? band.path
+                return dashed.copy(strokingWithWidth: band.width, lineCap: line.cgLineCap, lineJoin: line.cgLineJoin, miterLimit: line.miterLimit)
+            }
             if let points {
                 if let tail = line.tail { parts.append(arrowhead(tail, at: points.end, from: points.beforeEnd, width: width)) }
                 if let head = line.head { parts.append(arrowhead(head, at: points.start, from: points.afterStart, width: width)) }
@@ -556,10 +558,13 @@ public struct SlideRenderer {
         context.saveGState()
         context.setStrokeColor(resolved.cgColor)
         context.setLineWidth(width)
-        context.setLineJoin(.round)
+        line.applyCapAndJoin(to: context)
         if let dashes { context.setLineDash(phase: 0, lengths: dashes) }
-        context.addPath(path)
-        context.strokePath()
+        for band in line.compoundStrokes(of: path, width: width) {
+            context.setLineWidth(band.width)
+            context.addPath(band.path)
+            context.strokePath()
+        }
         context.restoreGState()
 
         // Arrowheads, at either end of an open line.
