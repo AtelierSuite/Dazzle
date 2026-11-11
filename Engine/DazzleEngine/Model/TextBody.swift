@@ -66,6 +66,42 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
         case normal(fontScale: Double, lineSpacingReduction: Double)
         /// Grow the shape to fit the text.
         case shape
+
+        /// One step PowerPoint takes as it shrinks text that overflows: how
+        /// much of its size the text keeps, and how much less its lines are
+        /// spaced, as fractions.
+        public struct ShrinkStep: Equatable, Hashable, Sendable {
+            public var fontScale: Double
+            public var lineSpacingReduction: Double
+
+            public init(fontScale: Double, lineSpacingReduction: Double) {
+                self.fontScale = fontScale
+                self.lineSpacingReduction = lineSpacingReduction
+            }
+
+            /// As `normAutofit` says it.
+            public var autofit: Autofit { .normal(fontScale: fontScale, lineSpacingReduction: lineSpacingReduction) }
+        }
+
+        /// The steps PowerPoint takes, in turn, until text fits: first it
+        /// closes up the lines by a tenth and then a fifth, then it shrinks
+        /// the letters by 7.5% at a time, at first with lines a tenth closer
+        /// and then a fifth, down to 40%, and last to a quarter, the least it
+        /// goes to. These are the `fontScale` and `lnSpcReduction` values it
+        /// writes (92500, 85000 … 40000, 25000 with 10000 or 20000).
+        public static let shrinkSteps: [ShrinkStep] = [
+            (1, 0.1), (1, 0.2), (0.925, 0.1), (0.925, 0.2), (0.85, 0.1), (0.85, 0.2),
+            (0.775, 0.2), (0.7, 0.2), (0.625, 0.2), (0.55, 0.2), (0.475, 0.2), (0.4, 0.2), (0.25, 0.2),
+        ].map { ShrinkStep(fontScale: $0.0, lineSpacingReduction: $0.1) }
+
+        /// The steps still to try when text set this way overflows. Text the
+        /// file gave a font scale keeps it, as PowerPoint worked it out; text
+        /// whose lines alone were closed up goes on from there; and text the
+        /// file says nothing about starts at the first step.
+        public var shrinkStepsLeft: [ShrinkStep] {
+            guard case .normal(let scale, let reduction) = self, scale >= 1 else { return [] }
+            return Self.shrinkSteps.filter { $0.fontScale < 1 || $0.lineSpacingReduction > reduction + 0.0001 }
+        }
     }
 
     public var anchor: Anchor?
