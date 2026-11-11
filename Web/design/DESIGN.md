@@ -130,6 +130,8 @@ Carbon's productive scale, in the system font, weights 400 and 600 only. Sizes a
 
 Carbon productive durations (70, 110, 150, 240 ms) and easing curves. Motion is functional only (sheets entering, disclosure triangles rotating, switches sliding) and drops to zero under `prefers-reduced-motion`.
 
+A slideshow's slide transitions and animations are the deck's content, not the interface's motion: they play as the deck says, at its durations. Under `prefers-reduced-motion` a transition that moves plays as a cross-fade instead, as the Apple apps do with Reduce Motion.
+
 ### Focus
 
 Keyboard focus is Carbon's 2px inset outline in `--ds-focus` on all four sides, shown with `:focus-visible` only. Filled buttons add a 1px inner ring in `--ds-focus-inset` so the outline reads on any fill.

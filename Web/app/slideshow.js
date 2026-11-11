@@ -17,9 +17,11 @@
 // slideshow plays full screen in this window instead.
 //
 // The show steps through slides and their animations as PresentationSession
-// does on Apple platforms, asking the engine for each moment of an animation.
+// does on Apple platforms, asking the engine for each moment of an animation,
+// and moves onto each slide with its transition (transition.js).
 
 import { SlideDrawer, applyFrame } from "./slide.js";
+import { TransitionPlayer, prefersReducedMotion } from "./transition.js";
 
 const AUDIENCE_NAME = "dazzle-audience";
 
@@ -140,6 +142,7 @@ export class Slideshow extends EventTarget {
   end() {
     if (!this.active) return;
     this.active = false;
+    this.transitions?.finish();
     cancelAnimationFrame(this.animationFrame);
     clearTimeout(this.advanceTimer);
     clearInterval(this.clockTimer);
@@ -185,6 +188,8 @@ export class Slideshow extends EventTarget {
   /** Plays the slide's next animation step, or with none left, moves on. */
   async next() {
     if (!this.active) return;
+    // A click while the slide arrives finishes its arrival.
+    if (this.transitions?.isPlaying) return this.finishTransition();
     if (this.blanked) return this.setBlank(false);
     const timeline = await this.timeline();
     if (this.builds < timeline.steps) {
@@ -203,12 +208,14 @@ export class Slideshow extends EventTarget {
       // Moving on from the last slide ends the show, as in Keynote.
       return this.end();
     }
-    await this.showSlide({ fullyBuilt: false });
+    await this.showSlide({ fullyBuilt: false, transition: true });
   }
 
   /** Takes back the last animation step, or with none played, goes back a slide. */
   async previous() {
     if (!this.active) return;
+    // Going back is straight back, without a transition.
+    if (this.transitions?.isPlaying) this.finishTransition();
     this.setBlank(false, { quiet: true });
     const timeline = await this.timeline();
     if (this.builds > timeline.initial) {
@@ -227,9 +234,10 @@ export class Slideshow extends EventTarget {
 
   async go(index) {
     if (!this.active || index < 0 || index >= this.order.length) return;
+    const moving = index !== this.position;
     this.position = index;
     this.setBlank(false, { quiet: true });
-    await this.showSlide({ fullyBuilt: false });
+    await this.showSlide({ fullyBuilt: false, transition: moving });
   }
 
   async goToSlide(id) {
@@ -249,14 +257,21 @@ export class Slideshow extends EventTarget {
     if (!quiet) this.updatePresenter();
   }
 
-  /** Draws the slide now showing, its first animations beginning. */
-  async showSlide({ fullyBuilt }) {
+  /**
+   * Draws the slide now showing, its first animations beginning once its
+   * transition, if it plays one, has brought it on.
+   */
+  async showSlide({ fullyBuilt, transition: withTransition = false }) {
     const id = this.slideID;
     const timeline = await this.timeline(id);
     this.builds = fullyBuilt ? timeline.steps : timeline.initial;
     this.buildStartedAt = fullyBuilt ? -Infinity : performance.now();
     this.stopMedia();
     const scene = await this.engine.call("scene", { slide: id });
+    if (id !== this.slideID) return;
+    const transition = withTransition && this.scene && timeline.transition > 0
+      ? await this.engine.call("transition", { slide: id, reduceMotion: prefersReducedMotion(), seed: this.position })
+      : null;
     if (id !== this.slideID) return;
     this.scene = scene;
     const frame = await this.frame(0);
@@ -265,8 +280,11 @@ export class Slideshow extends EventTarget {
     const media = {};
     for (const path of sceneMedia(scene)) media[path] = await this.media.blob(path);
     if (id !== this.slideID) return;
-    this.post({ type: "show", scene, frame, media, number: this.position + 1, count: this.order.length });
-    this.drawLocal(scene, frame);
+    const arriving = transition ? transition.duration * 1000 : 0;
+    this.transitionEndsAt = performance.now() + arriving;
+    if (!fullyBuilt) this.buildStartedAt = performance.now() + arriving;
+    this.post({ type: "show", scene, frame, media, transition, number: this.position + 1, count: this.order.length });
+    this.drawLocal(scene, frame, transition);
     await this.drawNext();
     this.updatePresenter();
     if (!fullyBuilt) {
@@ -306,22 +324,32 @@ export class Slideshow extends EventTarget {
     if (this.current) applyFrame(this.current, frame);
   }
 
-  /** Moves on by itself after the slide's time, once its running animations have settled. */
+  /** Moves on by itself after the slide's time, once its transition and running animations have settled. */
   scheduleAdvance(timeline) {
     clearTimeout(this.advanceTimer);
     if (!this.active || this.blanked || timeline.after == null || this.builds < timeline.steps) return;
-    let settling = 0;
+    let settling = Math.max(((this.transitionEndsAt ?? 0) - performance.now()) / 1000, 0);
     if (this.builds > 0) {
       const duration = timeline.durations[this.builds - 1];
       // A step that repeats until the next tap never settles: the show waits for the tap.
       if (duration < 0) return;
-      settling = Math.max(duration - (performance.now() - this.buildStartedAt) / 1000, 0);
+      settling = Math.max(duration - (performance.now() - this.buildStartedAt) / 1000, settling);
     }
     const slide = this.slideID;
     const builds = this.builds;
     this.advanceTimer = setTimeout(() => {
       if (this.active && slide === this.slideID && builds === this.builds && !this.blanked) this.next();
     }, (Math.max(timeline.after, 0.1) + settling) * 1000);
+  }
+
+  /** Ends the transition playing now, here and in the audience's window, and starts the slide. */
+  async finishTransition() {
+    this.transitions?.finish();
+    this.post({ type: "transitionEnd" });
+    const now = performance.now();
+    this.transitionEndsAt = now;
+    if (this.buildStartedAt > now) this.buildStartedAt = now;
+    this.scheduleAdvance(await this.timeline());
   }
 
   // MARK: - Media
@@ -503,6 +531,7 @@ export class Slideshow extends EventTarget {
     this.root.append(view);
     this.view = view;
     this.stage = view.querySelector(".slideshow__stage");
+    this.transitions = new TransitionPlayer(this.stage, (slide) => this.fit(this.stage, slide));
     view.requestFullscreen?.().catch(() => {});
     view.addEventListener("click", (event) => {
       const link = event.target.closest?.("[data-link]");
@@ -573,6 +602,7 @@ export class Slideshow extends EventTarget {
     this.root.append(view);
     this.view = view;
     this.stage = view.querySelector(".presenter__stage");
+    this.transitions = new TransitionPlayer(this.stage, (slide) => this.fit(this.stage, slide));
     this.nextStage = view.querySelector(".presenter__stage--next");
     this.stage.addEventListener("click", (event) => {
       const link = event.target.closest?.("[data-link]");
@@ -588,14 +618,17 @@ export class Slideshow extends EventTarget {
     this.updateClock();
   }
 
-  drawLocal(scene, frame) {
+  drawLocal(scene, frame, transition = null) {
     if (!this.stage) return;
+    this.transitions?.finish();
+    const previous = this.current;
     const slide = this.drawer.draw(scene, { interactive: true });
     this.stage.replaceChildren(slide);
     this.current = slide;
     this.fit(this.stage, slide);
     this.drawer.fit(slide);
     applyFrame(slide, frame);
+    if (transition && previous) this.transitions?.play(transition, previous, slide);
   }
 
   async drawNext() {

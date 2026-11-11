@@ -981,6 +981,36 @@ body {
   inset: 0 auto auto 0;
 }
 
+/* A slide's transition: each layer is fitted to the stage like a slide, and
+   faded and clipped there; its content is moved within it (transition.js). */
+.slideshow__transition {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: 0 0;
+  overflow: hidden;
+}
+
+.slideshow__transition-content {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.slideshow__transition-content > .slide {
+  position: absolute;
+  inset: 0 auto auto 0;
+}
+
+.slideshow__transition-fill {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.slideshow__transition-fill--white {
+  background: #fff;
+}
+
 .slideshow__blank,
 .audience__blank {
   position: absolute;
