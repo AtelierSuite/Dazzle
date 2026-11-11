@@ -77,6 +77,12 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
     public var autofit: Autofit?
     /// `vert`, when the text runs other than horizontally.
     public var vertical: String?
+    /// `numCol`: how many columns the text flows through, one after another.
+    public var columnCount: Int?
+    /// `spcCol`: the gap between columns, in EMU.
+    public var columnSpacing: Int?
+    /// `rtlCol`: whether the columns run from right to left.
+    public var columnsRightToLeft: Bool?
 
     public init() {
         // Every property unsaid: inherited.
@@ -91,6 +97,9 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
         bottomInset = element.attribute("bIns").flatMap(Int.init)
         wraps = element.attribute("wrap").map { $0 != "none" }
         vertical = element.attribute("vert").flatMap { $0 == "horz" ? nil : $0 }
+        columnCount = element.attribute("numCol").flatMap(Int.init).map { min(max($0, 1), 16) }
+        columnSpacing = element.attribute("spcCol").flatMap(Int.init).map { max($0, 0) }
+        columnsRightToLeft = element.attribute("rtlCol").map { $0 == "1" || $0 == "true" }
         if let normal = element.firstChild(named: "normAutofit") {
             autofit = .normal(
                 fontScale: Double(normal.attribute("fontScale").flatMap(Int.init) ?? 100_000) / 100_000,
@@ -114,6 +123,9 @@ public struct BodyProperties: Equatable, Hashable, Sendable {
         result.wraps = wraps ?? base.wraps
         result.autofit = autofit ?? base.autofit
         result.vertical = vertical ?? base.vertical
+        result.columnCount = columnCount ?? base.columnCount
+        result.columnSpacing = columnSpacing ?? base.columnSpacing
+        result.columnsRightToLeft = columnsRightToLeft ?? base.columnsRightToLeft
         return result
     }
 }

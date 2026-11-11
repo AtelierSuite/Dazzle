@@ -19,15 +19,85 @@ public struct TextRenderer {
     /// Chinese stand upright, rather than turned letters and all.
     static let uprightKinds: Set = ["eaVert", "wordArtVert", "wordArtVertRtl"]
 
-    /// Text laid out in a shape: the frame CoreText made, and where it sits.
+    /// Text laid out in a shape: a frame CoreText made for each column the
+    /// text reaches, and where each sits.
     private struct Layout {
-        var frame: CTFrame
-        /// The frame's top-left corner, in slide points, in the turned
-        /// space when the text runs vertically.
-        var origin: CGPoint
-        var height: CGFloat
+        struct Column {
+            var frame: CTFrame
+            /// The frame's top-left corner, in slide points, in the turned
+            /// space when the text runs vertically.
+            var origin: CGPoint
+            var height: CGFloat
+        }
+
+        var columns: [Column]
         /// For vertical text: the point turned about, and by how much.
         var turn: (center: CGPoint, angle: CGFloat)?
+    }
+
+    /// How text is set in columns: how many, how wide, and how far apart.
+    private struct ColumnSet {
+        var count: Int
+        var width: CGFloat
+        var gap: CGFloat
+
+        init(_ properties: BodyProperties, width: CGFloat) {
+            let wraps = properties.wraps ?? true
+            count = wraps ? max(properties.columnCount ?? 1, 1) : 1
+            gap = count > 1 ? CGFloat(EMU.points(properties.columnSpacing ?? 0)) : 0
+            self.width = max((width - gap * CGFloat(count - 1)) / CGFloat(count), 1)
+        }
+    }
+
+    /// The stretch of text each column holds when columns are `height` tall:
+    /// every column but the last takes what fits, and the last the rest.
+    private func columnRanges(_ framesetter: CTFramesetter, length: Int, columns: ColumnSet, height: CGFloat) -> [CFRange] {
+        var ranges: [CFRange] = []
+        var start = 0
+        let path = CGPath(rect: CGRect(x: 0, y: 0, width: columns.width, height: max(height, 1)), transform: nil)
+        for _ in 0..<(columns.count - 1) where start < length {
+            let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: start, length: 0), path, nil)
+            let visible = CTFrameGetVisibleStringRange(frame).length
+            guard visible > 0 else { break }
+            ranges.append(CFRange(location: start, length: visible))
+            start += visible
+        }
+        if start < length || ranges.isEmpty {
+            ranges.append(CFRange(location: start, length: length - start))
+        }
+        return ranges
+    }
+
+    private func suggestedHeight(_ framesetter: CTFramesetter, range: CFRange, width: CGFloat) -> CGFloat {
+        CTFramesetterSuggestFrameSizeWithConstraints(
+            framesetter, range, nil, CGSize(width: width, height: .greatestFiniteMagnitude), nil
+        ).height
+    }
+
+    /// How tall the text in the last column stands when columns are `height`
+    /// tall: no taller than `height` when everything fits.
+    private func lastColumnHeight(_ framesetter: CTFramesetter, length: Int, columns: ColumnSet, height: CGFloat) -> CGFloat {
+        let ranges = columnRanges(framesetter, length: length, columns: columns, height: height)
+        return ranges.last.map { suggestedHeight(framesetter, range: $0, width: columns.width) } ?? 0
+    }
+
+    /// The least height columns can have and still hold all the text, the
+    /// text balanced across them.
+    private func balancedHeight(_ framesetter: CTFramesetter, length: Int, columns: ColumnSet) -> CGFloat {
+        let whole = suggestedHeight(framesetter, range: CFRange(location: 0, length: length), width: columns.width)
+        guard columns.count > 1, whole > 0 else { return whole }
+        var low = whole / CGFloat(columns.count)
+        var high = whole
+        if lastColumnHeight(framesetter, length: length, columns: columns, height: low) <= low + 1 { return low }
+        while high - low > 0.5 {
+            let middle = (low + high) / 2
+            if lastColumnHeight(framesetter, length: length, columns: columns, height: middle) <= middle + 1 {
+                high = middle
+            } else {
+                low = middle
+            }
+        }
+        return high
     }
 
     private func layout(
@@ -75,11 +145,19 @@ public struct TextRenderer {
             colorOverride: colorOverride, hidesText: hidesText, paragraphOpacity: paragraphOpacity,
             colorChanges: colorChanges, paragraphColorChanges: paragraphColorChanges
         ))
+        let columns = ColumnSet(properties, width: inner.width)
         var framesetter = CTFramesetterCreateWithAttributedString(string)
         var size = suggestedSize(framesetter, string: string, width: layoutWidth)
+        // Text in columns overflows only when the last column runs past the bottom.
+        func overflows() -> Bool {
+            let needed = columns.count > 1
+                ? lastColumnHeight(framesetter, length: string.length, columns: columns, height: inner.height)
+                : size.height
+            return needed > inner.height + 1
+        }
 
         // Shrink on overflow, as PowerPoint would have when it last saved.
-        if case .normal = properties.autofit, fontScale == 1, size.height > inner.height + 1 {
+        if case .normal = properties.autofit, fontScale == 1, overflows() {
             for scale in stride(from: 0.9, through: 0.3, by: -0.1) {
                 string = shaped(attributedString(
                     body, shape: shape, sources: sources, scale: scale, spacingReduction: 0.1, colorOverride: colorOverride,
@@ -88,8 +166,34 @@ public struct TextRenderer {
                 ))
                 framesetter = CTFramesetterCreateWithAttributedString(string)
                 size = suggestedSize(framesetter, string: string, width: layoutWidth)
-                if size.height <= inner.height + 1 { break }
+                if !overflows() { break }
             }
+        }
+
+        if columns.count > 1 {
+            // Text fills each column to the bottom before the next; the last
+            // column takes what is left, running on past the bottom if it must.
+            let ranges = columnRanges(framesetter, length: string.length, columns: columns, height: inner.height)
+            let heights = ranges.map { ceil(suggestedHeight(framesetter, range: $0, width: columns.width)) + 1 }
+            let blockHeight = heights.max() ?? 0
+            let offset: CGFloat = switch properties.anchor ?? .top {
+            case .top: 0
+            case .center: (inner.height - blockHeight) / 2
+            case .bottom: inner.height - blockHeight
+            }
+            let step = columns.width + columns.gap
+            let rightToLeft = properties.columnsRightToLeft ?? false
+            let laidOut = zip(ranges, heights).enumerated().map { index, column in
+                let path = CGPath(rect: CGRect(x: 0, y: 0, width: columns.width, height: column.1), transform: nil)
+                let x = rightToLeft
+                    ? inner.maxX - columns.width - CGFloat(index) * step
+                    : inner.minX + CGFloat(index) * step
+                return Layout.Column(
+                    frame: CTFramesetterCreateFrame(framesetter, column.0, path, nil),
+                    origin: CGPoint(x: x, y: inner.minY + offset), height: column.1
+                )
+            }
+            return Layout(columns: laidOut, turn: turn)
         }
 
         var originX = inner.minX
@@ -111,7 +215,10 @@ public struct TextRenderer {
 
         let path = CGPath(rect: CGRect(x: 0, y: 0, width: frameWidth, height: frameHeight), transform: nil)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
-        return Layout(frame: frame, origin: CGPoint(x: originX, y: inner.minY + offset), height: frameHeight, turn: turn)
+        return Layout(
+            columns: [Layout.Column(frame: frame, origin: CGPoint(x: originX, y: inner.minY + offset), height: frameHeight)],
+            turn: turn
+        )
     }
 
     /// Draws `body` into `rect`, in a context whose y axis points down.
@@ -141,18 +248,39 @@ public struct TextRenderer {
             return
         }
         let space = context.ctm
-        context.translateBy(x: layout.origin.x, y: layout.origin.y + layout.height)
-        context.scaleBy(x: 1, y: -1)
-        context.textMatrix = .identity
         // Every shadow goes down before any letter, so none falls across another run's letters.
-        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
-        for (line, origin) in zip(lines, origins) {
-            drawShadows(of: line, at: origin, space: space, context: context)
+        func inColumns(_ draw: (Layout.Column) -> Void) {
+            for column in layout.columns {
+                context.saveGState()
+                context.translateBy(x: column.origin.x, y: column.origin.y + column.height)
+                context.scaleBy(x: 1, y: -1)
+                context.textMatrix = .identity
+                draw(column)
+                context.restoreGState()
+            }
         }
-        CTFrameDraw(layout.frame, context)
-        drawStrikethroughs(in: layout.frame, context: context)
+        inColumns { column in
+            let lines = CTFrameGetLines(column.frame) as? [CTLine] ?? []
+            var origins = [CGPoint](repeating: .zero, count: lines.count)
+            CTFrameGetLineOrigins(column.frame, CFRange(location: 0, length: 0), &origins)
+            for (line, origin) in zip(lines, origins) {
+                drawShadows(of: line, at: origin, space: space, context: context)
+            }
+        }
+        inColumns { column in
+            CTFrameDraw(column.frame, context)
+            drawStrikethroughs(in: column.frame, context: context)
+        }
+    }
+
+    /// Every line laid out, column by column, with its origin within its frame.
+    private func lines(of layout: Layout) -> [(line: CTLine, origin: CGPoint, column: Layout.Column)] {
+        layout.columns.flatMap { column in
+            let lines = CTFrameGetLines(column.frame) as? [CTLine] ?? []
+            var origins = [CGPoint](repeating: .zero, count: lines.count)
+            CTFrameGetLineOrigins(column.frame, CFRange(location: 0, length: 0), &origins)
+            return zip(lines, origins).map { ($0, $1, column) }
+        }
     }
 
     /// Draws only the shadows a line's letters cast from `origin`. `space` is
@@ -180,17 +308,14 @@ public struct TextRenderer {
     /// Draw whole paragraphs in their unchanged CoreText layout. Wrapped lines,
     /// bullets, links, and decorations move together around the paragraph bounds.
     private func drawParagraphs(_ layout: Layout, appearances: [Int: AnimatedAppearance], context: CGContext) {
-        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
         var paragraphs: [Int: [(line: CTLine, baseline: CGPoint, bounds: CGRect)]] = [:]
-        for (line, origin) in zip(lines, origins) {
+        for (line, origin, column) in lines(of: layout) {
             let runs = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
             let index = runs.first.flatMap { (CTRunGetAttributes($0) as NSDictionary)[Self.paragraphIndexKey.rawValue] as? Int } ?? 0
             var ascent: CGFloat = 0
             var descent: CGFloat = 0
             let width = CTLineGetTypographicBounds(line, &ascent, &descent, nil)
-            let baseline = CGPoint(x: layout.origin.x + origin.x, y: layout.origin.y + layout.height - origin.y)
+            let baseline = CGPoint(x: column.origin.x + origin.x, y: column.origin.y + column.height - origin.y)
             let bounds = CGRect(x: baseline.x, y: baseline.y - ascent, width: width, height: ascent + descent)
             paragraphs[index, default: []].append((line, baseline, bounds))
         }
@@ -239,11 +364,8 @@ public struct TextRenderer {
     public func linkAreas(_ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect) -> [(CGRect, Hyperlink)] {
         guard let layout = layout(body, shape: shape, sources: sources, in: rect, colorOverride: nil, hidesText: false),
               layout.turn == nil else { return [] }
-        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
         var areas: [(CGRect, Hyperlink)] = []
-        for (line, origin) in zip(lines, origins) {
+        for (line, origin, column) in lines(of: layout) {
             for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
                 let attributes = CTRunGetAttributes(run) as NSDictionary
                 guard let box = attributes[Self.linkKey.rawValue] as? LinkBox else { continue }
@@ -252,7 +374,7 @@ public struct TextRenderer {
                 let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), &ascent, &descent, nil)
                 let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
                 areas.append((CGRect(
-                    x: layout.origin.x + origin.x + start, y: layout.origin.y + layout.height - origin.y - ascent,
+                    x: column.origin.x + origin.x + start, y: column.origin.y + column.height - origin.y - ascent,
                     width: width, height: ascent + descent
                 ), box.link))
             }
@@ -283,7 +405,13 @@ public struct TextRenderer {
         let horizontal = EMU.points((properties.leftInset ?? 91_440) + (properties.rightInset ?? 91_440))
         let vertical = EMU.points((properties.topInset ?? 45_720) + (properties.bottomInset ?? 45_720))
         let string = attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil)
-        let size = suggestedSize(CTFramesetterCreateWithAttributedString(string), string: string, width: max(width - horizontal, 1))
+        let framesetter = CTFramesetterCreateWithAttributedString(string)
+        // Text in columns is as tall as its columns when balanced.
+        let columns = ColumnSet(properties, width: max(width - horizontal, 1))
+        if columns.count > 1 {
+            return ceil(balancedHeight(framesetter, length: string.length, columns: columns)) + vertical
+        }
+        let size = suggestedSize(framesetter, string: string, width: max(width - horizontal, 1))
         return ceil(size.height) + vertical
     }
 
