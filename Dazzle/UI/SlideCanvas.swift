@@ -12,6 +12,8 @@ import SwiftUI
 /// turns are previewed live and written to the document once, when the
 /// finger lifts, so each is a single undo step. Pinch to zoom the slide in;
 /// zoomed in, drag across empty slide to pan, and double-tap it to zoom out.
+/// Tap a selected shape, or long-press or secondary-click anywhere on the
+/// slide, for an edit menu of what can be done with it.
 struct SlideCanvas: View {
     @Binding var presentation: Presentation
     @Bindable var state: EditorState
@@ -99,6 +101,17 @@ struct SlideCanvas: View {
     /// Where the slide was moved to when a drag across it began panning.
     @State private var panOrigin: CGSize?
 
+    /// The edit menu asked for, while it is up.
+    @State private var menuRequest: CanvasMenuRequest?
+    /// When the edit menu last went away, so the tap that dismissed it
+    /// doesn't bring it straight back.
+    @State private var menuDismissedAt: Date?
+    /// A long press opened the menu and the finger is still down; moving
+    /// it now doesn't drag what was pressed.
+    @State private var isPressingForMenu = false
+    /// The drag under way began from a press that opened the menu.
+    @State private var isDragIgnored = false
+
     var body: some View {
         GeometryReader { proxy in
             let slideSize = presentation.slideSize.points
@@ -169,7 +182,12 @@ struct SlideCanvas: View {
                 .contentShape(.rect)
                 .gesture(moveGesture(on: slide, scale: scale, size: size, fitting: fitting))
                 .simultaneousGesture(tapGestures(on: slide, scale: scale))
+                .gesture(CanvasPressRecognizer { press(at: $0, on: slide, scale: scale) } onEnded: { isPressingForMenu = false })
+                .gesture(CanvasPressRecognizer(isSecondaryClick: true) { press(at: $0, on: slide, scale: scale) })
                 .accessibilityIdentifier("slideCanvas")
+
+            editMenu(on: slide, scale: scale)
+                .frame(width: size.width, height: size.height)
 
             guideLines(scale: scale, size: size)
 
@@ -512,10 +530,29 @@ struct SlideCanvas: View {
             let hit = shape(at: point, on: slide, scale: scale)
             // A tap in the shape being typed into belongs to the text.
             if let editing = state.editingTextShapeID, hit?.id == editing { return }
-            // A tap in a selected table picks a cell.
+            // The tap that dismissed the menu, or the lift of the press that
+            // opened it, does no more.
+            let isMenuUp = menuRequest != nil || menuDismissedAt.map { Date.now.timeIntervalSince($0) < 0.6 } == true
+            if isMenuUp, let hit, state.isSelected(hit.id) {
+                menuRequest = nil
+                return
+            }
+            menuRequest = nil
+            // A tap in a selected table picks a cell; on the cell already
+            // picked, it opens the menu.
             if let hit, hit.id == state.selectedShapeID, !state.isSelectingMultiple, case .table(let table) = hit.kind {
                 let cell = tableLayout(table, shape: hit, on: slide).cell(at: point)
-                if cell != state.selectedCell { state.selectCell(cell, editing: state.isEditingCell) }
+                if cell != state.selectedCell {
+                    state.selectCell(cell, editing: state.isEditingCell)
+                } else if !state.isEditingCell {
+                    openMenu(at: value.location, on: slide, scale: scale)
+                }
+                return
+            }
+            // A tap on what is already selected opens the menu, unless taps
+            // are picking several shapes, where it takes the shape out.
+            if let hit, state.isSelected(hit.id), !state.isSelectingMultiple, !Self.isShiftHeld {
+                openMenu(at: value.location, on: slide, scale: scale)
                 return
             }
             if state.isSelectingMultiple || Self.isShiftHeld {
@@ -525,6 +562,53 @@ struct SlideCanvas: View {
             }
         }
         return doubleTap.exclusively(before: singleTap)
+    }
+
+    // MARK: - Edit menu
+
+    /// A long press or secondary click: picks what is under it, if it isn't
+    /// already picked, and opens the menu for it, or for the slide.
+    private func press(at location: CGPoint, on slide: Slide, scale: CGFloat) {
+        guard !state.isDrawing, interaction == nil, pinch == nil else { return }
+        let point = CGPoint(x: location.x / scale, y: location.y / scale)
+        let hit = shape(at: point, on: slide, scale: scale)
+        // Text being typed into has the system's own menu.
+        if let editing = state.editingTextShapeID, hit?.id == editing { return }
+        if let hit {
+            if !state.isSelected(hit.id) { state.selectedShapeID = hit.id }
+            if case .table(let table) = hit.kind, !state.hasMultipleSelection {
+                let cell = tableLayout(table, shape: hit, on: slide).cell(at: point)
+                if cell != state.selectedCell || state.isEditingCell { state.selectCell(cell) }
+            }
+        } else {
+            state.selectedShapeID = nil
+        }
+        isPressingForMenu = true
+        openMenu(at: location, on: slide, scale: scale)
+    }
+
+    /// Opens the menu by `location`, in view points on the slide, kept clear
+    /// of the selected shapes.
+    private func openMenu(at location: CGPoint, on slide: Slide, scale: CGFloat) {
+        let bounds = slide.shapes.filter { state.isSelected($0.id) }.map(\.boundingBox).reduce(CGRect.null) { $0.union($1) }
+        let avoiding = bounds.isNull
+            ? nil
+            : CGRect(x: bounds.minX * scale, y: bounds.minY * scale, width: bounds.width * scale, height: bounds.height * scale)
+        menuRequest = CanvasMenuRequest(point: location, avoiding: avoiding)
+    }
+
+    private func editMenu(on slide: Slide, scale: CGFloat) -> some View {
+        CanvasEditMenu(
+            request: menuRequest,
+            menu: { state.canvasMenu(in: presentation, canPaste: PasteboardMonitor.shared.kind != nil) },
+            perform: { state.perform($0, in: $presentation) },
+            onDismiss: {
+                menuRequest = nil
+                menuDismissedAt = .now
+            }
+        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 
     /// Whether a hardware keyboard's Shift key is down. SwiftUI's taps do
@@ -543,6 +627,12 @@ struct SlideCanvas: View {
         DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.viewportSpace))
             .onChanged { value in
                 guard pinch == nil else { return }
+                // A press that opened the menu doesn't go on to drag.
+                if isPressingForMenu || isDragIgnored {
+                    isDragIgnored = true
+                    return
+                }
+                if menuRequest != nil { menuRequest = nil }
                 if interaction == nil, panOrigin == nil {
                     let origin = CGPoint(
                         x: fitting.center.x + viewport.pan.width - size.width / 2,
@@ -589,7 +679,9 @@ struct SlideCanvas: View {
             }
             .onEnded { value in
                 guides = []
-                if panOrigin != nil {
+                if isDragIgnored {
+                    isDragIgnored = false
+                } else if panOrigin != nil {
                     panOrigin = nil
                 } else if let interaction {
                     commit(interaction)
