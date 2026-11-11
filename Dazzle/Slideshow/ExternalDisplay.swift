@@ -47,6 +47,7 @@ struct AudienceView: View {
                             )
                         }
                         .id(slide.id)
+                        // Blanking fades; slides change with their own transitions.
                         .transition(.opacity)
                 }
             } else if showsIdleBrand {
@@ -59,7 +60,6 @@ struct AudienceView: View {
                 .foregroundStyle(.white.opacity(0.35))
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: session.currentSlide?.id)
         .animation(.easeInOut(duration: 0.25), value: session.isBlanked)
         .ignoresSafeArea()
         .persistentSystemOverlays(.hidden)

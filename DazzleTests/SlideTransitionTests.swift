@@ -196,6 +196,44 @@ struct SlideTransitionTests {
         #expect(random.played(reduceMotion: true, seed: 3).effect == .fade(throughBlack: false))
     }
 
+    @Test("The show plays the slide's transition, waits for it before moving on by itself, and a tap finishes it")
+    @MainActor
+    func playback() async throws {
+        var presentation = Presentation.blank
+        let state = EditorState()
+        let layout = try #require(presentation.resources.orderedLayouts.last)
+        state.addSlide(using: layout, in: &presentation)
+        state.addSlide(using: layout, in: &presentation)
+        presentation.slides[1].transition = SlideTransition(effect: .push(.left), duration: 0.4)
+        presentation.slides[1].autoAdvanceAfter = 0.1
+        let session = PresentationSession()
+        session.start(presentation, title: "Transitions", fromSlide: 0, owner: UUID())
+        #expect(session.transition == nil)
+        session.next()
+        #expect(session.position == 1)
+        let showing = try #require(session.transition)
+        #expect(showing.outgoing.id == presentation.slides[0].id)
+        #expect(session.isAnimating)
+        #expect(abs(showing.progress(at: showing.startedAt.addingTimeInterval(0.2)) - 0.5) < 0.001)
+        // Moving on by itself counts from the end of the transition.
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(session.position == 1)
+        try await Task.sleep(for: .milliseconds(700))
+        #expect(session.position == 2)
+        #expect(session.transition == nil)
+        // A tap during a transition finishes it rather than moving on.
+        session.go(toPosition: 0)
+        session.go(toPosition: 1)
+        #expect(session.transition != nil)
+        session.next()
+        #expect(session.transition == nil && session.position == 1)
+        // Going back has no transition.
+        session.next()
+        session.previous()
+        #expect(session.transition == nil)
+        session.end()
+    }
+
     // MARK: - Decks
 
     /// A one-slide deck whose slide has `slideXML` after its colour mapping.
