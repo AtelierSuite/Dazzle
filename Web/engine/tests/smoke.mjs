@@ -921,6 +921,61 @@ test("plays a Keynote movie as the slide appears and its sound on a tap, and sav
   assert.match(new TextDecoder().decode(saved.get("ppt/slides/slide1.xml")), /p14:media/);
 });
 
+/** A new presentation whose slide holds SmartArt with no drawing of itself: a basic cycle of three points. */
+function deckWithSmartArt() {
+  call("new", { name: "SmartArt.pptx" });
+  const entries = unzip(call("save", { format: "pptx" }).payload);
+  const decode = (name) => new TextDecoder().decode(entries.get(name));
+  const encode = (name, text) => entries.set(name, new TextEncoder().encode(text));
+  const dgm = "http://schemas.openxmlformats.org/drawingml/2006/diagram";
+  const a = "http://schemas.openxmlformats.org/drawingml/2006/main";
+  const points = ["Plan", "Do", "Check"].map((text, index) => `<dgm:pt modelId="{n${index}}"><dgm:prSet/><dgm:spPr/>
+    <dgm:t><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>${text}</a:t></a:r></a:p></dgm:t></dgm:pt>`).join("");
+  const connections = [0, 1, 2].map((index) => `<dgm:cxn modelId="{c${index}}" srcId="{doc}" destId="{n${index}}" srcOrd="${index}" destOrd="0"/>`).join("");
+  encode("ppt/diagrams/data1.xml", `<dgm:dataModel xmlns:dgm="${dgm}" xmlns:a="${a}"><dgm:ptLst>
+    <dgm:pt modelId="{doc}" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2005/8/layout/cycle2"/><dgm:spPr/></dgm:pt>
+    ${points}</dgm:ptLst><dgm:cxnLst>${connections}</dgm:cxnLst><dgm:bg/><dgm:whole/></dgm:dataModel>`);
+  encode("ppt/diagrams/layout1.xml", `<dgm:layoutDef xmlns:dgm="${dgm}" uniqueId="urn:microsoft.com/office/officeart/2005/8/layout/cycle2"/>`);
+  encode("ppt/diagrams/quickStyle1.xml", `<dgm:styleDef xmlns:dgm="${dgm}" xmlns:a="${a}" uniqueId="urn:microsoft.com/office/officeart/2005/8/quickstyle/simple1"/>`);
+  encode("ppt/diagrams/colors1.xml", `<dgm:colorsDef xmlns:dgm="${dgm}" xmlns:a="${a}" uniqueId="urn:test/colors"><dgm:styleLbl name="node1">
+    <dgm:fillClrLst meth="repeat"><a:srgbClr val="FF0000"/><a:srgbClr val="00FF00"/></dgm:fillClrLst></dgm:styleLbl></dgm:colorsDef>`);
+  const frame = `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="950" name="Cycle"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+    <p:xfrm><a:off x="914400" y="914400"/><a:ext cx="7315200" cy="4572000"/></p:xfrm><a:graphic>
+    <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="${dgm}"
+    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:dm="rIdDm" r:lo="rIdLo" r:qs="rIdQs" r:cs="rIdCs"/>
+    </a:graphicData></a:graphic></p:graphicFrame>`;
+  encode("ppt/slides/slide1.xml", decode("ppt/slides/slide1.xml").replace("</p:spTree>", `${frame}</p:spTree>`));
+  const relsName = "ppt/slides/_rels/slide1.xml.rels";
+  const relationship = (id, type, target) =>
+    `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="../diagrams/${target}"/>`;
+  encode(relsName, decode(relsName).replace("</Relationships>", relationship("rIdDm", "diagramData", "data1.xml")
+    + relationship("rIdLo", "diagramLayout", "layout1.xml") + relationship("rIdQs", "diagramQuickStyle", "quickStyle1.xml")
+    + relationship("rIdCs", "diagramColors", "colors1.xml") + "</Relationships>"));
+  return { bytes: zip(entries), entries };
+}
+
+test("lays out SmartArt that has no drawing of itself, and saves its parts as they were", () => {
+  const { bytes, entries } = deckWithSmartArt();
+  const sceneOf = (opened) => call("scene", { slide: opened.state.slides[0].id }).result.shapes.find((node) => node.name === "Cycle");
+  const cycle = sceneOf(call("open", { name: "SmartArt.pptx" }, bytes));
+  assert.equal(cycle?.kind, "group", "drawn, not a stand-in");
+  const labelled = (node) => node.text && text(node.text) !== "";
+  const circles = cycle.children.filter(labelled);
+  assert.deepEqual(circles.map((node) => text(node.text)), ["Plan", "Do", "Check"]);
+  assert.deepEqual(circles.map((node) => node.fill?.c), ["#ff0000", "#00ff00", "#ff0000"], "in the colours part's colours, in turn");
+  const arrows = cycle.children.filter((node) => !labelled(node));
+  assert.equal(arrows.length, 3, "an arrow between each");
+  assert.ok(arrows.every((node) => node.rot > 0), "turned to point round the ring");
+
+  const saved = unzip(call("save", { format: "pptx", keep: true }).payload);
+  for (const name of ["data1", "layout1", "quickStyle1", "colors1"]) {
+    assert.deepEqual(saved.get(`ppt/diagrams/${name}.xml`), entries.get(`ppt/diagrams/${name}.xml`), `keeps ${name} as it was`);
+  }
+  assert.ok(![...saved.keys()].some((name) => name.includes("drawing")), "makes up no drawing");
+  const reopened = sceneOf(call("open", { name: "Again.pptx" }, zip(saved)));
+  assert.deepEqual(reopened.children.filter(labelled).map((node) => text(node.text)), ["Plan", "Do", "Check"]);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
