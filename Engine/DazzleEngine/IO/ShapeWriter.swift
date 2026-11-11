@@ -276,7 +276,7 @@ public struct ShapeWriter {
     private func writeEffects(of shape: SlideShape, into element: XMLElement) {
         guard let properties = properties(of: element) else { return }
         for child in properties.children where child.name == "effectDag" { properties.removeChild(child) }
-        // Effects we do not model, such as a glow or soft edges, stay as they were.
+        // Effects Dazzle draws but does not edit, such as a glow or soft edges, stay as they were.
         guard let effects = properties.firstChild(named: "effectLst") ?? fragment("<a:effectLst/>") else { return }
         if effects.parent !== properties {
             let before = properties.children.firstIndex { ["scene3d", "sp3d", "extLst"].contains($0.name) }
@@ -358,6 +358,12 @@ public struct ShapeWriter {
             element.insertChild(created, at: before)
             body = created
         }
+        // Columns the text is set in, which the file may not have said yet.
+        if let properties = body.firstChild(named: "bodyPr") {
+            if let count = text.properties.columnCount { properties.setAttribute("numCol", String(count)) }
+            if let spacing = text.properties.columnSpacing { properties.setAttribute("spcCol", String(spacing)) }
+            if let rightToLeft = text.properties.columnsRightToLeft { properties.setAttribute("rtlCol", rightToLeft ? "1" : "0") }
+        }
         for paragraph in body.children(named: "p") {
             body.removeChild(paragraph)
         }
@@ -408,11 +414,20 @@ public struct ShapeWriter {
         guard let fill = element.firstChild(named: "blipFill") else { return }
         if let path = picture.imagePath, let blip = fill.firstChild(named: "blip") {
             blip.setAttribute("embed", relationshipID(forImage: path))
-            for child in blip.children where ["alphaModFix", "grayscl", "duotone", "lum"].contains(child.name) {
+            for child in blip.children where BlipEffects.colorElementNames.contains(child.name) {
                 blip.removeChild(child)
             }
-            if let effects = fragment("<a:blip>\(picture.effects.xml)</a:blip>") {
+            if let effects = fragment("<a:blip>\(picture.effects.colorXML)</a:blip>") {
                 for child in effects.children { blip.insertChild(child, at: blip.children.firstIndex { $0.name == "extLst" } ?? blip.children.count) }
+            }
+            // Artistic effects the blip was read with stay as they were, original picture and all.
+            let hasArtistic = blip.firstChild(named: "extLst")?.children(named: "ext").contains { $0.firstChild(named: "imgProps") != nil } ?? false
+            if !hasArtistic, let list = fragment("<a:blip>\(picture.effects.artisticXML)</a:blip>")?.firstChild(named: "extLst") {
+                if let existing = blip.firstChild(named: "extLst") {
+                    for ext in list.children { existing.insertChild(ext, at: 0) }
+                } else {
+                    blip.insertChild(list, at: blip.children.count)
+                }
             }
         }
         fill.firstChild(named: "srcRect").map(fill.removeChild)
@@ -540,6 +555,7 @@ public struct ShapeWriter {
         }
         if let margin = properties.marginLeft { element.setAttribute("marL", String(margin)) }
         if let indent = properties.indent { element.setAttribute("indent", String(indent)) }
+        if let size = properties.defaultTabSize { element.setAttribute("defTabSz", String(size)) }
 
         // Children, each in its place in the schema's order.
         func place(_ xml: String, replacing names: Set<String>) {
@@ -557,6 +573,7 @@ public struct ShapeWriter {
         if let line = properties.lineSpacing { place("<a:lnSpc>\(spacing(line))</a:lnSpc>", replacing: ["lnSpc"]) }
         if let before = properties.spaceBefore { place("<a:spcBef>\(spacing(before))</a:spcBef>", replacing: ["spcBef"]) }
         if let after = properties.spaceAfter { place("<a:spcAft>\(spacing(after))</a:spcAft>", replacing: ["spcAft"]) }
+        if let stops = properties.tabStops { place(TabStop.xml(stops), replacing: ["tabLst"]) }
         if let font = properties.bulletFont {
             place("<a:buFont typeface=\"\(XMLLite.escape(font))\"/>", replacing: ["buFont", "buFontTx"])
         }

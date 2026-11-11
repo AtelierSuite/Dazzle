@@ -1,3 +1,6 @@
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 import Foundation
 
 /// How the inside of a shape, or a background, is painted.
@@ -9,6 +12,8 @@ public enum Fill: Equatable, Hashable, Sendable {
     case picture(path: String, effects: BlipEffects = BlipEffects())
     /// A picture repeated across the area, laid out as `tile` says.
     case tiledPicture(path: String, effects: BlipEffects = BlipEffects(), tile: Tile = Tile())
+    /// One of DrawingML's preset patterns, in two colours.
+    case pattern(Pattern)
     /// Whatever the enclosing group is filled with.
     case group
 
@@ -24,20 +29,191 @@ public enum Fill: Equatable, Hashable, Sendable {
             }
         }
 
+        /// `a:path`: how a gradient grows outward from its starting area,
+        /// rather than running along a line.
+        public enum Path: String, Sendable, CaseIterable {
+            /// Circles, from around the starting area to around the tile.
+            case circle
+            /// Rectangles, from the starting area's edges to the tile's.
+            case rect
+            /// Copies of the shape's own outline, from the starting area to the tile.
+            case shape
+        }
+
+        /// `a:fillToRect` or `a:tileRect`: a box set in from each edge of an
+        /// area by fractions of its size. Negative values reach outside it.
+        public struct Insets: Equatable, Hashable, Sendable {
+            public var left: Double
+            public var top: Double
+            public var right: Double
+            public var bottom: Double
+
+            /// The whole area.
+            public static let zero = Insets(left: 0, top: 0, right: 0, bottom: 0)
+            /// The point at the area's centre.
+            public static let center = Insets(left: 0.5, top: 0.5, right: 0.5, bottom: 0.5)
+
+            public init(left: Double, top: Double, right: Double, bottom: Double) {
+                self.left = left
+                self.top = top
+                self.right = right
+                self.bottom = bottom
+            }
+
+            /// Values the element leaves out are 0. Fractions come as
+            /// thousandths of a percent, or in strict files as "50%".
+            public init(element: XMLElement) {
+                func fraction(_ key: String) -> Double {
+                    guard let value = element.attribute(key) else { return 0 }
+                    if value.hasSuffix("%") { return Double(value.dropLast()).map { $0 / 100 } ?? 0 }
+                    return Double(value).map { $0 / 100_000 } ?? 0
+                }
+                self.init(left: fraction("l"), top: fraction("t"), right: fraction("r"), bottom: fraction("b"))
+            }
+
+            /// The box within `area`.
+            public func rect(in area: CGRect) -> CGRect {
+                CGRect(
+                    x: area.minX + area.width * left, y: area.minY + area.height * top,
+                    width: area.width * (1 - left - right), height: area.height * (1 - top - bottom)
+                )
+            }
+
+            func xml(_ name: String) -> String {
+                func value(_ fraction: Double) -> Int { Int((fraction * 100_000).rounded()) }
+                return "<a:\(name) l=\"\(value(left))\" t=\"\(value(top))\" r=\"\(value(right))\" b=\"\(value(bottom))\"/>"
+            }
+        }
+
         public var stops: [Stop]
         /// Degrees clockwise from left-to-right, for a linear gradient.
         public var angle: Double
-        public var isRadial: Bool
-        /// Where a radial gradient starts, as fractions of the area.
-        public var focusX = 0.5
-        public var focusY = 0.5
+        /// `nil` for a linear gradient.
+        public var path: Path?
+        /// `scaled`: whether a linear gradient's angle is set for a square
+        /// and stretched with the area, rather than kept as it is.
+        public var isScaled = false
+        /// Where a path gradient starts, within the area: its first colour fills this box.
+        public var fillToRect = Insets.center
+        /// The box the gradient spans, against the area: a path gradient ends
+        /// at its edges, and a linear one runs across it.
+        public var tileRect = Insets.zero
 
-        public init(stops: [Stop], angle: Double, isRadial: Bool, focusX: Double = 0.5, focusY: Double = 0.5) {
+        public init(
+            stops: [Stop], angle: Double, path: Path? = nil, isScaled: Bool = false,
+            fillToRect: Insets = .center, tileRect: Insets = .zero
+        ) {
             self.stops = stops
             self.angle = angle
-            self.isRadial = isRadial
-            self.focusX = focusX
-            self.focusY = focusY
+            self.path = path
+            self.isScaled = isScaled
+            self.fillToRect = fillToRect
+            self.tileRect = tileRect
+        }
+
+        public init(stops: [Stop], angle: Double, isRadial: Bool) {
+            self.init(stops: stops, angle: angle, path: isRadial ? .circle : nil)
+        }
+
+        /// Whether the gradient grows outward from an area, rather than
+        /// running along a line. Turning it on makes it circular.
+        public var isRadial: Bool {
+            get { path != nil }
+            set { path = newValue ? path ?? .circle : nil }
+        }
+
+        /// The gradient's colour `position` of the way along it, 0…1, with
+        /// `resolve` turning each stop's colour into components.
+        public func color(at position: Double, resolve: (DrawingColor) -> RGBAColor) -> RGBAColor {
+            guard let first = stops.first, let last = stops.last else { return .black }
+            if position <= first.position { return resolve(first.color) }
+            if position >= last.position { return resolve(last.color) }
+            let after = stops.firstIndex { $0.position >= position } ?? stops.count - 1
+            let start = stops[after - 1], end = stops[after]
+            let span = end.position - start.position
+            let fraction = span > 0 ? (position - start.position) / span : 1
+            let from = resolve(start.color), to = resolve(end.color)
+            func mix(_ a: Double, _ b: Double) -> Double { a + (b - a) * fraction }
+            return RGBAColor(
+                red: mix(from.red, to.red), green: mix(from.green, to.green), blue: mix(from.blue, to.blue),
+                alpha: mix(from.alpha, to.alpha)
+            )
+        }
+
+        /// A linear gradient's line, across the tile within `bounds`: its ends
+        /// around the tile's centre, and how far to stretch them across and
+        /// down. A scaled gradient's angle is set for a unit square, then
+        /// stretched to the tile; otherwise it is as it is, unstretched.
+        public func linearAxis(in bounds: CGRect) -> (center: CGPoint, start: CGPoint, end: CGPoint, scaleX: CGFloat, scaleY: CGFloat) {
+            let tile = tileRect.rect(in: bounds)
+            let size = isScaled ? CGSize(width: 1, height: 1) : tile.size
+            let radians = angle * .pi / 180
+            // Half the gradient's length: far enough to reach the corners either way.
+            let half = (abs(cos(radians)) * size.width + abs(sin(radians)) * size.height) / 2
+            let delta = CGPoint(x: cos(radians) * half, y: sin(radians) * half)
+            return (
+                CGPoint(x: tile.midX, y: tile.midY), CGPoint(x: -delta.x, y: -delta.y), delta,
+                isScaled ? tile.width : 1, isScaled ? tile.height : 1
+            )
+        }
+
+        /// A circular gradient's circles within `bounds`: it starts around
+        /// `fillToRect` and ends around the tile.
+        public func circles(in bounds: CGRect) -> (start: CGPoint, startRadius: CGFloat, end: CGPoint, endRadius: CGFloat) {
+            let focus = fillToRect.rect(in: bounds).standardized, tile = tileRect.rect(in: bounds).standardized
+            return (
+                CGPoint(x: focus.midX, y: focus.midY), hypot(focus.width, focus.height) / 2,
+                CGPoint(x: tile.midX, y: tile.midY), hypot(tile.width, tile.height) / 2
+            )
+        }
+
+        /// A rectangular gradient within `bounds`, as the four bands between
+        /// the edges of `fillToRect` and of the tile: each band's outline,
+        /// and the line its colours run along, from the starting edge to the
+        /// tile's. Inside `fillToRect` it is the first colour throughout.
+        public func rectangleBands(in bounds: CGRect) -> [(outline: [CGPoint], start: CGPoint, end: CGPoint)] {
+            let focus = fillToRect.rect(in: bounds).standardized, tile = tileRect.rect(in: bounds).standardized
+            let corners = (
+                tile: [CGPoint(x: tile.minX, y: tile.minY), CGPoint(x: tile.maxX, y: tile.minY),
+                       CGPoint(x: tile.maxX, y: tile.maxY), CGPoint(x: tile.minX, y: tile.maxY)],
+                focus: [CGPoint(x: focus.minX, y: focus.minY), CGPoint(x: focus.maxX, y: focus.minY),
+                        CGPoint(x: focus.maxX, y: focus.maxY), CGPoint(x: focus.minX, y: focus.maxY)]
+            )
+            // Top, right, bottom, left: each from its two tile corners in to the focus's.
+            let lines = [
+                (CGPoint(x: focus.midX, y: focus.minY), CGPoint(x: focus.midX, y: tile.minY)),
+                (CGPoint(x: focus.maxX, y: focus.midY), CGPoint(x: tile.maxX, y: focus.midY)),
+                (CGPoint(x: focus.midX, y: focus.maxY), CGPoint(x: focus.midX, y: tile.maxY)),
+                (CGPoint(x: focus.minX, y: focus.midY), CGPoint(x: tile.minX, y: focus.midY)),
+            ]
+            return (0..<4).compactMap { side in
+                let (start, end) = lines[side]
+                guard hypot(end.x - start.x, end.y - start.y) > 0.001 else { return nil }
+                let next = (side + 1) % 4
+                return ([corners.tile[side], corners.tile[next], corners.focus[next], corners.focus[side]], start, end)
+            }
+        }
+
+        /// Where a shape gradient puts a copy of the outline `position` of the
+        /// way along it: the box `bounds` is shrunk or grown into, from
+        /// `fillToRect` at 0 to the tile at 1.
+        public func outlineBox(at position: Double, in bounds: CGRect) -> CGRect {
+            let focus = fillToRect.rect(in: bounds), tile = tileRect.rect(in: bounds)
+            func mix(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * position }
+            return CGRect(
+                x: mix(focus.minX, tile.minX), y: mix(focus.minY, tile.minY),
+                width: mix(focus.width, tile.width), height: mix(focus.height, tile.height)
+            )
+        }
+
+        /// How many copies of the outline a shape gradient within `bounds`
+        /// needs to look smooth: about one a point, within reason.
+        public func outlineSteps(in bounds: CGRect) -> Int {
+            let focus = fillToRect.rect(in: bounds), tile = tileRect.rect(in: bounds)
+            let reach = max(
+                abs(focus.minX - tile.minX), abs(focus.minY - tile.minY), abs(focus.maxX - tile.maxX), abs(focus.maxY - tile.maxY)
+            )
+            return min(max(Int(reach.rounded(.up)), 8), 256)
         }
     }
 
@@ -140,14 +316,16 @@ public enum Fill: Equatable, Hashable, Sendable {
                 }
             }.sorted { $0.position < $1.position }
             guard !stops.isEmpty else { return Fill.none }
-            let angle = Double(element.firstChild(named: "lin")?.attribute("ang").flatMap(Int.init) ?? 0) / 60_000
-            var gradient = Gradient(stops: stops, angle: angle, isRadial: element.firstChild(named: "path") != nil)
-            // `fillToRect` insets the focus from each edge; its centre is where the gradient starts.
-            if let focus = element.firstChild(named: "path")?.firstChild(named: "fillToRect") {
-                func inset(_ key: String) -> Double { Double(focus.attribute(key).flatMap(Int.init) ?? 0) / 100_000 }
-                gradient.focusX = (inset("l") + 1 - inset("r")) / 2
-                gradient.focusY = (inset("t") + 1 - inset("b")) / 2
+            var gradient = Gradient(stops: stops, angle: 0)
+            if let line = element.firstChild(named: "lin") {
+                gradient.angle = Double(line.attribute("ang").flatMap(Int.init) ?? 0) / 60_000
+                gradient.isScaled = line.attribute("scaled").map { $0 == "1" || $0 == "true" } ?? false
+            } else if let path = element.firstChild(named: "path") {
+                gradient.path = path.attribute("path").flatMap(Gradient.Path.init(rawValue:)) ?? .circle
+                // Without a `fillToRect`, the gradient starts from the centre.
+                if let focus = path.firstChild(named: "fillToRect") { gradient.fillToRect = Gradient.Insets(element: focus) }
             }
+            if let tile = element.firstChild(named: "tileRect") { gradient.tileRect = Gradient.Insets(element: tile) }
             return .gradient(gradient)
         case "blipFill":
             guard let reference = element.firstChild(named: "blip")?.attribute("embed"),
@@ -158,8 +336,7 @@ public enum Fill: Equatable, Hashable, Sendable {
             }
             return .picture(path: path, effects: effects)
         case "pattFill":
-            // A pattern is drawn as its foreground, which is what it reads as at a distance.
-            return DrawingColor.first(in: element.firstChild(named: "fgClr")).map(Fill.solid) ?? Fill.none
+            return .pattern(Pattern(element: element))
         case "grpFill":
             return .group
         default:
@@ -174,27 +351,70 @@ public enum Fill: Equatable, Hashable, Sendable {
         case .none, .picture, .tiledPicture: return "<a:noFill/>"
         case .group: return "<a:grpFill/>"
         case .solid(let color): return "<a:solidFill>\(color.xml)</a:solidFill>"
+        case .pattern(let pattern): return pattern.xml
         case .gradient(let gradient):
             let stops = gradient.stops.map { "<a:gs pos=\"\(Int($0.position * 100_000))\">\($0.color.xml)</a:gs>" }
-            let shade = gradient.isRadial
-                ? "<a:path path=\"circle\"><a:fillToRect l=\"50000\" t=\"50000\" r=\"50000\" b=\"50000\"/></a:path>"
-                : "<a:lin ang=\"\(Int(gradient.angle * 60_000))\" scaled=\"0\"/>"
-            return "<a:gradFill rotWithShape=\"1\"><a:gsLst>\(stops.joined())</a:gsLst>\(shade)</a:gradFill>"
+            let shade = gradient.path.map { "<a:path path=\"\($0.rawValue)\">\(gradient.fillToRect.xml("fillToRect"))</a:path>" }
+                ?? "<a:lin ang=\"\(Int((gradient.angle * 60_000).rounded()))\" scaled=\"\(gradient.isScaled ? 1 : 0)\"/>"
+            let tile = gradient.tileRect == .zero ? "" : gradient.tileRect.xml("tileRect")
+            return "<a:gradFill rotWithShape=\"1\"><a:gsLst>\(stops.joined())</a:gsLst>\(shade)\(tile)</a:gradFill>"
         }
     }
 }
 
 /// What a picture's `a:blip` does to its colours.
 public struct BlipEffects: Equatable, Hashable, Sendable {
+    /// `clrChange`: one colour of the picture swapped for another, most
+    /// often for transparency ("Set Transparent Colour").
+    public struct ColorChange: Equatable, Hashable, Sendable {
+        public var from: DrawingColor
+        public var to: DrawingColor
+        /// `useA`: whether a pixel's alpha has to match `from`'s too.
+        public var usesAlpha = true
+
+        public init(from: DrawingColor, to: DrawingColor, usesAlpha: Bool = true) {
+            self.from = from
+            self.to = to
+            self.usesAlpha = usesAlpha
+        }
+
+        /// How far a pixel may be from `from` and still be changed: the sum
+        /// of its channels' differences, 0…3. The file gives no tolerance,
+        /// but PowerPoint takes near colours too, without which a JPEG's
+        /// compression would leave a speckled fringe where the colour was.
+        public static let tolerance = 0.1
+
+        var xml: String {
+            "<a:clrChange\(usesAlpha ? "" : " useA=\"0\"")><a:clrFrom>\(from.xml)</a:clrFrom><a:clrTo>\(to.xml)</a:clrTo></a:clrChange>"
+        }
+    }
+
     /// `alphaModFix`: the whole picture partly transparent.
     public var opacity = 1.0
+    public var colorChange: ColorChange?
+    /// `biLevel`: black or white either side of this luminance, 0…1.
+    public var biLevelThreshold: Double?
     /// `grayscl`.
     public var isGreyscale = false
     /// `duotone`: dark to light mapped onto these two colours.
     public var duotone: [DrawingColor] = []
+    /// `hsl`: hue turned by degrees; saturation and luminance moved by −1…1.
+    public var hueShift = 0.0
+    public var saturationShift = 0.0
+    public var luminanceShift = 0.0
+    /// `tint`: colours pulled towards a hue in degrees, by −1…1.
+    public var tintHue = 0.0
+    public var tintAmount = 0.0
     /// `lum`: picture brightness and contrast, distinct from its alpha.
     public var brightness = 0.0
     public var contrast = 0.0
+    /// `a14:imgEffect`s: the artistic effects and picture corrections of
+    /// Office 2010 and later, in the order they were applied.
+    public var artistic: [ArtisticEffect] = []
+    /// Whether `a14:imgLayer` keeps the original picture apart (`r:embed`).
+    /// It does when Office wrote it, and then the blip's own picture is the
+    /// original with `artistic` already applied, to be shown as it is.
+    public var hasOriginalLayer = false
 
     public init() {
         // No effects: the picture as it is.
@@ -202,26 +422,119 @@ public struct BlipEffects: Equatable, Hashable, Sendable {
 
     public init(blip: XMLElement?) {
         guard let blip else { return }
-        opacity = blip.firstChild(named: "alphaModFix")?.attribute("amt").flatMap(Double.init).map { $0 / 100_000 } ?? 1
+        func fraction(_ element: XMLElement?, _ key: String) -> Double? {
+            element?.attribute(key).flatMap(Double.init).map { $0 / 100_000 }
+        }
+        opacity = fraction(blip.firstChild(named: "alphaModFix"), "amt") ?? 1
+        if let change = blip.firstChild(named: "clrChange"),
+           let from = DrawingColor.first(in: change.firstChild(named: "clrFrom")),
+           let to = DrawingColor.first(in: change.firstChild(named: "clrTo")) {
+            colorChange = ColorChange(from: from, to: to, usesAlpha: !["0", "false"].contains(change.attribute("useA") ?? ""))
+        }
+        if let biLevel = blip.firstChild(named: "biLevel") {
+            biLevelThreshold = fraction(biLevel, "thresh") ?? 0
+        }
         isGreyscale = blip.firstChild(named: "grayscl") != nil
         let tones = blip.firstChild(named: "duotone")?.children.compactMap(DrawingColor.init(element:)) ?? []
         if tones.count == 2 { duotone = tones }
+        if let hsl = blip.firstChild(named: "hsl") {
+            hueShift = (hsl.attribute("hue").flatMap(Double.init) ?? 0) / 60_000
+            saturationShift = fraction(hsl, "sat") ?? 0
+            luminanceShift = fraction(hsl, "lum") ?? 0
+        }
+        if let tint = blip.firstChild(named: "tint") {
+            tintHue = (tint.attribute("hue").flatMap(Double.init) ?? 0) / 60_000
+            tintAmount = fraction(tint, "amt") ?? 0
+        }
         if let lum = blip.firstChild(named: "lum") {
-            brightness = (lum.attribute("bright").flatMap(Double.init) ?? 0) / 100_000
-            contrast = (lum.attribute("contrast").flatMap(Double.init) ?? 0) / 100_000
+            brightness = fraction(lum, "bright") ?? 0
+            contrast = fraction(lum, "contrast") ?? 0
+        }
+        // `a:extLst/a:ext/a14:imgProps/a14:imgLayer/a14:imgEffect/…`
+        let layer = blip.firstChild(named: "extLst")?.children(named: "ext")
+            .lazy.compactMap { $0.firstChild(named: "imgProps")?.firstChild(named: "imgLayer") }.first
+        if let layer {
+            hasOriginalLayer = !(layer.attribute("embed") ?? "").isEmpty
+            artistic = layer.children(named: "imgEffect").compactMap { $0.children.first.map(ArtisticEffect.init(element:)) }
         }
     }
 
-    /// Whether the picture's colours change at all.
-    public var altersColor: Bool { isGreyscale || !duotone.isEmpty || brightness != 0 || contrast != 0 }
+    /// The artistic effects still to be applied when the picture is drawn:
+    /// none when the blip's picture already has them.
+    public var pendingArtistic: [ArtisticEffect] {
+        hasOriginalLayer ? [] : artistic.filter { $0.isVisible && $0.look != nil }
+    }
 
-    public var xml: String {
+    /// Whether the picture's colours change at all.
+    public var altersColor: Bool {
+        colorChange != nil || biLevelThreshold != nil || isGreyscale || !duotone.isEmpty
+            || hueShift != 0 || saturationShift != 0 || luminanceShift != 0 || tintAmount != 0
+            || brightness != 0 || contrast != 0 || !pendingArtistic.isEmpty
+    }
+
+    /// The effects' colours resolved, as a renderer applies them.
+    public func resolved(_ color: (DrawingColor) -> RGBAColor) -> ResolvedPictureEffects {
+        var resolved = ResolvedPictureEffects()
+        resolved.colorChange = colorChange.map { (color($0.from), color($0.to), $0.usesAlpha) }
+            .map { ResolvedPictureEffects.ColorChange(from: $0.0, to: $0.1, usesAlpha: $0.2) }
+        resolved.biLevelThreshold = biLevelThreshold
+        resolved.isGreyscale = isGreyscale
+        resolved.duotone = duotone.count == 2 ? duotone.map(color) : []
+        if hueShift != 0 || saturationShift != 0 || luminanceShift != 0 {
+            resolved.hsl = ColorMatrix.hueRotation(hueShift)
+                .then(.saturation(1 + saturationShift))
+                .then(luminanceShift >= 0 ? .linear(slope: 1 - luminanceShift, intercept: luminanceShift)
+                    : .linear(slope: 1 + luminanceShift, intercept: 0))
+        }
+        if tintAmount != 0 {
+            let turn = (tintHue / 360).truncatingRemainder(dividingBy: 1)
+            resolved.tint = ResolvedPictureEffects.Tint(
+                color: RGBAColor(hue: turn < 0 ? turn + 1 : turn, saturation: 1, luminance: 0.5),
+                amount: min(max(tintAmount, -1), 1)
+            )
+        }
+        if brightness != 0 || contrast != 0 { resolved.luminance = .brightnessContrast(brightness, contrast) }
+        resolved.artistic = pendingArtistic.compactMap { effect in effect.look.map { ($0, effect.transparency) } }
+            .map { ResolvedPictureEffects.Artistic(look: $0.0, transparency: $0.1) }
+        return resolved
+    }
+
+    /// The effects as the children of an `a:blip`. Artistic effects are
+    /// written only while they are still to be applied: a picture they were
+    /// applied to is already what they make it, and the original it came
+    /// from is a part only the XML it was read with can point to.
+    public var xml: String { colorXML + artisticXML }
+
+    /// The colour effects alone, each named in `colorElementNames`.
+    public var colorXML: String {
         let alpha = opacity < 1 ? "<a:alphaModFix amt=\"\(Int((opacity * 100_000).rounded()))\"/>" : ""
+        let change = colorChange?.xml ?? ""
+        let biLevel = biLevelThreshold.map { "<a:biLevel thresh=\"\(Int(($0 * 100_000).rounded()))\"/>" } ?? ""
         let grey = isGreyscale ? "<a:grayscl/>" : ""
         let tones = duotone.count == 2 ? "<a:duotone>\(duotone.map(\.xml).joined())</a:duotone>" : ""
+        let hsl = hueShift != 0 || saturationShift != 0 || luminanceShift != 0
+            ? "<a:hsl hue=\"\(Int((hueShift * 60_000).rounded()))\" sat=\"\(Int((saturationShift * 100_000).rounded()))\""
+                + " lum=\"\(Int((luminanceShift * 100_000).rounded()))\"/>" : ""
         let lum = brightness != 0 || contrast != 0
             ? "<a:lum bright=\"\(Int((brightness * 100_000).rounded()))\" contrast=\"\(Int((contrast * 100_000).rounded()))\"/>" : ""
-        return alpha + grey + tones + lum
+        let tint = tintAmount != 0
+            ? "<a:tint hue=\"\(Int((tintHue * 60_000).rounded()))\" amt=\"\(Int((tintAmount * 100_000).rounded()))\"/>" : ""
+        return alpha + change + biLevel + grey + tones + hsl + lum + tint
+    }
+
+    /// The colour effects' element names, which `colorXML` writes in place of any the blip has.
+    public static let colorElementNames: Set<String> = [
+        "alphaModFix", "clrChange", "biLevel", "grayscl", "duotone", "hsl", "lum", "tint",
+    ]
+
+    /// The `a:extLst` carrying artistic effects still to be applied, or nothing.
+    public var artisticXML: String {
+        let effects = hasOriginalLayer ? [] : artistic
+        guard !effects.isEmpty else { return "" }
+        return "<a:extLst><a:ext uri=\"{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}\">"
+            + "<a14:imgProps xmlns:a14=\"\(ArtisticEffect.namespace)\"><a14:imgLayer>"
+            + effects.map { "<a14:imgEffect>\($0.xml)</a14:imgEffect>" }.joined()
+            + "</a14:imgLayer></a14:imgProps></a:ext></a:extLst>"
     }
 }
 
@@ -329,7 +642,7 @@ public struct LineStyle: Equatable, Hashable, Sendable {
     }
 }
 
-/// A shape's `p:style`: which of the theme's fill, line and font styles it
+/// A shape's `p:style`: which of the theme's fill, line, effect and font styles it
 /// uses, and the colour each is drawn in.
 public struct StyleReferences: Equatable, Hashable, Sendable {
     public struct Reference: Equatable, Hashable, Sendable {
@@ -339,6 +652,7 @@ public struct StyleReferences: Equatable, Hashable, Sendable {
 
     public var fill: Reference?
     public var line: Reference?
+    public var effect: Reference?
     /// The font reference only ever matters for its colour.
     public var fontColor: DrawingColor?
 
@@ -351,6 +665,7 @@ public struct StyleReferences: Equatable, Hashable, Sendable {
         }
         fill = reference("fillRef")
         line = reference("lnRef")
+        effect = reference("effectRef")
         fontColor = DrawingColor.first(in: element.firstChild(named: "fontRef"))
     }
 }

@@ -48,51 +48,54 @@ public final class ImageCache: @unchecked Sendable {
     /// A picture in grey, or mapped from dark to light onto two colours.
     public func recolored(_ image: CGImage, key: String, isGreyscale: Bool, duotone: [RGBAColor],
                    brightness: Double = 0, contrast: Double = 0) -> CGImage? {
-        let cacheKey = "recolored#\(key)#\(isGreyscale)#\(duotone)#\(brightness)#\(contrast)" as NSString
+        var effects = ResolvedPictureEffects()
+        effects.isGreyscale = isGreyscale
+        effects.duotone = duotone.count == 2 ? duotone : []
+        if brightness != 0 || contrast != 0 { effects.luminance = .brightnessContrast(brightness, contrast) }
+        return processed(image, key: key, effects: effects)
+    }
+
+    /// A picture with its effects applied: artistic effects first, as
+    /// Office applied them to the original, then the colour effects.
+    public func processed(_ image: CGImage, key: String, effects: ResolvedPictureEffects) -> CGImage? {
+        guard !effects.isEmpty else { return image }
+        let cacheKey = "processed#\(key)#\(effects)" as NSString
         if let cached = cache.object(forKey: cacheKey) { return cached }
-        let width = image.width
-        let height = image.height
+        var source = image
+        #if canImport(CoreImage)
+        if !effects.artistic.isEmpty, let artistic = ArtisticRenderer.apply(effects.artistic, to: image) {
+            source = artistic
+        }
+        #endif
+        let width = source.width
+        let height = source.height
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
                 data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: space,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
               ),
               let pixels = context.data?.bindMemory(to: UInt8.self, capacity: width * height * 4) else { return image }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        let dark = duotone.first
-        let light = duotone.last
-        // Office centers contrast on 128, with half the brightness shift
-        // before contrast and half after it. Preserve alpha independently.
-        let c = min(max(contrast, -1), 1)
-        let slope = c >= 0 ? 128 / (128 - 127 * c) : (128 + 127 * c) / 128
-        let shift = min(max(brightness, -1), 1) * 255 / 2
-        func adjusted(_ channel: Double) -> Double {
-            ((channel * 255 + shift - 128) * slope + 128 + shift) / 255
-        }
-        for offset in stride(from: 0, to: width * height * 4, by: 4) {
-            let alpha = Double(pixels[offset + 3]) / 255
-            guard alpha > 0 else { continue }
-            // Channels are premultiplied; take the colour out of the alpha first.
-            let luminance = (0.299 * Double(pixels[offset]) + 0.587 * Double(pixels[offset + 1])
-                + 0.114 * Double(pixels[offset + 2])) / 255 / alpha
-            var red = isGreyscale ? luminance : Double(pixels[offset]) / 255 / alpha
-            var green = isGreyscale ? luminance : Double(pixels[offset + 1]) / 255 / alpha
-            var blue = isGreyscale ? luminance : Double(pixels[offset + 2]) / 255 / alpha
-            if let dark, let light, !isGreyscale {
-                red = dark.red + (light.red - dark.red) * luminance
-                green = dark.green + (light.green - dark.green) * luminance
-                blue = dark.blue + (light.blue - dark.blue) * luminance
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var colored = effects
+        colored.artistic = []
+        if !colored.isEmpty {
+            for offset in stride(from: 0, to: width * height * 4, by: 4) {
+                let alpha = Double(pixels[offset + 3]) / 255
+                guard alpha > 0 else { continue }
+                // Channels are premultiplied; take the colour out of the alpha first.
+                let (red, green, blue, newAlpha) = colored.apply((
+                    Double(pixels[offset]) / 255 / alpha, Double(pixels[offset + 1]) / 255 / alpha,
+                    Double(pixels[offset + 2]) / 255 / alpha, alpha
+                ))
+                pixels[offset] = UInt8((min(max(red, 0), 1) * newAlpha * 255).rounded())
+                pixels[offset + 1] = UInt8((min(max(green, 0), 1) * newAlpha * 255).rounded())
+                pixels[offset + 2] = UInt8((min(max(blue, 0), 1) * newAlpha * 255).rounded())
+                pixels[offset + 3] = UInt8((min(max(newAlpha, 0), 1) * 255).rounded())
             }
-            red = adjusted(red)
-            green = adjusted(green)
-            blue = adjusted(blue)
-            pixels[offset] = UInt8(min(max(red, 0), 1) * alpha * 255)
-            pixels[offset + 1] = UInt8(min(max(green, 0), 1) * alpha * 255)
-            pixels[offset + 2] = UInt8(min(max(blue, 0), 1) * alpha * 255)
         }
-        guard let recolored = context.makeImage() else { return image }
-        cache.setObject(recolored, forKey: cacheKey)
-        return recolored
+        guard let processed = context.makeImage() else { return image }
+        cache.setObject(processed, forKey: cacheKey)
+        return processed
     }
 }
 

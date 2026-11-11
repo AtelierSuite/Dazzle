@@ -164,9 +164,11 @@ export class Inspector extends EventTarget {
     let html = this.section(t("Format.Section.Background"),
       this.row(t("Fill.Kind"), this.popup("bgKind", t("Fill.Kind"), [
         ["auto", t("Fill.Automatic")], ["solid", t("Fill.Solid")], ["gradient", t("Fill.Gradient")], ["picture", t("Fill.Picture")],
+        ...(background.own && background.kind === "pattern" ? [["pattern", t("Fill.Pattern")]] : []),
       ], background.own ? background.kind : "auto"))
       + (background.kind === "solid" || !background.own ? this.row(t("Mac.Inspector.Colour"), this.color("bgColor", t("Mac.Inspector.Colour"), background.color)) : "")
       + (background.own && background.kind === "gradient" ? this.gradientRows("bg", background) : "")
+      + (background.own && background.kind === "pattern" ? this.patternRows("bg", background) : "")
       + (background.own && background.kind === "picture" ? this.row("", this.buttons([["bgPicture", t("Fill.Picture.Change")]])) + this.row("", this.check("bgTile", t("Fill.Picture.Tile"), background.tiled)) : "")
       + this.note(t("Format.Background.Footer")));
     const layouts = (info.layouts ?? []).map((layout) => [layout.path, layout.name]);
@@ -193,8 +195,19 @@ export class Inspector extends EventTarget {
     const t = this.t;
     return this.row(t("Fill.Gradient.Start"), this.color(`${prefix}Start`, t("Fill.Gradient.Start"), fill.start ?? "#ffffff"))
       + this.row(t("Fill.Gradient.End"), this.color(`${prefix}End`, t("Fill.Gradient.End"), fill.end ?? "#000000"))
-      + this.row(t("Fill.Gradient.Direction"), this.stepper(`${prefix}Angle`, t("Fill.Gradient.Direction"), fill.angle ?? 90, { step: 15, min: 0, max: 359, unit: "°" }))
-      + this.row("", this.check(`${prefix}Radial`, t("Fill.Gradient.Radial"), fill.radial));
+      + this.row(t("Fill.Gradient.Style"), this.popup(`${prefix}Path`, t("Fill.Gradient.Style"), [
+        ["linear", t("Fill.Gradient.Linear")], ["circle", t("Fill.Gradient.Radial")],
+        ["rect", t("Fill.Gradient.Rectangular")], ["shape", t("Fill.Gradient.Path")],
+      ], fill.path ?? "linear"))
+      + ((fill.path ?? "linear") === "linear"
+        ? this.row(t("Fill.Gradient.Direction"), this.stepper(`${prefix}Angle`, t("Fill.Gradient.Direction"), fill.angle ?? 90, { step: 15, min: 0, max: 359, unit: "°" }))
+        : "");
+  }
+
+  /** A pattern fill's two colours. Patterns come from files; they're kept and recoloured, not made here. */
+  patternRows(prefix, fill) {
+    return this.row(t("Fill.Pattern.Foreground"), this.color(`${prefix}PatternFg`, t("Fill.Pattern.Foreground"), fill.color ?? "#000000"))
+      + this.row(t("Fill.Pattern.Background"), this.color(`${prefix}PatternBg`, t("Fill.Pattern.Background"), fill.background ?? "#ffffff"));
   }
 
   shapePane(data) {
@@ -211,9 +224,11 @@ export class Inspector extends EventTarget {
       html += this.section(t("Format.Section.Fill"),
         this.row(t("Fill.Kind"), this.popup("fillKind", t("Fill.Kind"), [
           ["none", t("Fill.None")], ["solid", t("Fill.Solid")], ["gradient", t("Fill.Gradient")], ["picture", t("Fill.Picture")],
+          ...(fill.kind === "pattern" ? [["pattern", t("Fill.Pattern")]] : []),
         ], fill.kind))
         + (fill.kind === "solid" ? this.row(t("Mac.Inspector.Colour"), this.color("fillColor", t("Mac.Inspector.Colour"), fill.color)) : "")
         + (fill.kind === "gradient" ? this.gradientRows("fill", fill) : "")
+        + (fill.kind === "pattern" ? this.patternRows("fill", fill) : "")
         + (fill.kind === "picture" ? this.row("", this.buttons([["fillPicture", t("Fill.Picture.Change")]])) + this.row("", this.check("fillTile", t("Fill.Picture.Tile"), fill.tiled)) : ""));
     }
     if (shape.line) html += this.outlineSection(shape.line) + this.effectsSection(shape);
@@ -560,36 +575,51 @@ export class Inspector extends EventTarget {
       case "lineSpacing": return format({ lineSpacing: Number(value) });
       // Fill
       case "fillKind":
+        if (value === "pattern") return;
         if (value === "picture") return this.run("fillPicture");
         if (value === "none") return engine.call("setFill", { fill: { kind: "none" } });
         if (value === "solid") return engine.call("setFill", { fill: { kind: "solid", color: shape?.fill?.color ?? "scheme:accent1" } });
         return engine.call("setFill", { fill: { kind: "gradient", start: shape?.fill?.color ?? "scheme:accent1", end: "scheme:bg1", angle: 90 } });
       case "fillColor": { const color = colorValue(); return color && engine.call("setFill", { fill: { kind: "solid", color } }); }
-      case "fillStart": case "fillEnd": case "fillAngle": case "fillRadial": {
+      case "fillStart": case "fillEnd": case "fillAngle": case "fillPath": {
         const fill = { ...shape.fill };
         const color = name === "fillStart" || name === "fillEnd" ? colorValue() : null;
         if (name === "fillStart") fill.start = color ?? fill.start;
         if (name === "fillEnd") fill.end = color ?? fill.end;
         if (name === "fillAngle") fill.angle = Number(value);
-        if (name === "fillRadial") fill.radial = value;
-        return engine.call("setFill", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, radial: fill.radial } });
+        if (name === "fillPath") fill.path = value;
+        // Where it starts, the box it spans and whether it is scaled carry over as they were.
+        return engine.call("setFill", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, path: fill.path, focus: fill.focus, tile: fill.tile, scaled: fill.scaled } });
+      }
+      case "fillPatternFg": case "fillPatternBg": {
+        const color = colorValue();
+        if (!color) return;
+        const fill = { ...shape.fill, [name === "fillPatternFg" ? "color" : "background"]: color };
+        return engine.call("setFill", { fill: { kind: "pattern", preset: fill.preset, color: fill.color, background: fill.background } });
       }
       case "fillTile": return engine.call("setTiled", { tiled: value });
       // Background
       case "bgKind":
+        if (value === "pattern") return;
         if (value === "auto") return engine.call("setBackground", {});
         if (value === "picture") return this.run("backgroundPicture");
         if (value === "solid") return engine.call("setBackground", { fill: { kind: "solid", color: data.slide.background.color ?? "#ffffff" } });
         return engine.call("setBackground", { fill: { kind: "gradient", start: data.slide.background.color ?? "#ffffff", end: "scheme:accent1", angle: 90 } });
       case "bgColor": { const color = colorValue(); return color && engine.call("setBackground", { fill: { kind: "solid", color } }); }
-      case "bgStart": case "bgEnd": case "bgAngle": case "bgRadial": {
+      case "bgStart": case "bgEnd": case "bgAngle": case "bgPath": {
         const fill = { ...data.slide.background };
         const color = name === "bgStart" || name === "bgEnd" ? colorValue() : null;
         if (name === "bgStart") fill.start = color ?? fill.start;
         if (name === "bgEnd") fill.end = color ?? fill.end;
         if (name === "bgAngle") fill.angle = Number(value);
-        if (name === "bgRadial") fill.radial = value;
-        return engine.call("setBackground", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, radial: fill.radial } });
+        if (name === "bgPath") fill.path = value;
+        return engine.call("setBackground", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, path: fill.path, focus: fill.focus, tile: fill.tile, scaled: fill.scaled } });
+      }
+      case "bgPatternFg": case "bgPatternBg": {
+        const color = colorValue();
+        if (!color) return;
+        const fill = { ...data.slide.background, [name === "bgPatternFg" ? "color" : "background"]: color };
+        return engine.call("setBackground", { fill: { kind: "pattern", preset: fill.preset, color: fill.color, background: fill.background } });
       }
       case "bgTile": return engine.call("setTiled", { tiled: value, background: true });
       // Outline and effects

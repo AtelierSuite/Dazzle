@@ -74,6 +74,8 @@ extension SlideShape {
         copy.line = shape.line
         copy.shadow = shape.shadow
         copy.reflection = shape.reflection
+        copy.effects = shape.effects
+        copy.hasOwnEffects = shape.hasOwnEffects
         copy.style = shape.style
         copy.text = shape.text
         copy.textFrame = shape.textFrame

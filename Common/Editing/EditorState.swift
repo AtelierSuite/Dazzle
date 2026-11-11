@@ -62,10 +62,11 @@ final class EditorState {
     /// What the export panel opens on.
     var exportFormat: ExportOptions.Format = .pdf
     #else
-    /// How tall the text being typed lays out, as the page measured it, for
-    /// a shape that grows to fit its text. Where there is no text layout
-    /// engine, the text is laid out by whatever shows it.
-    var measuredTextHeight: Double?
+    /// How far the text being typed reaches across its lines, as the page
+    /// measured it: how tall it lays out, or how wide when it runs
+    /// vertically, for a shape that grows to fit its text. Where there is no
+    /// text layout engine, the text is laid out by whatever shows it.
+    var measuredTextExtent: Double?
     #endif
     /// When the canvas began playing the slide's animations through, while it is.
     private(set) var animationPreviewStartedAt: Date?
@@ -1055,29 +1056,41 @@ final class EditorState {
     }
 
     /// Replaces the text being typed into. A shape that grows to fit its
-    /// text grows, or shrinks, with it.
+    /// text grows, or shrinks, with it: down, or for vertical text across,
+    /// away from the side its first line is on.
     func setTextBody(_ body: TextBody, in presentation: inout Presentation) {
         guard let slide = selectedSlide(in: presentation), let current = selectedShape(in: presentation),
               current.text != body else { return }
-        var height: Double?
+        var extent: Double?
+        let style = SlideStyleContext(presentation: presentation, slide: slide)
+        let properties = style.bodyProperties(for: current, sources: style.sources(for: current)).merged(over: body.properties)
         if case .shape = body.properties.autofit, current.rotation == 0 {
-            let style = SlideStyleContext(presentation: presentation, slide: slide)
             var measured = current
             measured.text = body
-            let width = measured.frame.points.width
+            let frame = measured.frame.points
             #if canImport(CoreText)
-            height = TextRenderer(style: style, slideNumber: 1).height(of: body, shape: measured, width: width)
+            let renderer = TextRenderer(style: style, slideNumber: 1)
+            extent = properties.runsVertically
+                ? renderer.width(of: body, shape: measured, height: frame.height)
+                : renderer.height(of: body, shape: measured, width: frame.width)
             #else
-            _ = (style, width)
-            height = measuredTextHeight
+            _ = frame
+            extent = measuredTextExtent
             #endif
         }
-        updateShape(current.id, edits: height == nil ? [.text] : [.text, .transform], in: &presentation) { shape in
+        updateShape(current.id, edits: extent == nil ? [.text] : [.text, .transform], in: &presentation) { shape in
             shape.text = body
-            if let height, abs(height - shape.frame.points.height) > 0.5 {
-                shape.frame.height = EMU.from(points: height)
-                shape.hasOwnFrame = true
+            guard let extent else { return }
+            if properties.runsVertically {
+                guard abs(extent - shape.frame.points.width) > 0.5 else { return }
+                let width = EMU.from(points: extent)
+                if properties.linesStartAtRight { shape.frame.x -= width - shape.frame.width }
+                shape.frame.width = width
+            } else {
+                guard abs(extent - shape.frame.points.height) > 0.5 else { return }
+                shape.frame.height = EMU.from(points: extent)
             }
+            shape.hasOwnFrame = true
         }
     }
 
@@ -1260,7 +1273,10 @@ final class EditorState {
     func setShadow(_ shadow: Shadow?, in presentation: inout Presentation) {
         updateSelectedShapes(edits: [.effects], in: &presentation) { shape in
             switch shape.kind {
-            case .shape, .connector, .picture: shape.shadow = shadow
+            case .shape, .connector, .picture:
+                shape.shadow = shadow
+                // Saving puts a shadow in place of any preset one.
+                if shadow != nil { shape.effects.presetShadow = nil }
             default: break
             }
         }

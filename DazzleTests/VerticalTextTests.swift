@@ -1,8 +1,10 @@
 import CoreGraphics
+@testable import Dazzle
 @testable import DazzleEngine
 import Foundation
 import Testing
 
+@MainActor
 @Suite("Vertical text")
 struct VerticalTextTests {
     private func shapes(_ xml: String) throws -> [SlideShape] {
@@ -14,13 +16,14 @@ struct VerticalTextTests {
                            parts: [:], capturesSource: true).shapes(in: root)
     }
 
-    /// A tall text box running `vertical`, holding `text` in a Japanese face.
-    private func textBox(_ vertical: String, text: String) -> String {
+    /// A tall text box running `vertical`, holding `text` in a Japanese face,
+    /// 100 points wide unless it says otherwise.
+    private func textBox(_ vertical: String, text: String, width: Int = 1_270_000, autofit: String = "") -> String {
         """
         <p:sp><p:nvSpPr><p:cNvPr id="2" name="Text"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
-        <p:spPr><a:xfrm><a:off x="1270000" y="635000"/><a:ext cx="1270000" cy="3810000"/></a:xfrm>
+        <p:spPr><a:xfrm><a:off x="1270000" y="635000"/><a:ext cx="\(width)" cy="3810000"/></a:xfrm>
         <a:prstGeom prst="rect"/><a:noFill/></p:spPr>
-        <p:txBody><a:bodyPr vert="\(vertical)"/><a:p><a:r><a:rPr lang="ja-JP" sz="7200">\
+        <p:txBody><a:bodyPr vert="\(vertical)">\(autofit)</a:bodyPr><a:p><a:r><a:rPr lang="ja-JP" sz="7200">\
         <a:latin typeface="Hiragino Sans"/><a:ea typeface="Hiragino Sans"/></a:rPr>\
         <a:t>\(text)</a:t></a:r></a:p></p:txBody></p:sp>
         """
@@ -28,6 +31,11 @@ struct VerticalTextTests {
 
     /// The width and height of the ink the slide's shapes leave, a pixel to the point.
     private func inkSize(_ shapes: [SlideShape]) throws -> CGSize {
+        try ink(shapes).size
+    }
+
+    /// Where the ink the slide's shapes leave lies, a pixel to the point.
+    private func ink(_ shapes: [SlideShape]) throws -> CGRect {
         var presentation = Presentation.blank
         presentation.slides[0].shapes = shapes
         let size = presentation.slideSize.points
@@ -48,7 +56,7 @@ struct VerticalTextTests {
             }
         }
         try #require(maxX >= minX, "Nothing was drawn")
-        return CGSize(width: maxX - minX + 1, height: maxY - minY + 1)
+        return CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1)
     }
 
     @Test("Japanese set vertically stands upright, as one stroke across shows")
@@ -85,5 +93,63 @@ struct VerticalTextTests {
         // A run of hyphens drawn sideways makes a tall, thin mark.
         let ink = try inkSize(shapes(textBox("eaVert", text: "----")))
         #expect(ink.height > ink.width * 3)
+    }
+
+    @Test("Mongolian set vertically stands Japanese upright too")
+    func uprightInMongolianLines() throws {
+        let ink = try inkSize(shapes(textBox("mongolianVert", text: "一")))
+        #expect(ink.width > ink.height * 3)
+    }
+
+    @Test("Stacked text stands Latin letters upright, one below the other")
+    func latinStacked() throws {
+        // An upright I is tall and thin; lying on its side, wide and flat.
+        for vertical in ["wordArtVert", "wordArtVertRtl"] {
+            let one = try inkSize(shapes(textBox(vertical, text: "I")))
+            #expect(one.height > one.width * 3, "\(vertical)")
+            // Upright hyphens, stacked, make a column of short dashes.
+            let dashes = try inkSize(shapes(textBox(vertical, text: "----")))
+            #expect(dashes.width > 10 && dashes.height > dashes.width * 3, "\(vertical)")
+        }
+        let sideways = try inkSize(shapes(textBox("eaVert", text: "I")))
+        #expect(sideways.width > sideways.height * 3)
+    }
+
+    @Test("Vertical lines start at the right, or at the left for Mongolian and stacked text")
+    func lineDirection() throws {
+        // A single line in a box 300 points wide, from 100 to 400, set from its first side.
+        for (vertical, startsAtRight) in [("eaVert", true), ("wordArtVertRtl", true), ("vert", true),
+                                          ("mongolianVert", false), ("wordArtVert", false), ("vert270", false)] {
+            let ink = try ink(shapes(textBox(vertical, text: "一", width: 3_810_000)))
+            if startsAtRight {
+                #expect(ink.minX > 300, "\(vertical)")
+            } else {
+                #expect(ink.maxX < 200, "\(vertical)")
+            }
+        }
+    }
+
+    @Test("Growing vertical text grows across, away from the side its lines start")
+    func growsAcross() throws {
+        for (vertical, startsAtRight) in [("eaVert", true), ("mongolianVert", false)] {
+            var presentation = Presentation.blank
+            presentation.slides[0].shapes = try shapes(textBox(vertical, text: "一", autofit: "<a:spAutoFit/>"))
+            let before = presentation.slides[0].shapes[0].frame
+            let state = EditorState()
+            state.reconcile(with: presentation)
+            state.selectedShapeID = presentation.slides[0].shapes[0].id
+            var body = try #require(presentation.slides[0].shapes[0].text)
+            body.paragraphs.append(body.paragraphs[0])
+            state.setTextBody(body, in: &presentation)
+            let after = presentation.slides[0].shapes[0].frame
+            // Two lines of 72 points side by side, as tall as before.
+            #expect(after.height == before.height, "\(vertical)")
+            #expect(EMU.points(after.width) > 144 && EMU.points(after.width) < 200, "\(vertical)")
+            if startsAtRight {
+                #expect(after.x + after.width == before.x + before.width, "\(vertical)")
+            } else {
+                #expect(after.x == before.x, "\(vertical)")
+            }
+        }
     }
 }
