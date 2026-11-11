@@ -324,7 +324,8 @@ public enum ChartWriter {
             element.removeChild(child)
         }
         let sheet = quotedSheet(chart.sheetName)
-        let letter = columnLetter(column)
+        // Categories are in column A, so the first series is in B.
+        let letter = columnLetter(column + 1)
         let count = chart.categories.count
         let last = count + 1
         var parts = [
