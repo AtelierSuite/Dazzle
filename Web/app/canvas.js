@@ -3,7 +3,7 @@
 // here, and typed into in place; every change goes to the engine, which
 // draws the slide again.
 
-import { SlideDrawer, fitText, drawTableBorders } from "./slide.js";
+import { SlideDrawer, fitText, drawTableBorders, alignTabs } from "./slide.js";
 
 const HANDLE = 8;
 const SNAP = 5;
@@ -560,7 +560,10 @@ export class SlideCanvas extends EventTarget {
     this.editing = { id, cell, flow, box, timer: null, body };
     this.selection = [id];
     this.drawOverlay();
-    flow.addEventListener("input", () => this.scheduleSync());
+    flow.addEventListener("input", () => {
+      alignTabs(flow);
+      this.scheduleSync();
+    });
     flow.addEventListener("paste", (event) => {
       event.preventDefault();
       const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -709,7 +712,11 @@ export function readParagraphs(flow) {
     const visit = (node, origin) => {
       if (node.nodeType === Node.TEXT_NODE) {
         const text = node.textContent.replace(/​/g, "");
-        if (text) runs.push({ src: origin, t: text });
+        if (!text) return;
+        // A run drawn in pieces, around its tabs, is one run again.
+        const last = runs.at(-1);
+        if (last && origin && !last.br && !last.field && last.src?.[0] === origin[0] && last.src?.[1] === origin[1]) last.t += text;
+        else runs.push({ src: origin, t: text });
         return;
       }
       if (node.nodeType !== Node.ELEMENT_NODE) return;
