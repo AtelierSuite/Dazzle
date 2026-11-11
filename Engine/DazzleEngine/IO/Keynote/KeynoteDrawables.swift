@@ -91,8 +91,12 @@ public struct KeynoteSlideWriter {
     private mutating func drawableXML(_ identifier: UInt64) -> String? {
         guard let object = archive[identifier] else { return nil }
         switch object.type {
-        case KeynoteType.shape, KeynoteType.connectionLine:
+        case KeynoteType.shape:
             return shape(object.message, storage: nil, isTextBox: false)
+        case KeynoteType.connectionLine:
+            // A `TSD.ConnectionLineArchive` keeps its line as the shape it extends.
+            guard let line = object.message.message(1) else { return nil }
+            return shape(line, storage: nil, isTextBox: false, isConnector: true)
         case KeynoteType.shapeInfo:
             return shapeInfo(object.message)
         case KeynoteType.placeholder:
@@ -167,9 +171,10 @@ public struct KeynoteSlideWriter {
 
     /// `placeholder` is the `p:ph` type for a title or body; `inherited` the
     /// template's shape for it, which fills in what the shape leaves out.
+    /// A connector, such as a connection line, is a `p:cxnSp`, which holds no text.
     private mutating func shape(
         _ shape: ProtoMessage, storage: KeynoteArchive.Object?, isTextBox: Bool, placeholder: String? = nil,
-        inherited: ProtoMessage? = nil
+        inherited: ProtoMessage? = nil, isConnector: Bool = false
     ) -> String? {
         let ownDrawable = shape.message(1)
         let drawable = ownDrawable?.has(1) == true ? ownDrawable : inherited?.message(1) ?? ownDrawable
@@ -202,10 +207,16 @@ public struct KeynoteSlideWriter {
         let name = switch placeholder {
         case "title"?: "Title"
         case "body"?: "Body"
-        default: isTextBox ? "TextBox" : storage == nil ? "Shape" : "Text"
+        default: isConnector ? "Connector" : isTextBox ? "TextBox" : storage == nil ? "Shape" : "Text"
         }
         let shapeID = nextShapeID
         let nonVisual = nonVisual(drawable, name: name)
+        if isConnector {
+            return """
+                <p:cxnSp><p:nvCxnSpPr>\(nonVisual)<p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>\
+                <p:spPr>\(transform)\(geometry)\(fill)\(line)\(effects)</p:spPr></p:cxnSp>
+                """
+        }
         let textBody = textBody(storage, style: style, growsToFit: frame.growsToFit, wraps: wraps)
         if let storage, !textBody.isEmpty { textStorages[shapeID] = storage.identifier }
         let properties = switch placeholder {
