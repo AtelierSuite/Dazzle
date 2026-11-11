@@ -74,6 +74,16 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
             self.effects = effects
             self.media = media
         }
+
+        /// What a stand-in for the picture says when it has none to show: a
+        /// sound with no icon, or a movie, such as a web video, with no poster frame.
+        public var standInLabel: String {
+            switch media?.kind {
+            case .audio?: String(localized: "Object.Audio", bundle: .engine)
+            case .video?: String(localized: "Object.Movie", bundle: .engine)
+            case nil: String(localized: "Object.Picture", bundle: .engine)
+            }
+        }
     }
 
     /// A video or sound, shown as a picture until it plays.
