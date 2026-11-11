@@ -13,6 +13,7 @@ struct FloatingActionBar: View {
     @State private var photo: PhotosPickerItem?
     /// A video being made ready, which takes a moment.
     @State private var isPreparingVideo = false
+    @State private var isPickingTableSize = false
 
     private static let selectionActionsID = "selectionActions"
 
@@ -62,7 +63,7 @@ struct FloatingActionBar: View {
             }
             .accessibilityIdentifier("insertTextBox")
             shapeMenu
-            tableMenu
+            tableButton
             chartMenu
             let isPreparing = isPreparingVideo
             PhotosPicker(selection: $photo, matching: .any(of: [.images, .videos])) {
@@ -177,21 +178,23 @@ struct FloatingActionBar: View {
         .accessibilityLabel("ActionBar.Shape")
     }
 
-    /// A new table, by size.
-    private var tableMenu: some View {
-        Menu {
-            ForEach(Self.tableSizes, id: \.self) { size in
-                Button(String(format: String(localized: "Table.Size"), size[1], size[0])) {
-                    state.insertTable(rows: size[0], columns: size[1], in: &presentation)
-                }
-            }
+    /// A new table, of the size picked in a popover.
+    private var tableButton: some View {
+        Button {
+            isPickingTableSize = true
         } label: {
-            ActionSymbol(name: "tablecells", isOn: false)
+            ActionSymbol(name: "tablecells", isOn: isPickingTableSize)
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
         .accessibilityIdentifier("insertTable")
         .accessibilityLabel("ActionBar.Table")
+        .popover(isPresented: $isPickingTableSize) {
+            TableSizePicker { rows, columns in
+                isPickingTableSize = false
+                state.insertTable(rows: rows, columns: columns, in: &presentation)
+            }
+            .presentationCompactAdaptation(.popover)
+        }
     }
 
     /// A new chart, by kind.
@@ -212,9 +215,6 @@ struct FloatingActionBar: View {
         .accessibilityIdentifier("insertChart")
         .accessibilityLabel("ActionBar.Chart")
     }
-
-    /// Rows by columns.
-    private static let tableSizes = [[2, 2], [3, 2], [3, 3], [4, 3], [4, 4], [5, 4], [6, 5]]
 
     /// Copy, cut and paste: the selected shapes, or with none, the slide.
     private var editMenu: some View {
