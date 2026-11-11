@@ -102,24 +102,42 @@ public struct SlideStyleContext: Sendable {
         if shape.hasOwnEffects || shape.edits.contains(.effects) {
             return EffectStyle(shadow: shape.shadow, reflection: shape.reflection, effects: shape.effects)
         }
-        for candidate in [shape] + sources {
-            guard let reference = candidate.style?.effect else { continue }
-            guard reference.index > 0, theme.effectStyles.indices.contains(reference.index - 1) else { break }
-            var themed = theme.effectStyles[reference.index - 1]
-            if let color = reference.color {
-                if let shadow = themed.shadow { themed.shadow?.color = shadow.color.replacingPlaceholder(with: color) }
-                themed.effects = themed.effects.replacingPlaceholder(with: color)
-            }
+        if var themed = themedEffectStyle(for: shape, sources: sources) {
+            themed.scene3D = nil
+            themed.shape3D = nil
             return themed
         }
         return EffectStyle(shadow: shape.shadow, reflection: shape.reflection, effects: shape.effects)
     }
 
-    /// The shape with the effects it is drawn with made its own.
+    /// The theme's effect style a shape's `p:style`, or its placeholder's,
+    /// names, in the colour that names it.
+    public func themedEffectStyle(for shape: SlideShape, sources: [SlideShape] = []) -> EffectStyle? {
+        for candidate in [shape] + sources {
+            guard let reference = candidate.style?.effect else { continue }
+            guard reference.index > 0, theme.effectStyles.indices.contains(reference.index - 1) else { return nil }
+            var themed = theme.effectStyles[reference.index - 1]
+            if let color = reference.color {
+                if let shadow = themed.shadow { themed.shadow?.color = shadow.color.replacingPlaceholder(with: color) }
+                themed.effects = themed.effects.replacingPlaceholder(with: color)
+                themed.shape3D = themed.shape3D?.replacingPlaceholder(with: color)
+            }
+            return themed
+        }
+        return nil
+    }
+
+    /// The shape with the effects it is drawn with made its own. Its camera,
+    /// lights, bevels and depth are its own where its properties give them,
+    /// and its theme effect style's where they don't.
     public func resolvingEffects(of shape: SlideShape, sources: [SlideShape] = []) -> SlideShape {
+        var shape = shape
+        if shape.scene3D == nil || shape.shape3D == nil, let themed = themedEffectStyle(for: shape, sources: sources) {
+            shape.scene3D = shape.scene3D ?? themed.scene3D
+            shape.shape3D = shape.shape3D ?? themed.shape3D
+        }
         guard !shape.hasOwnEffects else { return shape }
         let resolved = effects(for: shape, sources: sources)
-        var shape = shape
         shape.shadow = resolved.shadow
         shape.reflection = resolved.reflection
         shape.effects = resolved.effects
