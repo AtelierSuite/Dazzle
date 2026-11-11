@@ -634,6 +634,12 @@ struct WebRenderer {
         if let vertical = properties.vertical, ["vert", "eaVert", "vert270", "wordArtVert", "wordArtVertRtl", "mongolianVert"].contains(vertical) {
             json["vert"] = vertical
         }
+        // Columns the text flows through, one after another, when it wraps.
+        if let count = properties.columnCount, count > 1, properties.wraps ?? true {
+            json["cols"] = count
+            json["colGap"] = n(CGFloat(EMU.points(properties.columnSpacing ?? 0)))
+            if properties.columnsRightToLeft == true { json["rtlCols"] = true }
+        }
         switch properties.autofit {
         case .normal(let scale, let reduction)?:
             json["fit"] = "shrink"

@@ -239,6 +239,7 @@ export class SlideDrawer {
 
   /** Shrinks text that says it shrinks to fit, once the slide is laid out on the page. */
   fit(root) {
+    for (const flow of root.querySelectorAll(".text__flow[data-columns]")) layoutColumns(flow.parentElement);
     for (const box of root.querySelectorAll(".text[data-fit='shrink']")) fitText(box);
     for (const table of root.querySelectorAll(".table")) drawTableBorders(table);
   }
@@ -796,6 +797,12 @@ export class SlideDrawer {
       const align = body.paras[0]?.align ?? "l";
       flow.style.alignSelf = align === "ctr" ? "center" : align === "r" ? "flex-end" : "flex-start";
     }
+    if (body.cols > 1) {
+      // Text in columns, balanced across them until the slide is laid out and layoutColumns fills them in turn.
+      flow.dataset.columns = body.cols;
+      Object.assign(flow.style, { columnCount: String(body.cols), columnGap: `${body.colGap ?? 0}px` });
+      if (body.rtlCols) flow.dataset.rtlColumns = "1";
+    }
     this.fillFlow(flow, body, { scale: scale ?? body.scale ?? 1, reduce: reduce ?? body.reduce ?? 0, prompt });
     return box;
   }
@@ -1014,6 +1021,16 @@ export function fitText(box) {
   const body = box.textBody;
   const flow = box.querySelector(".text__flow");
   if (!body || !flow || body.fit !== "shrink" || (body.scale ?? 1) !== 1) return;
+  if (body.cols > 1 && !box.dataset.vertical) {
+    // Text in columns overflows only when the last column runs past the bottom.
+    if (layoutColumns(box)) return;
+    const drawer = new SlideDrawer(null);
+    for (let scale = 0.9; scale >= 0.3 - 0.001; scale -= 0.1) {
+      drawer.fillFlow(flow, body, { scale, reduce: 0.1 });
+      if (layoutColumns(box)) return;
+    }
+    return;
+  }
   // Lines stack down the box, or across it when they run vertically.
   const across = Boolean(box.dataset.vertical);
   const room = across ? box.clientWidth : box.clientHeight;
@@ -1024,6 +1041,50 @@ export function fitText(box) {
     drawer.fillFlow(flow, body, { scale, reduce: 0.1 });
     if (used() <= room + 1) return;
   }
+}
+
+/**
+ * Lays text set in columns out as PowerPoint does: each column filled to the
+ * bottom of the box before the next, and text that fits in the first column
+ * only as tall as it is, so the box's anchor places it. Text running past the
+ * last column is balanced across the columns, running on below the box, and
+ * so is text in a shape that grows to fit it. Says whether the text fits.
+ */
+export function layoutColumns(box) {
+  const body = box.textBody;
+  const flow = box.querySelector(".text__flow");
+  if (!body || !flow || !(body.cols > 1)) return true;
+  Object.assign(flow.style, { columnCount: String(body.cols), columnFill: "", blockSize: "", inlineSize: "" });
+  const room = box.clientHeight;
+  if (body.fit === "grow" || box.dataset.vertical || !room) return true;
+  // How tall the text stands in one column.
+  const gap = body.colGap ?? 0;
+  const width = (flow.clientWidth - gap * (body.cols - 1)) / body.cols;
+  Object.assign(flow.style, { columnCount: "1", inlineSize: `${Math.max(width, 1)}px` });
+  const single = flow.scrollHeight;
+  Object.assign(flow.style, { columnCount: String(body.cols), inlineSize: "", columnFill: "auto" });
+  if (single <= room + 1) {
+    flow.style.blockSize = `${single + 1}px`;
+    return true;
+  }
+  // Text past the last column is set in more columns beside the box, where the last paragraph ends.
+  const fitsAt = (height) => {
+    flow.style.blockSize = `${height}px`;
+    const bounds = flow.getBoundingClientRect();
+    const end = [...(flow.lastElementChild?.getClientRects() ?? [])];
+    return !end.some((rect) => rect.left >= bounds.right - 1 || rect.right <= bounds.left + 1);
+  };
+  if (fitsAt(room)) return true;
+  // Overflowing, the columns run on below the box, as short as they can be and hold it all.
+  let low = room;
+  let high = single + 1;
+  while (high - low > 1) {
+    const middle = (low + high) / 2;
+    if (fitsAt(middle)) high = middle;
+    else low = middle;
+  }
+  flow.style.blockSize = `${Math.ceil(high)}px`;
+  return false;
 }
 
 /** Draws each table cell's borders over the grid, once its rows have their heights. */

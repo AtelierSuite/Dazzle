@@ -296,7 +296,12 @@ function deckWithShapes() {
       <a:clrChange><a:clrFrom><a:srgbClr val="FFFFFF"/></a:clrFrom><a:clrTo><a:srgbClr val="FFFFFF"><a:alpha val="0"/></a:srgbClr></a:clrTo></a:clrChange>
       <a:biLevel thresh="50000"/><a:hsl hue="7200000" sat="0" lum="0"/><a:tint hue="14400000" amt="50000"/>
       ${artistic("", '<a14:artisticPencilSketch trans="20000" pressure="40"/>', '<a14:saturation sat="0"/>')}`)}
-    ${picture(921, "Stylised", 6400800, artistic(' r:embed="rIdTile"', '<a14:artisticWatercolorSponge brushSize="4"/>'))}`;
+    ${picture(921, "Stylised", 6400800, artistic(' r:embed="rIdTile"', '<a14:artisticWatercolorSponge brushSize="4"/>'))}
+    <p:sp><p:nvSpPr><p:cNvPr id="930" name="Columned"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
+      <p:txBody><a:bodyPr wrap="square" numCol="3" spcCol="457200" rtlCol="1"><a:normAutofit/></a:bodyPr><a:lstStyle/>
+        <a:p><a:r><a:rPr lang="en-US"/><a:t>First</a:t></a:r></a:p><a:p><a:r><a:rPr lang="en-US"/><a:t>Second</a:t></a:r></a:p></p:txBody>
+    </p:sp>`;
   const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
@@ -338,6 +343,7 @@ const drawn = (() => {
       lined: named("Lined"), tiled: named("Tiled"), patterned: named("Patterned"), grid: named("Grid"),
       cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
       recoloured: named("Recoloured"), stylised: named("Stylised"),
+      columned: named("Columned"),
     };
   } catch (error) {
     return { error };
@@ -416,6 +422,26 @@ test("draws the presets ECMA-376 defines rather than their frames", () => {
 test("names the typefaces the presentation doesn't carry", () => {
   if (drawn.error) throw drawn.error;
   assert.ok(drawn.info.typefaces.includes("Calibri"));
+});
+
+test("sets text in the columns its body asks for, and keeps them when typed into and saved", () => {
+  if (drawn.error) throw drawn.error;
+  const body = drawn.columned.text;
+  assert.equal(body.cols, 3);
+  assert.equal(body.colGap, 36, "spcCol is EMU");
+  assert.equal(body.rtlCols, true);
+  assert.equal(body.fit, "shrink");
+  assert.equal(drawn.lined.text.cols, undefined, "one column says nothing");
+
+  call("select", { shapes: [drawn.columned.id] });
+  call("beginText", { shape: drawn.columned.id });
+  call("setText", { paras: [{ src: 0, runs: [{ t: "Typed" }] }, { src: 1, runs: [{ t: "Into" }] }] });
+  call("endText");
+  const slide = new TextDecoder().decode(unzip(call("save", { format: "pptx", keep: true }).payload).get("ppt/slides/slide1.xml"));
+  const columned = slide.slice(slide.indexOf('name="Columned"'));
+  assert.match(columned, /<a:bodyPr[^>]*numCol="3"/);
+  assert.match(columned, /<a:bodyPr[^>]*spcCol="457200"/);
+  assert.match(columned, /<a:t>Typed<\/a:t>/);
 });
 
 test("recolours pictures and applies the artistic effects still to be applied", () => {

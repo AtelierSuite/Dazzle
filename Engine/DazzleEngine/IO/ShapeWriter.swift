@@ -358,6 +358,12 @@ public struct ShapeWriter {
             element.insertChild(created, at: before)
             body = created
         }
+        // Columns the text is set in, which the file may not have said yet.
+        if let properties = body.firstChild(named: "bodyPr") {
+            if let count = text.properties.columnCount { properties.setAttribute("numCol", String(count)) }
+            if let spacing = text.properties.columnSpacing { properties.setAttribute("spcCol", String(spacing)) }
+            if let rightToLeft = text.properties.columnsRightToLeft { properties.setAttribute("rtlCol", rightToLeft ? "1" : "0") }
+        }
         for paragraph in body.children(named: "p") {
             body.removeChild(paragraph)
         }
