@@ -293,4 +293,19 @@ struct GeneratedPresetGeometryTests {
         #expect(!arrow.isEmpty)
         #expect(!arrow.contains(point(0.5, 0.5), using: .evenOdd))
     }
+
+    @Test("Hand-drawn presets the definitions match are drawn from them")
+    func replacedPresets() {
+        let ellipse = PresetGeometry.path("ellipse", adjustments: [:], in: rect)
+        #expect(ellipse.contains(point(0.5, 0.01), using: .evenOdd) && !ellipse.contains(point(0.05, 0.05), using: .evenOdd))
+        let diamond = PresetGeometry.path("flowChartDecision", adjustments: [:], in: rect)
+        #expect(diamond.contains(point(0.5, 0.5), using: .evenOdd) && !diamond.contains(point(0.2, 0.2), using: .evenOdd))
+        let rounded = PresetGeometry.path("roundRect", adjustments: ["adj": 50_000], in: rect)
+        #expect(!rounded.contains(point(0.02, 0.05), using: .evenOdd) && rounded.contains(point(0.5, 0.01), using: .evenOdd))
+        let triangle = PresetGeometry.path("triangle", adjustments: ["adj": 0], in: rect)
+        #expect(triangle.contains(point(0.05, 0.2), using: .evenOdd) && !triangle.contains(point(0.95, 0.2), using: .evenOdd))
+        let bent = PresetGeometry.path("bentConnector3", adjustments: ["adj1": 25_000], in: rect)
+        let stroked = bent.copy(strokingWithWidth: 2, lineCap: .butt, lineJoin: .miter, miterLimit: 10)
+        #expect(stroked.contains(point(0.25, 0.5)) && !stroked.contains(point(0.5, 0.5)))
+    }
 }
