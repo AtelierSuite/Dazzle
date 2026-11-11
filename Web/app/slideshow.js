@@ -270,8 +270,7 @@ export class Slideshow extends EventTarget {
     await this.drawNext();
     this.updatePresenter();
     if (!fullyBuilt) {
-      for (let step = 0; step < this.builds; step++) this.playStepMedia(timeline, step);
-      this.playAutomaticMedia(scene);
+      this.playOpeningMedia(timeline, scene);
       this.animate();
     }
     this.scheduleAdvance(timeline);
@@ -328,16 +327,24 @@ export class Slideshow extends EventTarget {
   // MARK: - Media
 
   playStepMedia(timeline, step) {
-    for (const id of timeline.media?.[step] ?? []) this.playMedia(id);
+    for (const id of timeline.media?.[step] ?? []) this.playMedia(id, "play");
   }
 
-  playAutomaticMedia(scene) {
-    for (const node of scene.shapes) if (node.media?.auto) this.playMedia(node.id);
+  /**
+   * Starts what plays as the slide appears, once each: a movie that starts by
+   * itself is usually also played by the slide's first step.
+   */
+  playOpeningMedia(timeline, scene) {
+    const ids = new Set();
+    for (let step = 0; step < this.builds; step++) for (const id of timeline.media?.[step] ?? []) ids.add(id);
+    for (const node of scene.shapes) if (node.media?.auto) ids.add(node.id);
+    for (const id of ids) this.playMedia(id, "play");
   }
 
-  playMedia(id) {
-    this.post({ type: "media", id, action: "toggle" });
-    if (this.mode === "single") toggleMedia(this.current, id, this.media);
+  /** `action` is "play" for a step or the slide starting it, "toggle" for a tap on it. */
+  playMedia(id, action = "toggle") {
+    this.post({ type: "media", id, action });
+    if (this.mode === "single") toggleMedia(this.current, id, this.media, action);
   }
 
   stopMedia() {
@@ -671,20 +678,23 @@ function collectMedia(nodes, paths) {
 }
 
 /** Plays or pauses the movie or sound a picture stands for, over the picture. */
-export async function toggleMedia(slide, id, media) {
+export async function toggleMedia(slide, id, media, action = "toggle") {
   const shape = slide?.querySelector(`.shape[data-id="${id}"]`);
   const info = shape?.querySelector("[data-media]")?.dataset.media;
-  if (!shape || !info) return;
+  // A player still on its way plays once it arrives.
+  if (!shape || !info || shape.dataset.mediaLoading) return;
   const { kind, path } = JSON.parse(info);
   let player = shape.querySelector(".slideshow__media");
   if (player) {
     if (player.paused) player.play();
-    else player.pause();
+    else if (action === "toggle") player.pause();
     return;
   }
   if (!path) return;
+  shape.dataset.mediaLoading = "1";
   const url = await media.url(path);
-  if (!url) return;
+  delete shape.dataset.mediaLoading;
+  if (!url || !shape.isConnected) return;
   player = document.createElement(kind === "audio" ? "audio" : "video");
   player.className = "slideshow__media";
   player.src = url;
