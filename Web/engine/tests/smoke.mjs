@@ -1132,6 +1132,97 @@ test("plays a Keynote movie as the slide appears and its sound on a tap, and sav
   assert.match(new TextDecoder().decode(saved.get("ppt/slides/slide1.xml")), /p14:media/);
 });
 
+/**
+ * A Keynote deck of one slide of the objects beyond shapes, pictures, movies, charts and tables: a connection line,
+ * a freehand drawing, a sound with no icon, an equation typeset into a PDF this platform can't draw, a 3D object with
+ * a still and one without, a kind Keynote may add later, a chart from before 2013 and a sticky comment.
+ */
+function keynoteObjects() {
+  const style = proto.message(11, proto.message(1, proto.message(1, proto.uint(1, 1), proto.float(3, 1), proto.float(6, 1))),
+    proto.message(2, proto.message(1, proto.uint(1, 1), proto.float(5, 1), proto.float(6, 1)), proto.float(2, 3)));
+  const path = (points) => proto.message(3, ...points.map(([x, y], index) =>
+    proto.message(1, proto.uint(1, index ? 2 : 1), proto.message(2, proto.float(1, x), proto.float(2, y)))));
+  const drawables = [13, 14, 18, 23, 25, 26, 33, 34, 39];
+  const objects = [
+    [1, 1, proto.reference(2, 2)],
+    [2, 2, [...proto.message(3, proto.reference(2, 10)), ...proto.message(4, proto.float(1, 1024), proto.float(2, 768))]],
+    [10, 4, proto.reference(2, 11)],
+    [11, 5, drawables.flatMap((id) => proto.reference(42, id))],
+    [15, 3015, style],
+    [13, 3009, proto.message(1, ...proto.frame(50, 50, 300, 100), ...proto.reference(2, 15),
+      ...proto.message(3, proto.message(7, proto.message(1, path([[0, 0], [150, 100], [300, 0]])))))],
+    [14, 3008, [...proto.frame(400, 50, 200, 200), ...proto.reference(2, 16), ...proto.message(100, proto.float(2, 0.5))]],
+    [16, 3004, [...proto.frame(0, 0, 200, 200), ...proto.reference(2, 15), ...proto.message(3, proto.message(5, path([[0, 0], [200, 50], [20, 200]])))]],
+    [18, 3007, [...proto.frame(700, 50, 64, 64), ...proto.reference(14, 902), ...proto.uint(9, 1)]],
+    [23, 3005, [...proto.frame(50, 300, 200, 60), ...proto.reference(11, 904), ...proto.string(103, "e^{i\\pi} = -1")]],
+    [25, 3007, [...proto.frame(300, 300, 150, 150), ...proto.message(200, proto.reference(1, 905), proto.reference(5, 900))]],
+    [26, 3007, [...proto.frame(500, 300, 150, 150), ...proto.message(200, proto.reference(1, 905))]],
+    [33, 3999, proto.message(1, ...proto.frame(50, 500, 300, 150))],
+    [34, 2014, [...proto.message(1, proto.message(1, ...proto.frame(900, 20, 100, 100))), ...proto.reference(2, 36)]],
+    [36, 3056, [...proto.string(1, "Check these figures"), ...proto.reference(3, 37), ...proto.reference(4, 38)]],
+    [37, 212, proto.string(1, "Ada Lovelace")],
+    [38, 3056, proto.string(1, "Done")],
+    [39, 5000, proto.frame(400, 500, 300, 200)],
+  ];
+  const files = [[900, "still.png"], [902, "sound.m4a"], [904, "equation.pdf"], [905, "model.usdz"]];
+  const metadata = files.flatMap(([id, name]) => proto.message(4, proto.uint(1, id), proto.string(3, name), proto.string(4, name)));
+  return zip(new Map([
+    ["Index/Document.iwa", iwaOfBytes(objects)],
+    ["Index/Metadata.iwa", iwaOfBytes([[50, 11006, metadata]])],
+    ["Data/still.png", PIXEL],
+    ["Data/sound.m4a", new TextEncoder().encode("sound")],
+    ["Data/equation.pdf", new TextEncoder().encode("%PDF-1.4 not really")],
+    ["Data/model.usdz", new TextEncoder().encode("model")],
+  ]));
+}
+
+test("draws Keynote connection lines, drawings, sounds, equations, 3D objects and stand-ins, and keeps sticky comments", () => {
+  const opened = call("open", { name: "Objects.key" }, keynoteObjects());
+  const slide = opened.state.slides[0].id;
+  const [line, drawing, sound, equation, still, model, other, chart] = call("scene", { slide }).result.shapes;
+  assert.equal(line.kind, "shape", "the connection line is drawn as a line");
+  assert.ok(line.path.includes("L"), "along its own path");
+  assert.equal(line.line?.w, 3);
+  assert.equal(drawing.kind, "group");
+  assert.equal(drawing.children.length, 1, "the drawing keeps its stroke");
+  assert.equal(drawing.children[0].kind, "shape");
+  assert.equal(sound.kind, "standin");
+  assert.equal(sound.label, strings["Object.Audio"]);
+  assert.equal(sound.media?.kind, "audio", "the sound still plays");
+  assert.equal(equation.kind, "standin");
+  assert.equal(equation.label, strings["Object.Equation"]);
+  assert.ok(equation.w > 0 && equation.h > 0, "the stand-in keeps the equation's place");
+  assert.equal(still.kind, "picture");
+  assert.ok(still.src, "the 3D object shows its still");
+  assert.equal(still.media, undefined, "and doesn't play");
+  assert.equal(model.kind, "standin");
+  assert.equal(model.label, strings["Object.3D"]);
+  assert.equal(other.kind, "standin");
+  assert.equal(other.label, strings["Object.Other"]);
+  assert.equal(chart.kind, "standin");
+  assert.equal(chart.isChart, true);
+  assert.deepEqual(opened.result.omissions.sort(), [
+    strings["Notice.Omission.ChartStandIns"], strings["Notice.Omission.Objects3D"],
+    strings["Notice.Omission.EquationStandIns"], strings["Notice.Omission.ObjectStandIns"],
+  ].sort());
+  assert.ok(opened.result.omissions.every((omission) => omission && !omission.includes("Notice.")), "the omissions are worded");
+  const [comment] = call("inspect").result.comments;
+  assert.equal(comment?.text, "Check these figures");
+  assert.equal(comment.author, "Ada Lovelace");
+  assert.deepEqual([comment.x, comment.y], [900, 20]);
+  assert.deepEqual(comment.replies.map((reply) => reply.text), ["Done"]);
+
+  for (const format of opened.result.saveFormats.map((f) => f.key)) {
+    const saved = call("save", { format, keep: true });
+    const reopened = call("open", { name: `Objects.${format}` }, saved.payload);
+    const shapes = call("scene", { slide: reopened.state.slides[0].id }).result.shapes;
+    assert.deepEqual(shapes.map((shape) => shape.kind), [line, drawing, sound, equation, still, model, other, chart].map((s) => s.kind),
+      `saved as ${format}`);
+    assert.equal(shapes[6].label, strings["Object.Other"], `the stand-in is one still, saved as ${format}`);
+    assert.equal(call("inspect").result.comments.length, 1, `the comment is kept, saved as ${format}`);
+  }
+});
+
 /** A new presentation whose slide holds SmartArt with no drawing of itself: a basic cycle of three points. */
 function deckWithSmartArt() {
   call("new", { name: "SmartArt.pptx" });

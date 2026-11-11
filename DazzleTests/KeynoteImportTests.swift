@@ -229,7 +229,7 @@ struct KeynoteConversionTests {
 
     @Test("What could not be brought across is reported")
     func omissions() {
-        #expect(presentation.unsupportedFeatures.omissions == [.otherObjects, .approximatedBuilds])
+        #expect(presentation.unsupportedFeatures.omissions == [.approximatedBuilds, .objectStandIns])
     }
 
     @Test("Builds become animations on the shapes they build")
@@ -416,7 +416,7 @@ enum KeynoteFixture {
                 entry.reference(2, 40)
             } }
         }
-        // An equation, which Dazzle cannot convert.
+        // An object of a kind Dazzle doesn't know, which keeps its place as a stand-in.
         add(17, 2015) { equation in
             equation.message(1) { $0.message(1) { $0.message(1) { $0.geometry(x: 0, y: 0, width: 10, height: 10) } } }
         }

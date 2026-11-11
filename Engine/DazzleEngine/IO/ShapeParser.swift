@@ -137,6 +137,10 @@ public final class ShapeParser {
             shape.textFrame = holder.frame
         }
         inheritFrame(&shape)
+        // A stand-in for an object a converted file had that Dazzle can't show.
+        if let label = StandIn.label(in: nonVisual?.firstChild(named: "nvPr")) {
+            shape.kind = .unsupported(label)
+        }
         return shape
     }
 
@@ -509,5 +513,26 @@ public final class ShapeParser {
 
     private func capture(_ element: XMLElement) -> String? {
         capturesSource ? XMLLite.serialize(element, inheritedNamespaces: namespaces) : nil
+    }
+}
+
+
+/// A stand-in Dazzle writes for an object a converted file had that it
+/// can't show, such as a Keynote equation or 3D object: a box naming it,
+/// marked by an extension of its non-visual properties, which readers that
+/// don't know it skip, as extensions are meant to be.
+public enum StandIn {
+    public static let extensionURI = "{5D3E7A41-9C2B-4F86-A1D0-6B8E2C4F7A93}"
+    public static let namespace = "https://dazzle.ktgk.app/2026/standin"
+
+    public static func extensionXML(label: String) -> String {
+        "<p:extLst><p:ext uri=\"\(extensionURI)\"><dz:standIn xmlns:dz=\"\(namespace)\" label=\"\(XMLLite.escape(label))\"/>"
+            + "</p:ext></p:extLst>"
+    }
+
+    /// What a stand-in's `p:nvPr` says it stands in for, if it is one.
+    public static func label(in properties: XMLElement?) -> String? {
+        properties?.firstChild(named: "extLst")?.children
+            .first { $0.attribute("uri") == extensionURI }?.firstChild(named: "standIn")?.attribute("label")
     }
 }

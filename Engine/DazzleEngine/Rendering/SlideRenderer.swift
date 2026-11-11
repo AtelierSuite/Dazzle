@@ -964,7 +964,7 @@ public struct SlideRenderer {
     ) {
         guard let path = picture.imagePath,
               let image = image(at: path, effects: picture.effects, placeholderColor: nil, style: style) else {
-            drawStandIn(String(localized: "Object.Picture", bundle: .engine), frame: frame, context: context, isChart: false)
+            drawStandIn(picture.standInLabel, frame: frame, context: context, isChart: false)
             return
         }
         // The crop says which part of the picture fills the frame. Cut from

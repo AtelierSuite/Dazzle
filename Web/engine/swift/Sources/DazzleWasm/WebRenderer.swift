@@ -519,7 +519,7 @@ struct WebRenderer {
             if let look = look3D(style.threeDLook(for: shape, bounds: bounds, fill: nil)) { node["look3d"] = look }
         } else {
             node["kind"] = "standin"
-            node["label"] = String(localized: "Object.Picture", bundle: .engine)
+            node["label"] = picture.standInLabel
         }
         if let (line, placeholder) = style.line(for: shape, sources: []),
            let stroke = stroke(line, path: Self.elements(outlinePath), shape: outlineShape, placeholder: placeholder, style: style) {

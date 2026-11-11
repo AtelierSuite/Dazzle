@@ -53,6 +53,10 @@ public enum KeynoteImporter {
             presentation.slides[index].notes = notes
             presentation.slides[index].areNotesModified = true
         }
+        for (index, comments) in converted.comments.enumerated() where !comments.isEmpty && presentation.slides.indices.contains(index) {
+            presentation.slides[index].comments = comments
+            presentation.slides[index].areCommentsModified = true
+        }
         for (index, animations) in converted.animations.enumerated()
         where !animations.isEmpty && presentation.slides.indices.contains(index) {
             presentation.slides[index].animations = animations
@@ -154,6 +158,17 @@ public enum KeynoteImporter {
         public var omissions: Set<UnsupportedFeatureReport.Omission>
         /// The objects each slide was converted from.
         public var origins: [KeynoteSlideOrigin] = []
+        /// Sticky comments by slide, which Dazzle writes when it saves.
+        public var comments: [[SlideComment]] = []
+    }
+
+    /// What a slide's or layout's writer showed only in part.
+    private static func standInOmissions(_ writer: KeynoteSlideWriter) -> Set<UnsupportedFeatureReport.Omission> {
+        var omissions: Set<UnsupportedFeatureReport.Omission> = []
+        if writer.hasEquationStandIns { omissions.insert(.equationStandIns) }
+        if writer.has3DObjects { omissions.insert(.objects3D) }
+        if writer.hasObjectStandIns { omissions.insert(.objectStandIns) }
+        return omissions
     }
 
     public static func convert(_ archive: KeynoteArchive, media: KeynoteMedia, fittedFrames: [[Int: EMURect]] = []) throws -> Conversion {
@@ -173,6 +188,7 @@ public enum KeynoteImporter {
         var omissions: Set<UnsupportedFeatureReport.Omission> = []
         var animations: [[ShapeAnimation]] = []
         var origins: [KeynoteSlideOrigin] = []
+        var comments: [[SlideComment]] = []
         // A layout for each template slide in use, in order of first use.
         var layouts: [PresentationTemplate.SlidePart] = []
         var layoutPaths: [UInt64: String] = [:]
@@ -199,6 +215,7 @@ public enum KeynoteImporter {
                     omissions.formUnion(writer.skipped.map(omission))
                     if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
                     if writer.hasTableStandIns { omissions.insert(.tableStandIns) }
+                    omissions.formUnion(standInOmissions(writer))
                     layoutPaths[template.identifier] = path
                     layoutPath = path
                 }
@@ -222,6 +239,8 @@ public enum KeynoteImporter {
             omissions.formUnion(writer.skipped.map(omission))
             if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
             if writer.hasTableStandIns { omissions.insert(.tableStandIns) }
+            omissions.formUnion(standInOmissions(writer))
+            comments.append(writer.comments)
             let builds = KeynoteBuilds(archive: archive).animations(
                 slide, shapeIDs: writer.shapeIDs, media: writer.mediaDrawables
             )
@@ -240,7 +259,7 @@ public enum KeynoteImporter {
             parts: PresentationTemplate.parts(
                 size: slideSize, slides: slides, layouts: layouts, media: media.parts, mediaTypes: media.contentTypes
             ),
-            notes: notes, animations: animations, omissions: omissions, origins: origins
+            notes: notes, animations: animations, omissions: omissions, origins: origins, comments: comments
         )
     }
 

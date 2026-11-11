@@ -91,8 +91,12 @@ public struct KeynoteSlideWriter {
     private mutating func drawableXML(_ identifier: UInt64) -> String? {
         guard let object = archive[identifier] else { return nil }
         switch object.type {
-        case KeynoteType.shape, KeynoteType.connectionLine:
+        case KeynoteType.shape:
             return shape(object.message, storage: nil, isTextBox: false)
+        case KeynoteType.connectionLine:
+            // A `TSD.ConnectionLineArchive` keeps its line as the shape it extends.
+            guard let line = object.message.message(1) else { return nil }
+            return shape(line, storage: nil, isTextBox: false, isConnector: true)
         case KeynoteType.shapeInfo:
             return shapeInfo(object.message)
         case KeynoteType.placeholder:
@@ -111,7 +115,14 @@ public struct KeynoteSlideWriter {
             let inherited = object.message.int(2).flatMap { templatePlaceholders[$0] }?.message(1)
             return shapeInfo(info, placeholder: type, inherited: inherited)
         case KeynoteType.image:
-            return image(object.message)
+            if let image = image(object.message) { return image }
+            // An equation keeps its place when its picture can't be shown.
+            if Self.isEquation(object.message),
+               let standIn = standIn(object.message.message(1), label: String(localized: "Object.Equation", bundle: .engine)) {
+                hasEquationStandIns = true
+                return standIn
+            }
+            return nil
         case KeynoteType.movie:
             return movie(object)
         case KeynoteType.group:
@@ -134,10 +145,101 @@ public struct KeynoteSlideWriter {
             }
             skipped.insert(object.type)
             return nil
+        case KeynoteType.olderChart:
+            // Charts from before 2013 are kept in their place as stand-ins.
+            if let standIn = chartStandIn(object.message) {
+                hasChartStandIns = true
+                return standIn
+            }
+            skipped.insert(object.type)
+            return nil
+        case KeynoteType.commentInfo:
+            // A sticky comment isn't part of the slide; it is one of its comments.
+            if !isLayout, let comment = comment(object) { comments.append(comment) }
+            return nil
         default:
+            // Anything else with a place on the slide keeps it, as a stand-in.
+            if let standIn = standIn(Self.drawableArchive(in: object.message), label: String(localized: "Object.Other", bundle: .engine)) {
+                hasObjectStandIns = true
+                return standIn
+            }
             skipped.insert(object.type)
             return nil
         }
+    }
+
+    /// The `TSD.DrawableArchive` of an object of a kind Dazzle doesn't know.
+    /// Every drawable keeps it first, or first within the drawable it
+    /// extends: a shape's, a shape with text's, and so on. It is the first
+    /// message along the way that holds a geometry with a size.
+    static func drawableArchive(in message: ProtoMessage) -> ProtoMessage? {
+        var candidate = message.message(1)
+        for _ in 0..<4 {
+            guard let current = candidate else { return nil }
+            if let size = current.message(1)?.message(2), size.float(1) != nil, size.float(2) != nil { return current }
+            candidate = current.message(1)
+        }
+        return nil
+    }
+
+    /// Whether a `TSD.ImageArchive` is an equation, which keeps the source
+    /// it was typeset from alongside its picture.
+    static func isEquation(_ image: ProtoMessage) -> Bool {
+        image.has(103) || image.has(100)
+    }
+
+    /// Whether an equation was written as a stand-in.
+    public private(set) var hasEquationStandIns = false
+    /// Whether an object of a kind Dazzle doesn't know was written as a stand-in.
+    public private(set) var hasObjectStandIns = false
+    /// Whether a 3D object was written, which shows only a still picture of itself.
+    public private(set) var has3DObjects = false
+    /// The slide's sticky comments.
+    public private(set) var comments: [SlideComment] = []
+
+    /// An object Dazzle can't show, kept in its place as a stand-in: a box
+    /// naming what it is. PowerPoint shows the box as it is; Dazzle reads it
+    /// back as a stand-in by the extension it carries.
+    private mutating func standIn(_ drawable: ProtoMessage?, label: String) -> String? {
+        guard let frame = Frame(drawable?.message(1)), frame.size.width > 0, frame.size.height > 0 else { return nil }
+        let nonVisual = nonVisual(drawable, name: label)
+        let text = XMLLite.escape(label)
+        return """
+            <p:sp><p:nvSpPr>\(nonVisual)<p:cNvSpPr/><p:nvPr>\(StandIn.extensionXML(label: label))</p:nvPr></p:nvSpPr>\
+            <p:spPr>\(frame.xml())<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>\
+            <a:solidFill><a:srgbClr val="F2F2F5"/></a:solidFill><a:ln w="12700"><a:solidFill><a:srgbClr val="B3B3BF"/>\
+            </a:solidFill><a:prstDash val="dash"/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" anchor="ctr" rtlCol="0">\
+            <a:normAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="1400">\
+            <a:solidFill><a:srgbClr val="666673"/></a:solidFill></a:rPr><a:t>\(text)</a:t></a:r></a:p></p:txBody></p:sp>
+            """
+    }
+
+    /// A `TSWP.CommentInfoArchive` as a comment pinned where the note sat:
+    /// what its comment storage says, by whom and when, with its replies.
+    /// Older comments keep only the text of the note itself.
+    private func comment(_ object: KeynoteArchive.Object) -> SlideComment? {
+        let info = object.message.message(1)
+        let position = Frame(info?.message(1)?.message(1)?.message(1))?.origin
+        func entry(_ storage: ProtoMessage?, id: String, fallback: String) -> SlideComment {
+            let author = archive[storage?.reference(3)]?.message.string(1) ?? ""
+            let initials = author.split(whereSeparator: \.isWhitespace).prefix(2).compactMap(\.first)
+                .map(String.init).joined().uppercased()
+            // Keynote counts time from the start of 2001.
+            let date = storage?.message(2)?.float(1).map { Date(timeIntervalSinceReferenceDate: $0) }
+            return SlideComment(
+                id: id, author: author, initials: initials, date: date, text: storage?.string(1) ?? fallback,
+                position: position, format: .legacy
+            )
+        }
+        let storage = archive[object.message.reference(2)]?.message
+        let note = info.map { self.text.plainText(archive[$0.reference(4) ?? $0.reference(3) ?? $0.reference(2)]) } ?? ""
+        let fallback = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard storage?.string(1)?.isEmpty == false || !fallback.isEmpty else { return nil }
+        var thread = entry(storage, id: "keynote-\(object.identifier)", fallback: fallback)
+        thread.replies = (storage?.references(4) ?? []).compactMap { reply in
+            archive[reply].map { entry($0.message, id: "keynote-\(reply)", fallback: "") }
+        }
+        return thread
     }
 
     /// Older documents keep a shape's text in the deprecated field 2.
@@ -167,16 +269,17 @@ public struct KeynoteSlideWriter {
 
     /// `placeholder` is the `p:ph` type for a title or body; `inherited` the
     /// template's shape for it, which fills in what the shape leaves out.
+    /// A connector, such as a connection line, is a `p:cxnSp`, which holds no text.
     private mutating func shape(
         _ shape: ProtoMessage, storage: KeynoteArchive.Object?, isTextBox: Bool, placeholder: String? = nil,
-        inherited: ProtoMessage? = nil
+        inherited: ProtoMessage? = nil, isConnector: Bool = false
     ) -> String? {
         let ownDrawable = shape.message(1)
         let drawable = ownDrawable?.has(1) == true ? ownDrawable : inherited?.message(1) ?? ownDrawable
         guard var frame = Frame(drawable?.message(1)) else { return nil }
         let style = shape.reference(2) ?? inherited?.reference(2)
         let pathSource = shape.message(3).flatMap { $0.fields.isEmpty ? nil : $0 } ?? inherited?.message(3)
-        let opacity = styles.opacity(style)
+        let opacity = styles.opacity(style) * drawingOpacity
 
         let fill = KeynoteStyles.fill(styles.drawingProperty(style, .fill), opacity: opacity) { imageRelationship($0) }
             ?? "<a:noFill/>"
@@ -202,10 +305,16 @@ public struct KeynoteSlideWriter {
         let name = switch placeholder {
         case "title"?: "Title"
         case "body"?: "Body"
-        default: isTextBox ? "TextBox" : storage == nil ? "Shape" : "Text"
+        default: isConnector ? "Connector" : isTextBox ? "TextBox" : storage == nil ? "Shape" : "Text"
         }
         let shapeID = nextShapeID
         let nonVisual = nonVisual(drawable, name: name)
+        if isConnector {
+            return """
+                <p:cxnSp><p:nvCxnSpPr>\(nonVisual)<p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>\
+                <p:spPr>\(transform)\(geometry)\(fill)\(line)\(effects)</p:spPr></p:cxnSp>
+                """
+        }
         let textBody = textBody(storage, style: style, growsToFit: frame.growsToFit, wraps: wraps)
         if let storage, !textBody.isEmpty { textStorages[shapeID] = storage.identifier }
         let properties = switch placeholder {
@@ -248,8 +357,12 @@ public struct KeynoteSlideWriter {
             """
     }
 
+    /// The first of the image's pictures that can be shown: the one it
+    /// shows, the original, or failing those, its thumbnail, as an equation
+    /// typeset into a PDF a platform can't draw may have one it can.
     private mutating func image(_ image: ProtoMessage) -> String? {
-        guard let data = image.reference(11) ?? image.reference(13) ?? image.reference(12) else { return nil }
+        let pictures = [11, 13, 12].compactMap { image.reference($0) }
+        guard let data = pictures.first(where: { media.path(for: $0) != nil }) else { return nil }
         return picture(drawable: image.message(1), data: data, style: image.reference(3), mask: archive[image.reference(5)])
     }
 
@@ -277,7 +390,7 @@ public struct KeynoteSlideWriter {
             sourceRect = "<a:srcRect l=\"\(left)\" t=\"\(top)\" r=\"\(right)\" b=\"\(bottom)\"/>"
             geometry = KeynoteGeometry.xml(mask.message.message(2), size: frame.size)
         }
-        let opacity = styles.opacity(style)
+        let opacity = styles.opacity(style) * drawingOpacity
         let alpha = opacity < 0.999 ? "<a:alphaModFix amt=\"\(Int(opacity * 100_000))\"/>" : ""
         let line = KeynoteStyles.line(styles.drawingProperty(style, .stroke), head: nil, tail: nil, opacity: 1)
         let effects = KeynoteStyles.effects(
@@ -299,6 +412,16 @@ public struct KeynoteSlideWriter {
     /// A movie with neither shows its poster frame and nothing more.
     private mutating func movie(_ object: KeynoteArchive.Object) -> String? {
         let movie = object.message
+        // A 3D object, a `TSA.Object3DInfo` extending the movie, can't turn
+        // here; it shows the still picture it keeps of itself, or a stand-in.
+        if let object3D = movie.message(200) {
+            has3DObjects = true
+            let still = [object3D.reference(5), movie.reference(15)].compactMap { $0 }.first { media.path(for: $0) != nil }
+            if let still, let xml = picture(drawable: movie.message(1), data: still, style: movie.reference(19), mask: nil) {
+                return xml
+            }
+            return standIn(movie.message(1), label: String(localized: "Object.3D", bundle: .engine))
+        }
         let isAudio = movie.bool(9) == true
         let poster = isAudio ? movie.reference(16) ?? movie.reference(15) : movie.reference(15) ?? movie.reference(16)
         let linkType = isAudio ? OOXML.RelationshipType.audio : OOXML.RelationshipType.video
@@ -426,12 +549,22 @@ public struct KeynoteSlideWriter {
             """
     }
 
+    /// How opaque the freehand drawing being written is, which DrawingML
+    /// can't say of a group, so each of its strokes says it instead.
+    private var drawingOpacity = 1.0
+
+    /// A group, or a freehand drawing: a `TSD.GroupArchive` whose strokes
+    /// are its children, each a shape with a path.
     private mutating func group(_ group: ProtoMessage) -> String? {
         guard let frame = Frame(group.message(1)?.message(1)) else { return nil }
         // Children are placed in the group's own space, from its top-left
         // corner. The group claims its id before they do.
-        let nonVisual = nonVisual(group.message(1), name: "Group")
+        let isDrawing = group.has(100)
+        let nonVisual = nonVisual(group.message(1), name: isDrawing ? "Drawing" : "Group")
+        let outer = drawingOpacity
+        if let opacity = group.message(100)?.float(2) { drawingOpacity *= min(max(opacity, 0), 1) }
         let children = group.references(2).compactMap { drawable($0) }
+        drawingOpacity = outer
         guard !children.isEmpty else { return nil }
         return """
             <p:grpSp><p:nvGrpSpPr>\(nonVisual)<p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr>\

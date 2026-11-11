@@ -226,6 +226,12 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
         case builds
         case approximatedBuilds
         case movies
+        /// 3D objects, which show a still picture of themselves.
+        case objects3D
+        /// Equations whose picture can't be shown here, kept in their place as stand-ins.
+        case equationStandIns
+        /// Objects of kinds Dazzle doesn't know, kept in their place as stand-ins.
+        case objectStandIns
         case otherObjects
 
         public var message: String {
@@ -237,6 +243,9 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
             case .builds: String(localized: "Notice.Omission.Builds", bundle: .engine)
             case .approximatedBuilds: String(localized: "Notice.Omission.ApproximatedBuilds", bundle: .engine)
             case .movies: String(localized: "Notice.Omission.Movies", bundle: .engine)
+            case .objects3D: String(localized: "Notice.Omission.Objects3D", bundle: .engine)
+            case .equationStandIns: String(localized: "Notice.Omission.EquationStandIns", bundle: .engine)
+            case .objectStandIns: String(localized: "Notice.Omission.ObjectStandIns", bundle: .engine)
             case .otherObjects: String(localized: "Notice.Omission.Other", bundle: .engine)
             }
         }
