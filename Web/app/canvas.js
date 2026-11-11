@@ -3,7 +3,7 @@
 // here, and typed into in place; every change goes to the engine, which
 // draws the slide again.
 
-import { SlideDrawer, fitText, drawTableBorders } from "./slide.js";
+import { SlideDrawer, fitText, drawTableBorders, layoutColumns } from "./slide.js";
 
 const HANDLE = 8;
 const SNAP = 5;
@@ -553,6 +553,9 @@ export class SlideCanvas extends EventTarget {
     const body = box.textBody;
     // Typed at full size: shrinking applies again when typing ends.
     this.drawer.fillFlow(flow, body, { scale: body.scale ?? 1, reduce: body.reduce ?? 0, editable: true });
+    // Text in columns is typed in its columns, flowing from one to the next as it goes.
+    const columns = body.cols > 1;
+    if (columns) layoutColumns(box);
     flow.contentEditable = "true";
     flow.spellcheck = true;
     flow.classList.add("is-editing");
@@ -560,7 +563,10 @@ export class SlideCanvas extends EventTarget {
     this.editing = { id, cell, flow, box, timer: null, body };
     this.selection = [id];
     this.drawOverlay();
-    flow.addEventListener("input", () => this.scheduleSync());
+    flow.addEventListener("input", () => {
+      if (columns) layoutColumns(box);
+      this.scheduleSync();
+    });
     flow.addEventListener("paste", (event) => {
       event.preventDefault();
       const text = event.clipboardData?.getData("text/plain") ?? "";
