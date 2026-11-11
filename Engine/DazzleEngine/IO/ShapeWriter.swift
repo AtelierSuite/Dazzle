@@ -363,6 +363,7 @@ public struct ShapeWriter {
             if let count = text.properties.columnCount { properties.setAttribute("numCol", String(count)) }
             if let spacing = text.properties.columnSpacing { properties.setAttribute("spcCol", String(spacing)) }
             if let rightToLeft = text.properties.columnsRightToLeft { properties.setAttribute("rtlCol", rightToLeft ? "1" : "0") }
+            if case .normal(let scale, let reduction) = text.properties.autofit { writeShrink(scale, reduction, into: properties) }
         }
         for paragraph in body.children(named: "p") {
             body.removeChild(paragraph)
@@ -373,6 +374,23 @@ public struct ShapeWriter {
                 body.insertChild(element, at: body.children.count)
             }
         }
+    }
+
+    /// Says in `a:bodyPr` how far its text is shrunk to fit, so other apps
+    /// set it the same size, in place of how it was fitted before.
+    private func writeShrink(_ scale: Double, _ reduction: Double, into properties: XMLElement) {
+        let fitNames: Set = ["noAutofit", "normAutofit", "spAutoFit"]
+        let at = properties.children.firstIndex { fitNames.contains($0.name) }
+            ?? properties.children.firstIndex { $0.name != "prstTxWarp" }
+            ?? properties.children.count
+        for child in properties.children where fitNames.contains(child.name) { properties.removeChild(child) }
+        var xml = "<a:normAutofit"
+        let fontScale = Int((scale * 100_000).rounded())
+        let lineSpacingReduction = Int((reduction * 100_000).rounded())
+        if fontScale < 100_000 { xml += " fontScale=\"\(fontScale)\"" }
+        if lineSpacingReduction > 0 { xml += " lnSpcReduction=\"\(lineSpacingReduction)\"" }
+        guard let element = fragment(xml + "/>") else { return }
+        properties.insertChild(element, at: min(at, properties.children.count))
     }
 
     // MARK: - Links

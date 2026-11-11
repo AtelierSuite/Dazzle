@@ -999,12 +999,31 @@ final class EditorState {
     // MARK: - Text
 
     func setText(_ text: String, in presentation: inout Presentation) {
+        let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
         updateShape(selectedShapeID, edits: [.text], in: &presentation) { shape in
             var body = shape.text ?? TextBody(paragraphs: [])
             guard body.plainText != text else { return }
             body.setPlainText(text)
-            shape.text = body
+            shape.text = style.map { Self.shrunkToFit(body, shape: shape, style: $0) } ?? body
         }
+    }
+
+    /// `body` with how far it shrinks to fit `shape` worked out afresh, when
+    /// its text shrinks on overflow, as PowerPoint does after an edit: the file
+    /// then says so, and other apps set the text the same size.
+    static func shrunkToFit(_ body: TextBody, shape: SlideShape, style: SlideStyleContext) -> TextBody {
+        #if canImport(CoreText)
+        let renderer = TextRenderer(style: style, slideNumber: 1)
+        guard let fit = renderer.shrinkFit(of: body, shape: shape, sources: style.sources(for: shape)) else { return body }
+        var body = body
+        // Text that fits as it is leaves what it inherits alone.
+        if body.properties.autofit != nil || fit != .normal(fontScale: 1, lineSpacingReduction: 0) {
+            body.properties.autofit = fit
+        }
+        return body
+        #else
+        return body
+        #endif
     }
 
     /// Starts typing into a shape, over the slide.
@@ -1048,10 +1067,11 @@ final class EditorState {
             }
             return
         }
+        let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
         updateShape(selectedShapeID, edits: [.text], in: &presentation) { shape in
             var body = shape.text ?? TextBody(paragraphs: [Paragraph(runs: [])])
             change(&body)
-            shape.text = body
+            shape.text = style.map { Self.shrunkToFit(body, shape: shape, style: $0) } ?? body
         }
     }
 
@@ -1078,6 +1098,7 @@ final class EditorState {
             extent = measuredTextExtent
             #endif
         }
+        let body = extent == nil ? Self.shrunkToFit(body, shape: current, style: style) : body
         updateShape(current.id, edits: extent == nil ? [.text] : [.text, .transform], in: &presentation) { shape in
             shape.text = body
             guard let extent else { return }

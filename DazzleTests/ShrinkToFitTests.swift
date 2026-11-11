@@ -1,4 +1,5 @@
 import CoreGraphics
+@testable import Dazzle
 @testable import DazzleEngine
 import Foundation
 import Testing
@@ -158,5 +159,43 @@ struct ShrinkToFitTests {
                                  presentation: presentation, slideNumber: 1)
         let body = try #require(layout.body(for: table.rows[0].cells[0], row: 0))
         #expect(body.properties.autofit == nil)
+    }
+
+    @Test("Typing into text that shrinks works out the fit afresh and saves it, as PowerPoint does")
+    func savesTheFit() throws {
+        var presentation = Presentation.blank
+        let shape = try textBox(fit: "<a:normAutofit fontScale=\"92500\"/>", lines: 2)
+        presentation.slides[0].shapes = [shape]
+        let state = EditorState()
+        state.selectedSlideID = presentation.slides[0].id
+        state.selectedShapeID = shape.id
+
+        // Grown past the box: shrunk, and the file says by how much.
+        var body = try #require(shape.text)
+        body.setPlainText((1...12).map { "Line \($0)" }.joined(separator: "\n"))
+        state.setTextBody(body, in: &presentation)
+        guard case .normal(let scale, let reduction)? = presentation.slides[0].shapes[0].text?.properties.autofit else {
+            Issue.record("no fit")
+            return
+        }
+        #expect(scale < 0.925)
+        #expect(reduction == 0.2)
+        presentation.slides[0].isModified = true
+        let saved = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        #expect(saved.slides[0].shapes[0].text?.properties.autofit == .normal(fontScale: scale, lineSpacingReduction: reduction))
+
+        // Cut back so it fits: no longer shrunk.
+        body.setPlainText("Line 1")
+        state.setTextBody(body, in: &presentation)
+        #expect(presentation.slides[0].shapes[0].text?.properties.autofit == .normal(fontScale: 1, lineSpacingReduction: 0))
+        let xml = try savedSlideXML(presentation)
+        #expect(xml.contains("<a:normAutofit/>"))
+    }
+
+    private func savedSlideXML(_ presentation: Presentation) throws -> String {
+        var presentation = presentation
+        presentation.slides[0].isModified = true
+        let parts = try ZipArchive.entries(in: PPTXWriter.data(from: presentation))
+        return try String(decoding: #require(parts["ppt/slides/slide1.xml"]), as: UTF8.self)
     }
 }
