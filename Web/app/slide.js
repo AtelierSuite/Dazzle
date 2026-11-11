@@ -732,9 +732,23 @@ export function layoutColumns(box) {
     flow.style.blockSize = `${single + 1}px`;
     return true;
   }
-  flow.style.blockSize = `${room}px`;
-  if (flow.scrollWidth <= flow.clientWidth + 1) return true;
-  Object.assign(flow.style, { columnFill: "", blockSize: "" });
+  // Text past the last column is set in more columns beside the box, where the last paragraph ends.
+  const fitsAt = (height) => {
+    flow.style.blockSize = `${height}px`;
+    const bounds = flow.getBoundingClientRect();
+    const end = [...(flow.lastElementChild?.getClientRects() ?? [])];
+    return !end.some((rect) => rect.left >= bounds.right - 1 || rect.right <= bounds.left + 1);
+  };
+  if (fitsAt(room)) return true;
+  // Overflowing, the columns run on below the box, as short as they can be and hold it all.
+  let low = room;
+  let high = single + 1;
+  while (high - low > 1) {
+    const middle = (low + high) / 2;
+    if (fitsAt(middle)) high = middle;
+    else low = middle;
+  }
+  flow.style.blockSize = `${Math.ceil(high)}px`;
   return false;
 }
 
