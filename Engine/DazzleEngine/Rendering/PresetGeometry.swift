@@ -142,12 +142,38 @@ public enum PresetGeometry {
             path.addQuadCurve(to: point(spine, h * 0.1), control: point(spine, 0))
             path.addLine(to: point(spine, h * 0.9))
             path.addQuadCurve(to: point(edge, h), control: point(spine, h))
-        case "cloud", "cloudCallout", "ellipseRibbon", "wave", "doubleWave":
-            path.addEllipse(in: rect)
+        case "wave", "doubleWave":
+            path.addPath(wave(name, adjustments: adjustments, in: rect).outline)
+        case "ellipseRibbon":
+            path.addPath(ellipseRibbon(adjustments: adjustments, in: rect).outline)
+        case "cloud":
+            path.addPath(cloud(in: rect))
+        case "cloudCallout":
+            return cloudCallout(adjustments: adjustments, in: rect)
         default:
             path.addRect(rect)
         }
         return path
+    }
+
+    /// Lines some presets draw over their fill, with the outline's stroke but
+    /// never filled: a ribbon's folds and the inner curves of a cloud's puffs.
+    public static func detailPath(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath? {
+        switch name {
+        case "ellipseRibbon":
+            return ellipseRibbon(adjustments: adjustments, in: rect).folds
+        case "cloud", "cloudCallout":
+            let path = CGMutablePath()
+            let scale = CGSize(width: rect.width / 43_200, height: rect.height / 43_200)
+            for puff in cloudPuffs {
+                let start = CGPoint(x: rect.minX + puff.x * scale.width, y: rect.minY + puff.y * scale.height)
+                path.move(to: start)
+                arcTo(path, from: start, wR: puff.wR, hR: puff.hR, start: puff.start, sweep: puff.sweep, scale: scale)
+            }
+            return path
+        default:
+            return nil
+        }
     }
 
     /// The rectangle text is laid out in, which for most presets is smaller
@@ -163,7 +189,15 @@ public enum PresetGeometry {
             CGRect(x: rect.minX + left, y: rect.minY + top, width: max(w - left - right, 1), height: max(h - top - bottom, 1))
         }
         switch name {
-        case "ellipse", "flowChartConnector", "donut", "wedgeEllipseCallout", "cloud", "cloudCallout":
+        case "wave", "doubleWave":
+            return wave(name, adjustments: adjustments, in: rect).text
+        case "ellipseRibbon":
+            return ellipseRibbon(adjustments: adjustments, in: rect).text
+        case "cloud", "cloudCallout":
+            // ECMA-376's text box for the cloud, in its 21600-unit grid.
+            return CGRect(x: rect.minX + w * 2_977 / 21_600, y: rect.minY + h * 3_262 / 21_600,
+                          width: w * (17_087 - 2_977) / 21_600, height: h * (17_337 - 3_262) / 21_600)
+        case "ellipse", "flowChartConnector", "donut", "wedgeEllipseCallout":
             // The square inscribed in the circle: 1 − 1/√2, halved.
             return inset(left: w * 0.146_4, top: h * 0.146_4, right: w * 0.146_4, bottom: h * 0.146_4)
         case "roundRect", "flowChartAlternateProcess":
@@ -266,6 +300,225 @@ public enum PresetGeometry {
         path.addLine(to: point(0, radius))
         turn(0, 0, radius, 0)
         path.closeSubpath()
+    }
+
+    /// An adjust value pinned to the range the preset allows, as a fraction.
+    private static func pinned(_ adjustments: [String: Int], _ key: String, _ fallback: Int, _ low: Int, _ high: Int) -> CGFloat {
+        CGFloat(min(max(adjustments[key] ?? fallback, low), high)) / 100_000
+    }
+
+    /// A banner with one (`wave`) or two (`doubleWave`) S-curves along its top
+    /// and bottom. `adj1` is the curves' depth and `adj2` skews the bottom
+    /// edge against the top, as ECMA-376 defines them.
+    private static func wave(_ name: String, adjustments: [String: Int], in rect: CGRect) -> (outline: CGPath, text: CGRect) {
+        let w = rect.width
+        let h = rect.height
+        let isDouble = name == "doubleWave"
+        let depth = pinned(adjustments, "adj1", isDouble ? 6_250 : 12_500, 0, isDouble ? 12_500 : 20_000)
+        let skew = pinned(adjustments, "adj2", 0, -10_000, 10_000)
+        func point(_ px: CGFloat, _ py: CGFloat) -> CGPoint { CGPoint(x: rect.minX + px, y: rect.minY + py) }
+        let y1 = h * depth
+        let swing = y1 * 10 / 3
+        let y4 = h - y1
+        // A positive skew pulls the top edge's right end and the bottom
+        // edge's left end in; a negative one the other two ends.
+        let offset = w * skew * 2
+        let topLeft = offset > 0 ? 0 : -offset
+        let topRight = w - max(offset, 0)
+        let bottomLeft = max(offset, 0)
+        let bottomRight = w + min(offset, 0)
+        let waves = isDouble ? 2 : 1
+        let length = (topRight - topLeft) / CGFloat(waves)
+
+        let path = CGMutablePath()
+        path.move(to: point(topLeft, y1))
+        for index in 0..<waves {
+            let start = topLeft + length * CGFloat(index)
+            path.addCurve(to: point(start + length, y1),
+                          control1: point(start + length / 3, y1 - swing),
+                          control2: point(start + length * 2 / 3, y1 + swing))
+        }
+        path.addLine(to: point(bottomRight, y4))
+        for index in 0..<waves {
+            let start = bottomRight - length * CGFloat(index)
+            path.addCurve(to: point(start - length, y4),
+                          control1: point(start - length / 3, y4 + swing),
+                          control2: point(start - length * 2 / 3, y4 - swing))
+        }
+        path.closeSubpath()
+
+        let left = max(topLeft, bottomLeft)
+        let right = min(topRight, bottomRight)
+        let text = CGRect(x: rect.minX + left, y: rect.minY + 2 * y1,
+                          width: max(right - left, 1), height: max(h - 4 * y1, 1))
+        return (path, text)
+    }
+
+    /// A ribbon whose band sags in a parabola, its ends folded behind it.
+    /// `adj1` is the band's height, `adj2` the front panel's width and `adj3`
+    /// the sag; the folds are lines drawn over the fill, as ECMA-376 defines them.
+    private static func ellipseRibbon(adjustments: [String: Int], in rect: CGRect) -> (outline: CGPath, folds: CGPath, text: CGRect) {
+        let w = rect.width
+        let h = rect.height
+        let a1 = pinned(adjustments, "adj1", 25_000, 0, 100_000)
+        let a2 = pinned(adjustments, "adj2", 50_000, 25_000, 75_000)
+        let a3 = min(max(CGFloat(adjustments["adj3"] ?? 12_500) / 100_000, max(0, a1 - (1 - a1) / 2)), a1)
+        func point(_ px: CGFloat, _ py: CGFloat) -> CGPoint { CGPoint(x: rect.minX + px, y: rect.minY + py) }
+        let x2 = w / 2 - w * a2 / 2
+        let x3 = x2 + w / 8
+        let x4 = w - x3
+        let x5 = w - x2
+        let x6 = w - w / 8
+        let dy1 = h * a3
+        // The sag along the band: 0 at the ends, dy1 in the middle.
+        let f1 = w > 0 ? 4 * dy1 / w : 0
+        let y1 = f1 * (x3 - x3 * x3 / max(w, 1))
+        let cx1 = x3 / 2
+        let cy1 = f1 * cx1
+        let cx2 = w - cx1
+        let band = h * a1
+        let dy3 = band - dy1
+        let q5 = f1 * (x2 - x2 * x2 / max(w, 1))
+        let y3 = q5 + dy3
+        let cy3 = (dy1 + dy3 - y3) + dy1 + dy3
+        let rh = h - band
+        let y2 = (dy1 * 14 / 16 + rh) / 2
+        let y5 = q5 + rh
+        let y6 = y3 + rh
+        let cx4 = x2 / 2
+        let cy4 = f1 * cx4 + rh
+        let cx5 = w - cx4
+        let cy6 = cy3 + rh
+        let y7 = y1 + dy3
+
+        let outline = CGMutablePath()
+        outline.move(to: point(0, 0))
+        outline.addQuadCurve(to: point(x3, y1), control: point(cx1, cy1))
+        outline.addLine(to: point(x2, y3))
+        outline.addQuadCurve(to: point(x5, y3), control: point(w / 2, cy3))
+        outline.addLine(to: point(x4, y1))
+        outline.addQuadCurve(to: point(w, 0), control: point(cx2, cy1))
+        outline.addLine(to: point(x6, y2))
+        outline.addLine(to: point(w, rh))
+        outline.addQuadCurve(to: point(x5, y5), control: point(cx5, cy4))
+        outline.addLine(to: point(x5, y6))
+        outline.addQuadCurve(to: point(x2, y6), control: point(w / 2, cy6))
+        outline.addLine(to: point(x2, y5))
+        outline.addQuadCurve(to: point(0, rh), control: point(cx4, cy4))
+        outline.addLine(to: point(w / 8, y2))
+        outline.closeSubpath()
+
+        let folds = CGMutablePath()
+        for (from, to) in [((x2, y5), (x2, y3)), ((x5, y3), (x5, y5)), ((x3, y1), (x3, y7)), ((x4, y7), (x4, y1))] {
+            folds.move(to: point(from.0, from.1))
+            folds.addLine(to: point(to.0, to.1))
+        }
+        let text = CGRect(x: rect.minX + x2, y: rect.minY + band, width: max(x5 - x2, 1), height: max(y6 - band, 1))
+        return (outline, folds, text)
+    }
+
+    /// ECMA-376's cloud: eleven elliptical arcs in a 43200-unit square.
+    private static let cloudStart = CGPoint(x: 3_900, y: 14_370)
+    private static let cloudArcs: [(wR: CGFloat, hR: CGFloat, start: CGFloat, sweep: CGFloat)] = [
+        (6_753, 9_190, -11_429_249, 7_426_832), (5_333, 7_267, -8_646_143, 5_396_714),
+        (4_365, 5_945, -8_748_475, 5_983_381), (4_857, 6_595, -7_859_164, 7_034_504),
+        (5_333, 7_273, -4_722_533, 6_541_615), (6_775, 9_220, -2_776_035, 7_816_140),
+        (5_785, 7_867, 37_501, 6_842_000), (6_752, 9_215, 1_347_096, 6_910_353),
+        (7_720, 10_543, 3_974_558, 4_542_661), (4_360, 5_918, -16_496_525, 8_804_134),
+        (4_345, 5_945, -14_809_710, 9_151_131),
+    ]
+
+    /// The inner curves where the cloud's puffs overlap, in the same space.
+    private static let cloudPuffs: [(x: CGFloat, y: CGFloat, wR: CGFloat, hR: CGFloat, start: CGFloat, sweep: CGFloat)] = [
+        (4_693, 26_177, 4_345, 5_945, 5_204_520, 1_585_770), (6_928, 34_899, 4_360, 5_918, 4_416_628, 686_848),
+        (16_478, 39_090, 6_752, 9_215, 8_257_449, 844_866), (28_827, 34_751, 6_752, 9_215, 387_196, 959_901),
+        (34_129, 22_954, 5_785, 7_867, -4_217_541, 4_255_042), (41_798, 15_354, 5_333, 7_273, 1_819_082, 1_665_090),
+        (38_324, 5_426, 4_857, 6_595, -824_660, 891_534), (29_078, 3_952, 4_857, 6_595, -8_950_887, 1_091_722),
+        (22_141, 4_720, 4_365, 5_945, -9_809_656, 1_061_181), (14_000, 5_192, 6_753, 9_190, -4_002_417, 739_161),
+        (4_127, 15_789, 6_753, 9_190, 9_459_261, 711_490),
+    ]
+
+    private static func cloud(in rect: CGRect) -> CGMutablePath {
+        let path = CGMutablePath()
+        let scale = CGSize(width: rect.width / 43_200, height: rect.height / 43_200)
+        var current = CGPoint(x: rect.minX + cloudStart.x * scale.width, y: rect.minY + cloudStart.y * scale.height)
+        path.move(to: current)
+        for arc in cloudArcs {
+            current = arcTo(path, from: current, wR: arc.wR, hR: arc.hR, start: arc.start, sweep: arc.sweep, scale: scale)
+        }
+        path.closeSubpath()
+        return path
+    }
+
+    /// The cloud with three bubbles trailing to the point `adj1`/`adj2`
+    /// (offsets from the centre, as fractions of the size) names.
+    private static func cloudCallout(adjustments: [String: Int], in rect: CGRect) -> CGPath {
+        let w = rect.width
+        let h = rect.height
+        let ss = min(w, h)
+        let dx = w * CGFloat(adjustments["adj1"] ?? -20_833) / 100_000
+        let dy = h * CGFloat(adjustments["adj2"] ?? 62_500) / 100_000
+        let tip = CGPoint(x: rect.midX + dx, y: rect.midY + dy)
+        // Where the line from the centre towards the tip leaves the ellipse.
+        let toward = atan2(dy, dx)
+        let ht = h / 2 * cos(toward)
+        let wt = w / 2 * sin(toward)
+        let edgeAngle = atan2(wt, ht)
+        let edge = CGPoint(x: rect.midX + w / 2 * cos(edgeAngle), y: rect.midY + h / 2 * sin(edgeAngle))
+        let gap = CGPoint(x: edge.x - tip.x, y: edge.y - tip.y)
+        let distance = hypot(gap.x, gap.y)
+        let unit = distance > 0 ? CGPoint(x: gap.x / distance, y: gap.y / distance) : .zero
+        let third = (distance - ss * 6_600 / 21_600) / 3
+        let bubbles: [(offset: CGFloat, radius: CGFloat)] = [
+            (0, ss * 600 / 21_600),
+            (third + ss * 1_800 / 21_600, ss * 1_200 / 21_600),
+            (ss * 4_800 / 21_600 + 2 * third, ss * 1_800 / 21_600),
+        ]
+        let trail = CGMutablePath()
+        for bubble in bubbles {
+            let centre = CGPoint(x: tip.x + unit.x * bubble.offset, y: tip.y + unit.y * bubble.offset)
+            trail.addEllipse(in: CGRect(x: centre.x - bubble.radius, y: centre.y - bubble.radius,
+                                        width: bubble.radius * 2, height: bubble.radius * 2))
+        }
+        let body = cloud(in: rect)
+        #if canImport(CoreGraphics)
+        // Bubbles overlapping the cloud would cut holes in an even-odd fill.
+        return body.union(trail, using: .winding)
+        #else
+        body.addPath(trail)
+        return body
+        #endif
+    }
+
+    /// DrawingML's `arcTo`, in a path space `scale` maps to points. Its
+    /// angles (60000ths of a degree) are where the radius points, not the
+    /// ellipse's parameter, so they are converted before drawing.
+    @discardableResult
+    private static func arcTo(
+        _ path: CGMutablePath, from current: CGPoint, wR: CGFloat, hR: CGFloat, start: CGFloat, sweep: CGFloat, scale: CGSize
+    ) -> CGPoint {
+        let fullTurn = 2 * CGFloat.pi
+        let startAngle = start / 60_000 * .pi / 180
+        let sweepAngle = sweep / 60_000 * .pi / 180
+        func parameter(_ angle: CGFloat) -> CGFloat { atan2(wR * sin(angle), hR * cos(angle)) }
+        let turns = (abs(sweepAngle) / fullTurn).rounded(.down)
+        let rest = abs(sweepAngle) - turns * fullTurn
+        var delta: CGFloat = 0
+        if rest > 0.000_001 {
+            delta = parameter(startAngle + (sweepAngle < 0 ? -rest : rest)) - parameter(startAngle)
+            delta = delta.truncatingRemainder(dividingBy: fullTurn)
+            if sweepAngle > 0, delta < 0 { delta += fullTurn }
+            if sweepAngle < 0, delta > 0 { delta -= fullTurn }
+        }
+        delta += (sweepAngle < 0 ? -turns : turns) * fullTurn
+        let t0 = parameter(startAngle)
+        let t1 = t0 + delta
+        let rx = max(wR * scale.width, 0.001)
+        let ry = max(hR * scale.height, 0.001)
+        let centre = CGPoint(x: current.x - rx * cos(t0), y: current.y - ry * sin(t0))
+        let transform = CGAffineTransform(translationX: centre.x, y: centre.y).scaledBy(x: rx, y: ry)
+        path.addArc(center: .zero, radius: 1, startAngle: t0, endAngle: t1, clockwise: delta < 0, transform: transform)
+        return CGPoint(x: centre.x + rx * cos(t1), y: centre.y + ry * sin(t1))
     }
 
     private static func regularPolygon(sides: Int, in rect: CGRect) -> [CGPoint] {

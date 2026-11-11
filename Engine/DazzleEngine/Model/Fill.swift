@@ -227,6 +227,35 @@ public struct BlipEffects: Equatable, Hashable, Sendable {
 
 /// The outline of a shape.
 public struct LineStyle: Equatable, Hashable, Sendable {
+    /// How the outline turns its corners: `a:round`, `a:bevel` or `a:miter`.
+    public enum Join: Equatable, Hashable, Sendable {
+        case round
+        case bevel
+        /// `lim`: how far a corner may reach, in thousandths of a percent of
+        /// the line's width; `nil` when the file does not say.
+        case miter(limit: Int?)
+
+        public init?(element: XMLElement) {
+            if element.firstChild(named: "round") != nil {
+                self = .round
+            } else if element.firstChild(named: "bevel") != nil {
+                self = .bevel
+            } else if let miter = element.firstChild(named: "miter") {
+                self = .miter(limit: miter.attribute("lim").flatMap(Int.init))
+            } else {
+                return nil
+            }
+        }
+
+        public var xml: String {
+            switch self {
+            case .round: "<a:round/>"
+            case .bevel: "<a:bevel/>"
+            case .miter(let limit): limit.map { "<a:miter lim=\"\($0)\"/>" } ?? "<a:miter/>"
+            }
+        }
+    }
+
     /// `nil` when the line does not say, leaving it to the shape's style.
     public var fill: Fill?
     /// EMU; `nil` when the line does not say.
@@ -236,13 +265,24 @@ public struct LineStyle: Equatable, Hashable, Sendable {
     /// Arrowhead types at either end, such as `triangle`.
     public var head: String?
     public var tail: String?
+    /// `cmpd`: `sng`, `dbl`, `thickThin`, `thinThick` or `tri`.
+    public var compound: String?
+    /// `cap`: `rnd`, `sq` or `flat`.
+    public var cap: String?
+    public var join: Join?
 
-    public init(fill: Fill? = nil, width: Int? = nil, dash: String? = nil, head: String? = nil, tail: String? = nil) {
+    public init(
+        fill: Fill? = nil, width: Int? = nil, dash: String? = nil, head: String? = nil, tail: String? = nil,
+        compound: String? = nil, cap: String? = nil, join: Join? = nil
+    ) {
         self.fill = fill
         self.width = width
         self.dash = dash
         self.head = head
         self.tail = tail
+        self.compound = compound
+        self.cap = cap
+        self.join = join
     }
 
     public init(element: XMLElement) {
@@ -251,6 +291,31 @@ public struct LineStyle: Equatable, Hashable, Sendable {
         dash = element.firstChild(named: "prstDash")?.attribute("val")
         head = element.firstChild(named: "headEnd")?.attribute("type").flatMap { $0 == "none" ? nil : $0 }
         tail = element.firstChild(named: "tailEnd")?.attribute("type").flatMap { $0 == "none" ? nil : $0 }
+        compound = element.attribute("cmpd")
+        cap = element.attribute("cap")
+        join = Join(element: element)
+    }
+
+    /// The parallel strokes a compound line is drawn as, across its width
+    /// from the outer side to the inner: each one's start and end as
+    /// fractions of the width. A single line is one stroke, 0 to 1.
+    public var compoundBands: [(start: Double, end: Double)] {
+        // Strokes and gaps in turn, in proportion to one another.
+        let parts: [Double] = switch compound {
+        case "dbl": [1, 1, 1]
+        case "thickThin": [2, 1, 1]
+        case "thinThick": [1, 1, 2]
+        case "tri": [1, 1, 2, 1, 1]
+        default: [1]
+        }
+        let total = parts.reduce(0, +)
+        var bands: [(start: Double, end: Double)] = []
+        var position = 0.0
+        for (index, part) in parts.enumerated() {
+            if index.isMultiple(of: 2) { bands.append((position / total, (position + part) / total)) }
+            position += part
+        }
+        return bands
     }
 
     /// Values this line leaves unsaid are taken from `base`.
@@ -258,7 +323,8 @@ public struct LineStyle: Equatable, Hashable, Sendable {
         guard let base else { return self }
         return LineStyle(
             fill: fill ?? base.fill, width: width ?? base.width, dash: dash ?? base.dash,
-            head: head ?? base.head, tail: tail ?? base.tail
+            head: head ?? base.head, tail: tail ?? base.tail,
+            compound: compound ?? base.compound, cap: cap ?? base.cap, join: join ?? base.join
         )
     }
 }
