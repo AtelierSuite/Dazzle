@@ -18,6 +18,8 @@ public struct TextRenderer {
     /// Those set in vertical lines (縦書き, Mongolian and stacked), where
     /// Japanese and Chinese stand upright, rather than turned letters and all.
     static let uprightKinds: Set = ["eaVert", "mongolianVert", "wordArtVert", "wordArtVertRtl"]
+    /// Those stacked, where every letter stands upright, Latin ones too.
+    static let stackedKinds: Set = ["wordArtVert", "wordArtVertRtl"]
 
     /// Text laid out in a shape: the frame CoreText made, and where it sits.
     private struct Layout {
@@ -134,7 +136,8 @@ public struct TextRenderer {
     }
 
     /// Text as it is set in `vertical` lines. Japanese and Chinese take their
-    /// vertical forms, which CoreText draws upright in the turned line.
+    /// vertical forms, which CoreText draws upright in the turned line, and
+    /// stacked text stands every other letter upright too.
     static func shaped(_ string: NSAttributedString, vertical: String?) -> NSAttributedString {
         guard let vertical, uprightKinds.contains(vertical) else { return string }
         let shaped = NSMutableAttributedString(attributedString: string)
@@ -142,7 +145,7 @@ public struct TextRenderer {
             NSAttributedString.Key(kCTVerticalFormsAttributeName as String), value: true,
             range: NSRange(location: 0, length: shaped.length)
         )
-        return shaped
+        return stackedKinds.contains(vertical) ? stacked(shaped) : shaped
     }
 
     /// Draws `body` into `rect`, in a context whose y axis points down.
@@ -183,6 +186,7 @@ public struct TextRenderer {
         for (line, origin) in lines {
             context.textPosition = origin
             CTLineDraw(line, context)
+            drawStackedLetters(in: line, at: origin, context: context)
             drawStrikethroughs(in: line, origin: origin, context: context)
         }
     }
@@ -205,6 +209,7 @@ public struct TextRenderer {
             context.translateBy(x: away.width, y: away.height)
             context.textPosition = origin
             CTRunDraw(run, context, CFRange(location: 0, length: 0))
+            drawStackedLetter(in: run, at: origin, context: context)
             context.restoreGState()
         }
     }
@@ -257,6 +262,7 @@ public struct TextRenderer {
                 context.textMatrix = .identity
                 context.textPosition = .zero
                 CTLineDraw(entry.line, context)
+                drawStackedLetters(in: entry.line, at: .zero, context: context)
                 drawStrikethroughs(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
             }
@@ -616,6 +622,108 @@ public struct TextRenderer {
             context.addLine(to: CGPoint(x: origin.x + start + width, y: origin.y + height))
             context.strokePath()
         }
+    }
+
+    // MARK: - Stacked letters
+
+    private static let stackedKey = NSAttributedString.Key("DazzleStacked")
+
+    /// A letter stood upright in stacked text. It is laid out as an object
+    /// replacement character, holding a character's height down the line and
+    /// an em across it, and drawn as its own line, turned back upright.
+    private final class StackedLetter: NSObject {
+        let line: CTLine?
+        let length: CGFloat
+        let breadth: CGFloat
+        init(line: CTLine?, length: CGFloat, breadth: CGFloat) {
+            self.line = line
+            self.length = length
+            self.breadth = breadth
+        }
+    }
+
+    /// Stands upright every letter that vertical forms leave on its side.
+    private static func stacked(_ string: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: string)
+        let text = string.string as NSString
+        let verticalForms = NSAttributedString.Key(kCTVerticalFormsAttributeName as String)
+        text.enumerateSubstrings(in: NSRange(location: 0, length: text.length), options: .byComposedCharacterSequences) { letter, range, _, _ in
+            guard let letter, let first = letter.unicodeScalars.first, !first.properties.isWhitespace,
+                  first.properties.generalCategory != .format, !standsUpright(first) else { return }
+            var attributes = string.attributes(at: range.location, effectiveRange: nil)
+            attributes[verticalForms] = nil
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: letter, attributes: attributes))
+            let font = attributes[fontKey].map { $0 as! CTFont } // swiftlint:disable:this force_cast
+            let size = font.map(CTFontGetSize) ?? 18
+            let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+            let stacked = StackedLetter(
+                line: line, length: font.map { CTFontGetAscent($0) + CTFontGetDescent($0) } ?? size, breadth: max(size, width)
+            )
+            // A letter of more than one character keeps its length; the rest take no room.
+            for offset in 0..<range.length {
+                let letter = offset == 0 ? stacked : StackedLetter(line: nil, length: 0, breadth: 0)
+                var replaced = attributes
+                replaced[stackedKey] = letter
+                replaced[NSAttributedString.Key(kCTRunDelegateAttributeName as String)] = runDelegate(for: letter)
+                result.replaceCharacters(
+                    in: NSRange(location: range.location + offset, length: 1),
+                    with: NSAttributedString(string: "\u{FFFC}", attributes: replaced)
+                )
+            }
+        }
+        return result
+    }
+
+    /// Keeps a stacked letter's room in the line: its length down the line,
+    /// half its breadth either side of the middle, where vertical forms sit.
+    private static func runDelegate(for letter: StackedLetter) -> CTRunDelegate? {
+        var callbacks = CTRunDelegateCallbacks(
+            version: kCTRunDelegateVersion1,
+            dealloc: { Unmanaged<StackedLetter>.fromOpaque($0).release() },
+            getAscent: { Unmanaged<StackedLetter>.fromOpaque($0).takeUnretainedValue().breadth / 2 },
+            getDescent: { Unmanaged<StackedLetter>.fromOpaque($0).takeUnretainedValue().breadth / 2 },
+            getWidth: { Unmanaged<StackedLetter>.fromOpaque($0).takeUnretainedValue().length }
+        )
+        return CTRunDelegateCreate(&callbacks, Unmanaged.passRetained(letter).toOpaque())
+    }
+
+    /// Whether vertical forms already stand a character upright: Japanese,
+    /// Chinese and Korean letters, and their punctuation and symbols.
+    static func standsUpright(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x1100...0x11FF, 0x2E80...0x303F, 0x3040...0x31FF, 0x3200...0x4DBF, 0x4E00...0x9FFF,
+             0xA960...0xA97F, 0xAC00...0xD7FF, 0xF900...0xFAFF, 0xFE10...0xFE1F, 0xFE30...0xFE4F,
+             0xFF01...0xFF60, 0xFFE0...0xFFE6, 0x1F000...0x1FAFF, 0x20000...0x3FFFF:
+            true
+        default:
+            false
+        }
+    }
+
+    /// Draws each stacked letter of `line`, whose origin is `origin`.
+    private func drawStackedLetters(in line: CTLine, at origin: CGPoint, context: CGContext) {
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            drawStackedLetter(in: run, at: origin, context: context)
+        }
+    }
+
+    /// Draws `run`'s letter upright, if it is a stacked one, in the middle of
+    /// the room it keeps: turned back a quarter against the line's turn.
+    private func drawStackedLetter(in run: CTRun, at origin: CGPoint, context: CGContext) {
+        let attributes = CTRunGetAttributes(run) as NSDictionary
+        guard let letter = attributes[Self.stackedKey.rawValue] as? StackedLetter, let line = letter.line,
+              CTRunGetGlyphCount(run) > 0 else { return }
+        var position = CGPoint.zero
+        CTRunGetPositions(run, CFRange(location: 0, length: 1), &position)
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        let width = CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+        context.saveGState()
+        context.translateBy(x: origin.x + position.x + letter.length / 2, y: origin.y + position.y)
+        context.rotate(by: .pi / 2)
+        context.textPosition = CGPoint(x: -width / 2, y: -(ascent - descent) / 2)
+        CTLineDraw(line, context)
+        context.restoreGState()
     }
 
     // MARK: - Bullets

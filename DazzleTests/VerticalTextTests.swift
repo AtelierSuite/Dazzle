@@ -99,6 +99,20 @@ struct VerticalTextTests {
         #expect(ink.width > ink.height * 3)
     }
 
+    @Test("Stacked text stands Latin letters upright, one below the other")
+    func latinStacked() throws {
+        // An upright I is tall and thin; lying on its side, wide and flat.
+        for vertical in ["wordArtVert", "wordArtVertRtl"] {
+            let one = try inkSize(shapes(textBox(vertical, text: "I")))
+            #expect(one.height > one.width * 3, "\(vertical)")
+            // Upright hyphens, stacked, make a column of short dashes.
+            let dashes = try inkSize(shapes(textBox(vertical, text: "----")))
+            #expect(dashes.width > 10 && dashes.height > dashes.width * 3, "\(vertical)")
+        }
+        let sideways = try inkSize(shapes(textBox("eaVert", text: "I")))
+        #expect(sideways.width > sideways.height * 3)
+    }
+
     @Test("Vertical lines start at the right, or at the left for Mongolian and stacked text")
     func lineDirection() throws {
         // A single line in a box 300 points wide, from 100 to 400, set from its first side.
