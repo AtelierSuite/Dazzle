@@ -58,6 +58,7 @@ public enum KeynoteImporter {
             presentation.slides[index].animations = animations
             presentation.slides[index].areAnimationsModified = true
             presentation.slides[index].isModified = true
+            startMediaWithSlide(&presentation.slides[index])
         }
         var origins: [Slide.ID: KeynoteSlideOrigin] = [:]
         for (index, origin) in converted.origins.enumerated() where presentation.slides.indices.contains(index) {
@@ -67,6 +68,19 @@ public enum KeynoteImporter {
             entries: entries, isPackage: isPackage, archive: archive, original: presentation, slides: origins
         )
         return presentation
+    }
+
+    /// Media the slide's first step plays as the slide appears starts by itself.
+    private static func startMediaWithSlide(_ slide: inout Slide) {
+        let timeline = AnimationTimeline(animations: slide.animations)
+        guard timeline.startsAutomatically, let first = timeline.steps.first else { return }
+        let started = Set(first.map(\.animation).filter(\.playsMedia).map(\.shapeID))
+        for index in slide.shapes.indices where started.contains(slide.shapes[index].shapeID) {
+            if case .picture(var picture) = slide.shapes[index].kind, picture.media != nil {
+                picture.media?.playsAutomatically = true
+                slide.shapes[index].kind = .picture(picture)
+            }
+        }
     }
 
     #if canImport(CoreText)
@@ -188,7 +202,9 @@ public enum KeynoteImporter {
             let xml = slideXML(slide, hidden: node.message.bool(4) ?? false, writer: &writer)
             slides.append(PresentationTemplate.SlidePart(xml: xml, relationships: writer.relationships))
             omissions.formUnion(writer.skipped.map(omission))
-            let builds = KeynoteBuilds(archive: archive).animations(slide, shapeIDs: writer.shapeIDs)
+            let builds = KeynoteBuilds(archive: archive).animations(
+                slide, shapeIDs: writer.shapeIDs, media: writer.mediaDrawables
+            )
             animations.append(builds.animations)
             if builds.lost { omissions.insert(.builds) }
             if builds.approximated { omissions.insert(.approximatedBuilds) }
