@@ -314,6 +314,116 @@ test("names the typefaces the presentation doesn't carry", () => {
   assert.ok(drawn.info.typefaces.includes("Calibri"));
 });
 
+/** Protocol buffer fields, for building a Keynote archive. */
+class Proto {
+  bytes = [];
+  static varint(value) {
+    const out = [];
+    do {
+      let byte = value % 128;
+      value = Math.floor(value / 128);
+      if (value) byte |= 0x80;
+      out.push(byte);
+    } while (value);
+    return out;
+  }
+  varint(field, value) { this.bytes.push(...Proto.varint(field * 8), ...Proto.varint(value)); return this; }
+  float(field, value) {
+    const buffer = new DataView(new ArrayBuffer(4));
+    buffer.setFloat32(0, value, true);
+    this.bytes.push(...Proto.varint(field * 8 + 5), ...new Uint8Array(buffer.buffer));
+    return this;
+  }
+  data(field, bytes) { this.bytes.push(...Proto.varint(field * 8 + 2), ...Proto.varint(bytes.length), ...bytes); return this; }
+  string(field, text) { return this.data(field, [...new TextEncoder().encode(text)]); }
+  message(field, build) { const nested = new Proto(); build(nested); return this.data(field, nested.bytes); }
+  reference(field, id) { return this.message(field, (m) => m.varint(1, id)); }
+}
+
+/** An `.iwa` of `objects`, as one snappy chunk of literals. */
+function iwa(objects) {
+  const stream = [];
+  for (const [id, type, message] of objects) {
+    const info = new Proto().varint(1, id).message(2, (m) => m.varint(1, type).varint(3, message.bytes.length));
+    stream.push(...Proto.varint(info.bytes.length), ...info.bytes, ...message.bytes);
+  }
+  const block = [...Proto.varint(stream.length)];
+  for (let offset = 0; offset < stream.length; offset += 65536) {
+    const length = Math.min(65536, stream.length - offset);
+    block.push(61 << 2, (length - 1) & 0xff, (length - 1) >> 8, ...stream.slice(offset, offset + length));
+  }
+  return Uint8Array.from([0, block.length & 0xff, (block.length >> 8) & 0xff, block.length >> 16, ...block]);
+}
+
+/**
+ * A Keynote deck of two tables: one of 2 × 2 cells as Keynote kept them
+ * before 2019, its top row merged, and one with nothing to read its cells from.
+ */
+function keynoteTables() {
+  const offsets = (values) => [...Array(256).keys()].flatMap((c) => {
+    const v = c < values.length ? values[c] : 0xffff;
+    return [v & 0xff, v >> 8];
+  });
+  // Version 4: the flags at byte 4, then a string key.
+  const older = (key) => [4, 3, 0, 0, 0x10, 0, 0, 0, 0, 0, 0, 0, key, 0, 0, 0];
+  const objects = [
+    [1, 1, new Proto().reference(2, 2)],
+    [2, 2, new Proto()
+      .message(3, (tree) => tree.reference(2, 100).reference(2, 110))
+      .message(4, (size) => size.float(1, 1024).float(2, 768))],
+    [20, 6002, new Proto()
+      .message(5, (row) => row.varint(1, 0).data(3, older(1)).data(4, offsets([0])))
+      .message(5, (row) => row.varint(1, 1).data(3, [...older(2), ...older(3)]).data(4, offsets([0, 16])))],
+    [21, 6005, new Proto()
+      .message(3, (e) => e.varint(1, 1).string(3, "Merged"))
+      .message(3, (e) => e.varint(1, 2).string(3, "Left"))
+      .message(3, (e) => e.varint(1, 3).string(3, "Right"))],
+    [22, 6010, new Proto().message(1, (range) => range
+      .message(1, (m) => m.varint(1, 0)).message(2, (m) => m.varint(1, (2 << 16) | 1)))],
+  ];
+  [0, 1].forEach((index) => {
+    const node = 100 + index * 10;
+    objects.push([node, 4, new Proto().reference(2, node + 1)]);
+    objects.push([node + 1, 5, new Proto().reference(42, node + 2)]);
+    objects.push([node + 2, 6000, new Proto()
+      .message(1, (d) => d.message(1, (g) => g
+        .message(1, (p) => p.float(1, 100).float(2, 100))
+        .message(2, (s) => s.float(1, 400).float(2, 200))
+        .varint(3, 3)))
+      .reference(2, node + 3)]);
+    objects.push([node + 3, 6001, new Proto()
+      .message(4, (store) => {
+        if (index === 0) store.message(3, (t) => t.message(1, (tile) => tile.varint(1, 0).reference(2, 20))).reference(4, 21).reference(13, 22);
+      })
+      .varint(6, 2).varint(7, 2)]);
+  });
+  // The second table has no data store at all.
+  objects[objects.length - 1][2] = new Proto().varint(6, 2).varint(7, 2);
+  return zip(new Map([["Index/Document.iwa", iwa(objects)]]));
+}
+
+test("draws Keynote tables saved before 2019, and a stand-in for one it can't read", () => {
+  const opened = call("open", { name: "Tables.key" }, keynoteTables());
+  const [older, unreadable] = opened.state.slides.map((slide) => call("scene", { slide: slide.id }).result.shapes[0]);
+  assert.equal(older.kind, "table");
+  const cells = older.table.cells;
+  assert.equal(cells.length, 3, "the top row is one merged cell");
+  assert.equal(cells[0].cs, 2);
+  assert.deepEqual(cells.map((cell) => text(cell.text)), ["Merged", "Left", "Right"]);
+  assert.equal(unreadable.kind, "standin");
+  assert.equal(unreadable.label, strings["Object.Table"] ?? "Table");
+  assert.ok(unreadable.w > 0 && unreadable.h > 0, "the stand-in keeps the table's place");
+  assert.deepEqual(opened.result.omissions, [strings["Notice.Omission.TableStandIns"] ?? opened.result.omissions[0]]);
+  assert.ok(!opened.result.omissions[0].includes("Notice."), "the omission is worded");
+  assert.deepEqual(opened.result.unsupported, []);
+  for (const format of opened.result.saveFormats.map((f) => f.key)) {
+    const saved = call("save", { format, keep: true });
+    const reopened = call("open", { name: `Tables.${format}` }, saved.payload);
+    const kinds = reopened.state.slides.map((slide) => call("scene", { slide: slide.id }).result.shapes[0].kind);
+    assert.deepEqual(kinds, ["table", "standin"], `saved as ${format}`);
+  }
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
