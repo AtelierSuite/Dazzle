@@ -348,6 +348,24 @@ test("draws path gradients from fillToRect to their tile, and scaled linear ones
   assert.deepEqual([scaled?.t, scaled?.angle, scaled?.scaled], ["linear", 45, true]);
 });
 
+test("keeps path gradients when saved and when the inspector changes their colours or style", () => {
+  if (drawn.error) throw drawn.error;
+  const reopened = call("open", { name: "Saved.pptx" }, call("save", { format: "pptx", keep: true }).payload);
+  const slide = reopened.state.slides[0].id;
+  const shapes = call("scene", { slide }).result.shapes;
+  const circle = shapes.find((node) => node.name === "Circle gradient");
+  assert.deepEqual([circle.fill.t, circle.fill.focus, circle.fill.tile], ["radial", [0, 0, 1, 1], [-1, -1, 0, 0]]);
+  assert.equal(shapes.find((node) => node.name === "Scaled gradient").fill.scaled, true);
+
+  // The inspector sends back what it was told, with one thing changed, as inspector.js does.
+  call("select", { slide, shapes: [circle.id] });
+  const told = call("inspect").result.shape.fill;
+  assert.deepEqual([told.path, told.focus, told.tile, told.scaled], ["circle", [0, 0, 1, 1], [-1, -1, 0, 0], false]);
+  call("setFill", { fill: { ...told, kind: "gradient", end: "#00ff00", path: "rect" } });
+  const changed = call("scene", { slide }).result.shapes.find((node) => node.name === "Circle gradient").fill;
+  assert.deepEqual([changed.t, changed.focus, changed.tile, changed.to], ["rect", [0, 0, 1, 1], [-1, -1, 0, 0], "#00ff00"]);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
