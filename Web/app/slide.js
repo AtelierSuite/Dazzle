@@ -811,6 +811,7 @@ export class SlideDrawer {
   fillFlow(flow, body, { scale = 1, reduce = 0, prompt = false, editable = false } = {}) {
     flow.replaceChildren();
     flow.dataset.scale = scale;
+    flow.dataset.reduce = reduce;
     for (const paragraph of body.paras) flow.append(this.paragraph(paragraph, { scale, reduce, prompt, editable }));
     if (flow.isConnected) alignTabs(flow);
   }
@@ -1098,32 +1099,31 @@ function channels(color) {
 
 /**
  * Shrinks the text in a box that shrinks on overflow, as PowerPoint would have
- * when it last saved, a tenth at a time.
+ * when it last saved: a step at a time, closing its lines up and then setting
+ * it smaller, down to the least step, which stands even if the text still
+ * overflows. The engine gives the steps, none when the file said how far.
  */
 export function fitText(box) {
   const body = box.textBody;
   const flow = box.querySelector(".text__flow");
-  if (!body || !flow || body.fit !== "shrink" || (body.scale ?? 1) !== 1) return;
+  if (!body || !flow || body.fit !== "shrink" || !body.steps?.length) return;
+  const drawer = new SlideDrawer(null);
+  const shrink = (fits) => {
+    for (const [scale, reduce] of body.steps) {
+      drawer.fillFlow(flow, body, { scale, reduce });
+      if (fits()) return;
+    }
+  };
   if (body.cols > 1 && !box.dataset.vertical) {
     // Text in columns overflows only when the last column runs past the bottom.
-    if (layoutColumns(box)) return;
-    const drawer = new SlideDrawer(null);
-    for (let scale = 0.9; scale >= 0.3 - 0.001; scale -= 0.1) {
-      drawer.fillFlow(flow, body, { scale, reduce: 0.1 });
-      if (layoutColumns(box)) return;
-    }
+    if (!layoutColumns(box)) shrink(() => layoutColumns(box));
     return;
   }
   // Lines stack down the box, or across it when they run vertically.
   const across = Boolean(box.dataset.vertical);
   const room = across ? box.clientWidth : box.clientHeight;
-  const used = () => (across ? flow.scrollWidth : flow.scrollHeight);
-  if (!room || used() <= room + 1) return;
-  const drawer = new SlideDrawer(null);
-  for (let scale = 0.9; scale >= 0.3 - 0.001; scale -= 0.1) {
-    drawer.fillFlow(flow, body, { scale, reduce: 0.1 });
-    if (used() <= room + 1) return;
-  }
+  const fits = () => (across ? flow.scrollWidth : flow.scrollHeight) <= room + 1;
+  if (room && !fits()) shrink(fits);
 }
 
 /**
