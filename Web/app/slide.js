@@ -386,22 +386,155 @@ export class SlideDrawer {
     else this.media.url(src).then(apply);
   }
 
-  /** Greyscale, duotone, brightness and contrast, as SVG filters. */
+  /**
+   * A picture's effects as one SVG filter, in the order the Apple renderer
+   * (ArtisticRenderer and ResolvedPictureEffects) applies them: artistic
+   * effects, the colour change, black and white, grey or duotone, hue,
+   * saturation and luminance, tint, then brightness and contrast.
+   */
   effects(target, fx, context) {
     if (!fx) return;
     if (fx.opacity !== undefined) target.setAttribute("opacity", fx.opacity);
-    if (!fx.grey && !fx.duotone && !fx.brightness && !fx.contrast) return;
+    if (!fx.grey && !fx.duotone && !fx.brightness && !fx.contrast && !fx.change && fx.biLevel === undefined
+      && !fx.hsl && !fx.tint && !fx.art) return;
     const id = nextId("f");
-    const filter = svg("filter", { id, "color-interpolation-filters": "sRGB" }, context.defs);
-    if (fx.grey || fx.duotone) {
-      svg("feColorMatrix", { type: "matrix", values: "0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0 0 0 1 0" }, filter);
+    // Effects stay within the picture, as they do on Apple platforms.
+    const filter = svg("filter", { id, "color-interpolation-filters": "sRGB", x: 0, y: 0, width: 1, height: 1 }, context.defs);
+    let step = 0;
+    let current = "SourceGraphic";
+    /** Adds a primitive, reading `current` unless told otherwise, and makes its result current. */
+    const add = (name, attributes = {}, parent = filter) => {
+      const result = `r${step++}`;
+      const element = svg(name, { in: current, ...attributes, result }, parent);
+      current = result;
+      return element;
+    };
+    const transfer = (attributes) => {
+      const element = add("feComponentTransfer");
+      for (const channel of ["R", "G", "B"]) svg(`feFunc${channel}`, attributes(channel), element);
+    };
+    /** A blur that keeps the picture's own edges and transparency, as Core Image's clamped blur does. */
+    const blur = (deviation) => {
+      add("feGaussianBlur", { stdDeviation: deviation });
+      svg("feFuncA", { type: "linear", slope: 0, intercept: 1 }, add("feComponentTransfer"));
+      add("feComposite", { in2: "SourceGraphic", operator: "in" });
+    };
+    const GREY = "0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0.299 0.587 0.114 0 0 0 0 0 1 0";
+
+    // Sizes are fractions of the picture's longer side.
+    const side = Math.max(Number(target.getAttribute("width")) || 0, Number(target.getAttribute("height")) || 0, 1);
+    for (const art of fx.art ?? []) {
+      const before = current;
+      switch (art.k) {
+        case "matrix":
+          add("feColorMatrix", { type: "matrix", values: art.m.join(" ") });
+          break;
+        case "blur":
+          blur(art.s * side);
+          break;
+        case "sharpen": {
+          const a = art.v * 0.5;
+          add("feConvolveMatrix", { order: 3, kernelMatrix: `0 ${-a} 0 ${-a} ${1 + 4 * a} ${-a} 0 ${-a} 0`, preserveAlpha: "true" });
+          break;
+        }
+        case "sketch": {
+          // Grey, dodged by its own blurred negative: only edges stay dark.
+          add("feColorMatrix", { type: "saturate", values: 0 });
+          const grey = current;
+          transfer(() => ({ type: "table", tableValues: "1 0" }));
+          blur(art.s * side);
+          add("feBlend", { in2: grey, mode: "color-dodge" });
+          if (art.inv) transfer(() => ({ type: "table", tableValues: "1 0" }));
+          break;
+        }
+        case "edges":
+          if (art.v > 0) blur(art.v * 0.003 * side);
+          add("feConvolveMatrix", { order: 3, kernelMatrix: "-1 -1 -1 -1 8 -1 -1 -1 -1", preserveAlpha: "true" });
+          transfer(() => ({ type: "linear", slope: 4 }));
+          break;
+        case "paint": {
+          blur(art.v * 0.004 * side);
+          const levels = Math.max(art.n, 2);
+          const steps = Array.from({ length: levels }, (_, index) => index / (levels - 1)).join(" ");
+          transfer(() => ({ type: "discrete", tableValues: steps }));
+          break;
+        }
+        case "grain":
+        case "distort": {
+          // Noise in grains about a 600th of the picture across, or a 60th to ripple it.
+          const grain = art.k === "grain" ? side / 600 : side / 60;
+          const image = current;
+          add("feTurbulence", { in: null, type: "fractalNoise", baseFrequency: 0.5 / Math.max(grain, 1), numOctaves: 1, seed: 7 });
+          if (art.k === "grain") {
+            const s = art.v;
+            const row = `${s} 0 0 0 ${0.5 - s / 2}`;
+            add("feColorMatrix", { type: "matrix", values: `${row} ${row} ${row} 0 0 0 0 1` });
+            // The noise laid over the picture, as Core Image's overlay.
+            add("feBlend", { in2: image, mode: "overlay" });
+          } else {
+            add("feGaussianBlur", { stdDeviation: side * 0.004 });
+            add("feDisplacementMap", { in: image, in2: current, scale: art.v * side, xChannelSelector: "R", yChannelSelector: "G" });
+          }
+          break;
+        }
+        case "glow": {
+          const sharp = current;
+          blur(side * 0.01);
+          add("feComposite", { in: sharp, in2: current, operator: "arithmetic", k1: 0, k2: 1, k3: art.v * 0.75, k4: 0 });
+          break;
+        }
+        default:
+          break;
+      }
+      if (art.trans > 0 && current !== before) {
+        // `trans`: the picture as it was showing through the effect.
+        add("feComposite", { in2: before, operator: "arithmetic", k1: 0, k2: 1 - art.trans, k3: art.trans, k4: 0 });
+      }
     }
-    if (fx.duotone) {
-      const [dark, light] = fx.duotone.map(channels);
-      const transfer = svg("feComponentTransfer", {}, filter);
-      ["R", "G", "B"].forEach((channel, index) => {
-        svg(`feFunc${channel}`, { type: "table", tableValues: `${dark[index]} ${light[index]}` }, transfer);
-      });
+
+    if (fx.change) {
+      // Where the channels' differences from the colour add to no more than
+      // the tolerance, the picture takes the new colour, keeping its alpha.
+      const source = current;
+      const [r, g, b] = fx.change.from;
+      add("feColorMatrix", { type: "matrix", values: `1 0 0 0 ${-r} 0 1 0 0 ${-g} 0 0 1 0 ${-b} 0 0 0 0 1` });
+      const above = current;
+      add("feColorMatrix", { in: source, type: "matrix", values: `-1 0 0 0 ${r} 0 -1 0 0 ${g} 0 0 -1 0 ${b} 0 0 0 0 1` });
+      add("feComposite", { in: above, in2: current, operator: "arithmetic", k1: 0, k2: 1, k3: 1, k4: 0 });
+      const distance = current;
+      const sharpness = 200;
+      add("feColorMatrix", { in: distance, type: "matrix", values: `0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${sharpness} ${sharpness} ${sharpness} 0 ${-sharpness * fx.change.tol}` });
+      add("feComposite", { in: source, in2: current, operator: "in" });
+      const kept = current;
+      add("feColorMatrix", { in: distance, type: "matrix", values: `0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 ${-sharpness} ${-sharpness} ${-sharpness} 0 ${sharpness * fx.change.tol + 1}` });
+      const swapped = current;
+      const [tr, tg, tb, ta] = fx.change.to;
+      add("feFlood", { in: null, "flood-color": `rgb(${tr * 255} ${tg * 255} ${tb * 255})`, "flood-opacity": ta });
+      add("feComposite", { in2: swapped, operator: "in" });
+      add("feComposite", { in2: source, operator: "in" });
+      const replaced = current;
+      const merge = add("feMerge", { in: null });
+      svg("feMergeNode", { in: kept }, merge);
+      svg("feMergeNode", { in: replaced }, merge);
+    }
+    if (fx.biLevel !== undefined) {
+      add("feColorMatrix", { type: "matrix", values: GREY });
+      transfer(() => ({ type: "linear", slope: 1000, intercept: -1000 * fx.biLevel }));
+    } else if (fx.grey || fx.duotone) {
+      add("feColorMatrix", { type: "matrix", values: GREY });
+      if (fx.duotone && !fx.grey) {
+        const [dark, light] = fx.duotone.map(channels);
+        transfer((channel) => ({ type: "table", tableValues: `${dark["RGB".indexOf(channel)]} ${light["RGB".indexOf(channel)]}` }));
+      }
+    }
+    if (fx.hsl) add("feColorMatrix", { type: "matrix", values: fx.hsl.join(" ") });
+    if (fx.tint) {
+      // Grey mapped from black through the hue to white (or grey, away from it), mixed in by the amount.
+      const before = current;
+      add("feColorMatrix", { type: "matrix", values: GREY });
+      if (fx.tint.amt > 0) transfer((channel) => ({ type: "table", tableValues: `0 ${fx.tint.c["RGB".indexOf(channel)]} 1` }));
+      const amount = Math.abs(fx.tint.amt);
+      add("feComposite", { in2: before, operator: "arithmetic", k1: 0, k2: amount, k3: 1 - amount, k4: 0 });
     }
     if (fx.brightness || fx.contrast) {
       // Office centres contrast on mid-grey, with half the brightness before it and half after.
@@ -409,8 +542,7 @@ export class SlideDrawer {
       const slope = c >= 0 ? 128 / (128 - 127 * c) : (128 + 127 * c) / 128;
       const shift = Math.min(Math.max(fx.brightness ?? 0, -1), 1) / 2;
       const intercept = shift * slope + 0.5 - 0.5 * slope + shift;
-      const transfer = svg("feComponentTransfer", {}, filter);
-      for (const channel of ["R", "G", "B"]) svg(`feFunc${channel}`, { type: "linear", slope, intercept }, transfer);
+      transfer(() => ({ type: "linear", slope, intercept }));
     }
     target.setAttribute("filter", `url(#${id})`);
   }
