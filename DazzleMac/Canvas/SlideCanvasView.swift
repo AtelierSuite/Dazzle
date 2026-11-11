@@ -941,12 +941,14 @@ final class SlideCanvasView: NSView {
         let slideNumber = (presentation.index(of: slide.id) ?? 0) + 1
         if let id = state.editingTextShapeID, let shape = slide.shapes.first(where: { $0.id == id }), shape.canHoldText {
             let sources = style.sources(for: shape)
-            let (area, properties) = TextRenderer(style: style, slideNumber: slideNumber).textArea(of: shape, sources: sources)
-            var fontScale = 1.0
-            if case .normal(let scale, _) = properties.autofit { fontScale = scale }
+            let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+            let (area, properties) = renderer.textArea(of: shape, sources: sources)
+            // Shrunk to fit as the slide draws it.
+            let shrink = renderer.drawnShrink(of: shape, sources: sources)
             return InPlaceTextEditor.Target(
                 id: .shape(shape.id), body: shape.text ?? TextBody(paragraphs: [Paragraph(runs: [])]), shape: shape,
-                sources: sources, style: style, slideNumber: slideNumber, fontScale: fontScale,
+                sources: sources, style: style, slideNumber: slideNumber, fontScale: shrink.fontScale,
+                lineSpacingReduction: shrink.lineSpacingReduction,
                 anchor: properties.anchor ?? .top, frame: shape.frame.points, area: area, rotation: shape.rotation,
                 vertical: properties.runsVertically ? properties.vertical : nil
             )

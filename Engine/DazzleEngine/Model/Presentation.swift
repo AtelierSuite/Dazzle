@@ -129,6 +129,11 @@ public struct Slide: Identifiable, Equatable, Sendable {
     public var notesPart: String?
     /// The slide's comment threads, and the parts they were read from.
     public var comments: [SlideComment] = []
+    /// How the slideshow moves onto the slide; `nil` for straight on.
+    public var transition: SlideTransition?
+    /// Whether `transition` must be written over the slide's own, which is
+    /// otherwise kept exactly as it was.
+    public var isTransitionEffectModified = false
     /// Seconds before the slideshow moves on by itself, if it does.
     public var autoAdvanceAfter: Double?
     /// Whether a tap or click moves the slideshow on.

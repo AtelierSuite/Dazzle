@@ -5,10 +5,12 @@ extension EditorState {
     /// Makes the selected chart another kind, keeping its data.
     func setChartKind(_ kind: Chart.Kind, in presentation: inout Presentation) {
         updateChart(in: &presentation) { chart in
-            let grouping = kind.hasAxes && kind != .scatter ? chart.plots.first?.grouping ?? .standard : .standard
-            chart.plots = [Chart.Plot(kind: kind, grouping: grouping, series: chart.allSeries)]
+            let grouping = kind.hasGrouping ? chart.plots.first?.grouping ?? .standard : .standard
+            // A 3D chart stays 3D as another kind that can be.
+            let isThreeD = kind.hasThreeD && chart.plots.first?.isThreeD == true
+            chart.plots = [Chart.Plot(kind: kind, grouping: grouping, series: chart.allSeries, isThreeD: isThreeD)]
             // A scatter chart's first column is numbers along the x axis.
-            if kind == .scatter, chart.categories.contains(where: { Double($0) == nil }) {
+            if kind.isXY, chart.categories.contains(where: { Double($0) == nil }) {
                 chart.categories = chart.categories.indices.map { String($0 + 1) }
             }
         }
@@ -63,12 +65,20 @@ extension Chart {
     }
 
     mutating func addCategory() {
-        let next = kind == .scatter
+        let next = kind.isXY
             ? String((Double(categories.last ?? "0") ?? 0) + 1).replacingOccurrences(of: ".0", with: "")
             : String(format: String(localized: "Chart.Sample.Category"), categories.count + 1)
         categories.append(next)
         for plot in plots.indices {
-            for series in plots[plot].series.indices { plots[plot].series[series].values.append(nil) }
+            for series in plots[plot].series.indices {
+                plots[plot].series[series].values.append(nil)
+                // A new bubble is as big as the series' others are on average.
+                if plots[plot].kind == .bubble {
+                    let sizes = plots[plot].series[series].sizes.compactMap(\.self)
+                    plots[plot].series[series].sizes = plots[plot].series[series].sizes.paddedTo(categories.count - 1)
+                        + [sizes.isEmpty ? 1 : sizes.reduce(0, +) / Double(sizes.count)]
+                }
+            }
         }
     }
 
@@ -78,6 +88,7 @@ extension Chart {
         for plot in plots.indices {
             for series in plots[plot].series.indices where plots[plot].series[series].values.indices.contains(index) {
                 plots[plot].series[series].values.remove(at: index)
+                if plots[plot].series[series].sizes.indices.contains(index) { plots[plot].series[series].sizes.remove(at: index) }
                 // A slice's own colour belongs to the slice, which moves up.
                 plots[plot].series[series].pointColors = Dictionary(uniqueKeysWithValues:
                     plots[plot].series[series].pointColors.compactMap { key, color in
@@ -85,5 +96,12 @@ extension Chart {
                     })
             }
         }
+    }
+}
+
+extension [Double?] {
+    /// The values, cut or filled with blanks to `count`.
+    func paddedTo(_ count: Int) -> [Double?] {
+        count <= self.count ? Array(prefix(count)) : self + Array(repeating: nil, count: count - self.count)
     }
 }

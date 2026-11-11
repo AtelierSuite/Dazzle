@@ -1,6 +1,11 @@
 import DazzleEngine
 import Foundation
 import Observation
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 /// The slideshow in progress, if any.
 ///
@@ -41,6 +46,9 @@ final class PresentationSession {
     /// every frame only while there is something to see.
     private(set) var isAnimating = false
     @ObservationIgnored private var animatingTask: Task<Void, Never>?
+    /// The transition onto the current slide, while it plays.
+    private(set) var transition: ShowingTransition?
+    @ObservationIgnored private var transitionTask: Task<Void, Never>?
     /// Moving on by itself, after the current slide's time.
     @ObservationIgnored private var advanceTask: Task<Void, Never>?
     /// What the running wait is for, so publishing again does not restart it.
@@ -88,6 +96,7 @@ final class PresentationSession {
         builds = 0
         isAnimating = false
         animatingTask?.cancel()
+        finishTransition()
         publish()
     }
 
@@ -96,7 +105,13 @@ final class PresentationSession {
     /// Plays the slide's next animation step, or with none left, moves on.
     func next() {
         guard isPresenting else { return }
-        if isBlanked {
+        if transition != nil {
+            // A tap while the slide arrives finishes its arrival.
+            finishTransition()
+            buildStartedAt = min(buildStartedAt, Date())
+            trackAnimation()
+            advanceFor = nil
+        } else if isBlanked {
             isBlanked = false
         } else if hasStepsLeft {
             builds += 1
@@ -104,11 +119,9 @@ final class PresentationSession {
             trackAnimation()
             playMedia(inStep: builds - 1)
         } else if position < order.count - 1 {
-            position += 1
-            beginSlide()
+            move(to: position + 1)
         } else if loops {
-            position = 0
-            beginSlide()
+            move(to: 0)
         } else {
             // Moving on from the last slide ends the show, as in Keynote.
             return end()
@@ -133,7 +146,7 @@ final class PresentationSession {
         advanceTask = nil
         guard isPresenting, !isBlanked, let seconds = currentSlide?.autoAdvanceAfter else { return }
         let shown = (position, builds)
-        let wait = max(seconds, 0.1) + animationTimeLeft
+        let wait = max(seconds, 0.1) + max(animationTimeLeft, transitionTimeLeft)
         guard wait.isFinite else { return }
         advanceTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(wait))
@@ -147,6 +160,11 @@ final class PresentationSession {
     /// Takes back the last animation step, or with none played, goes back a slide.
     func previous() {
         guard isPresenting else { return }
+        // Going back is straight back, without a transition.
+        if transition != nil {
+            finishTransition()
+            buildStartedAt = min(buildStartedAt, Date())
+        }
         if builds > (currentSlide?.animationTimeline.initiallyBegun ?? 0) {
             // Back to how the slide looked before the step, without playing it backwards.
             builds -= 1
@@ -165,10 +183,86 @@ final class PresentationSession {
 
     func go(toPosition index: Int) {
         guard isPresenting, order.indices.contains(index) else { return }
-        position = index
         isBlanked = false
-        beginSlide()
+        if index == position {
+            finishTransition()
+            beginSlide()
+        } else {
+            move(to: index)
+        }
         publish()
+    }
+
+    // MARK: - Transitions
+
+    /// A slide's transition playing: from how the last slide was left, to
+    /// how this one first looks.
+    struct ShowingTransition: Identifiable {
+        let id = UUID()
+        var transition: SlideTransition
+        var outgoing: Slide
+        var outgoingFrame: AnimationFrame?
+        var incomingFrame: AnimationFrame?
+        var startedAt: Date
+
+        /// How far through it is at `date`, from 0 to 1.
+        func progress(at date: Date) -> Double {
+            guard transition.duration > 0 else { return 1 }
+            return min(max(date.timeIntervalSince(startedAt) / transition.duration, 0), 1)
+        }
+    }
+
+    /// Moves on to another slide, playing its transition.
+    private func move(to index: Int) {
+        let outgoing = currentSlide
+        let outgoingFrame = animationFrame(at: Date())
+        finishTransition()
+        position = index
+        if let outgoing, let incoming = currentSlide, let transition = incoming.transition?.played(
+            reduceMotion: Self.prefersReducedMotion, seed: position
+        ), transition.isAnimated {
+            let showing = ShowingTransition(
+                transition: transition, outgoing: outgoing, outgoingFrame: outgoingFrame, incomingFrame: nil, startedAt: Date()
+            )
+            self.transition = showing
+            let id = showing.id
+            transitionTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(transition.duration))
+                guard !Task.isCancelled, let self, self.transition?.id == id else { return }
+                self.transition = nil
+            }
+        }
+        beginSlide()
+        if let presentation, let slide = currentSlide, var showing = transition {
+            // The slide's first animations wait for it to arrive.
+            showing.incomingFrame = slide.animations.isEmpty ? nil : slide.animationTimeline.frame(
+                begun: builds, elapsed: 0, shapes: slide.shapes, slideSize: presentation.slideSize.points
+            )
+            transition = showing
+        }
+    }
+
+    private func finishTransition() {
+        transitionTask?.cancel()
+        transitionTask = nil
+        transition = nil
+    }
+
+    /// Seconds until the transition playing now ends.
+    private var transitionTimeLeft: Double {
+        guard let transition else { return 0 }
+        return max(transition.transition.duration - Date().timeIntervalSince(transition.startedAt), 0)
+    }
+
+    /// With Reduce Motion on, transitions that move are played as cross-fades.
+    static var prefersReducedMotion: Bool {
+        #if os(iOS)
+        UIAccessibility.isReduceMotionEnabled
+        #elseif os(macOS)
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        #else
+        false
+        #endif
     }
 
     // MARK: - Animations
@@ -191,7 +285,7 @@ final class PresentationSession {
             buildStartedAt = .distantPast
         } else {
             builds = timeline?.initiallyBegun ?? 0
-            buildStartedAt = Date()
+            buildStartedAt = Date().addingTimeInterval(transitionTimeLeft)
         }
         trackAnimation()
     }
@@ -204,7 +298,7 @@ final class PresentationSession {
 
     private func trackAnimation() {
         animatingTask?.cancel()
-        let remaining = animationTimeLeft
+        let remaining = max(animationTimeLeft, transitionTimeLeft)
         isAnimating = remaining > 0
         guard isAnimating, remaining.isFinite else { return }
         animatingTask = Task { [weak self] in

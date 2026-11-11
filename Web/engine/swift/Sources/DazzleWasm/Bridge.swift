@@ -471,7 +471,16 @@ final class Bridge {
                 "through": timeline.playingThroughDuration.isFinite ? timeline.playingThroughDuration : -1,
                 "after": slide.autoAdvanceAfter as Any, "onClick": slide.advancesOnClick, "notes": slide.notes,
                 "loop": presentation.loopsSlideshow,
+                "transition": slide.transition.map { $0.isAnimated ? $0.duration : 0 } ?? 0,
             ]
+        case "transition":
+            // The slide's transition as keyframes for each layer, for the
+            // browser to animate: Reduce Motion asks for a cross-fade.
+            guard let slide = slide(r["slide"]) else { throw Failure(message: "No such slide.") }
+            guard let transition = slide.transition?.played(
+                reduceMotion: r["reduceMotion"] as? Bool ?? false, seed: r["seed"] as? Int ?? 0
+            ), transition.isAnimated else { return nil }
+            return transitionJSON(transition, size: presentation.slideSize.points)
         case "frame":
             // How the slide's animated shapes look `elapsed` seconds into step `begun`.
             guard let slide = slide(r["slide"]) else { throw Failure(message: "No such slide.") }
@@ -881,6 +890,13 @@ final class Bridge {
                 if values.count < count { values += Array(repeating: nil, count: count - values.count) }
                 if values.count > count { values = Array(values.prefix(count)) }
                 chart.plots[plot].series[series].values = values
+                // A bubble added is as big as the series' others are on average.
+                if chart.plots[plot].kind == .bubble {
+                    let sizes = chart.plots[plot].series[series].sizes
+                    let known = sizes.compactMap(\.self)
+                    let average = known.isEmpty ? 1 : known.reduce(0, +) / Double(known.count)
+                    chart.plots[plot].series[series].sizes = (0..<count).map { sizes.indices.contains($0) ? sizes[$0] ?? average : average }
+                }
             }
         }
     }
@@ -972,7 +988,7 @@ final class Bridge {
             "reflections": FormatChoices.reflections.map { ["id": $0.id, "label": $0.label] },
             "dashes": FormatChoices.dashes.map { ["id": $0.0, "label": $0.1] },
             "lineEnds": FormatChoices.lineEnds.map { ["id": $0.0, "label": $0.1] },
-            "charts": Chart.Kind.allCases.map { ["kind": $0.rawValue, "label": $0.label] },
+            "charts": Chart.Kind.insertable.map { ["kind": $0.rawValue, "label": $0.label] },
             "sizes": SlideSizeConverter.Preset.allCases.map { ["id": $0.rawValue, "label": $0.label] },
             "dateFormats": DateField.allCases.map { ["id": $0.rawValue, "label": $0.string(for: Date(), locale: Locale(identifier: PortableStrings.localeIdentifier))] },
             "animations": [
@@ -1158,6 +1174,7 @@ final class Bridge {
                 "kind": chart.kind.rawValue, "title": chart.title ?? "", "legend": chart.hasLegend ? chart.legendPosition : "none",
                 "gridlines": chart.showsGridlines, "labels": chart.showsValueLabels,
                 "grouping": chart.plots.first?.grouping.rawValue ?? "standard", "hasAxes": chart.kind.hasAxes,
+                "hasGrouping": chart.kind.hasGrouping, "kinds": chart.kind.choices.map { ["kind": $0.rawValue, "label": $0.label] },
                 "categories": chart.categories,
                 "series": chart.allSeries.map { ["name": $0.name, "values": $0.values.map { $0.map(ChartValues.format) ?? "" }] },
             ]
@@ -1206,6 +1223,33 @@ final class Bridge {
             "x": comment.position.map { Double($0.x) } as Any, "y": comment.position.map { Double($0.y) } as Any,
             "replies": comment.replies.map(commentJSON),
         ]
+    }
+
+    /// A transition as keyframes for each of its layers, back to front: a
+    /// moment every thirtieth of a second, in slide points.
+    private func transitionJSON(_ transition: SlideTransition, size: CGSize) -> [String: Any] {
+        let count = min(max(Int((transition.duration * 30).rounded(.up)), 2), 120)
+        let frames = (0...count).map { transition.frame(progress: Double($0) / Double(count), size: size) }
+        func n(_ value: CGFloat) -> String {
+            let rounded = (Double(value) * 1_000).rounded() / 1_000
+            return rounded == rounded.rounded() ? String(Int(rounded)) : String(rounded)
+        }
+        let layers = (frames.first?.layers.indices ?? 0..<0).map { index -> [String: Any] in
+            [
+                "content": frames[0].layers[index].content.rawValue,
+                "keyframes": frames.enumerated().map { offset, frame -> [String: Any] in
+                    let layer = frame.layers[index]
+                    let t = layer.transform
+                    return [
+                        "offset": Double(offset) / Double(count),
+                        "opacity": layer.opacity,
+                        "transform": "matrix(\(n(t.a)), \(n(t.b)), \(n(t.c)), \(n(t.d)), \(n(t.tx)), \(n(t.ty)))",
+                        "clipPath": layer.clip.map { $0.isEmpty ? "polygon(0 0, 0 0, 0 0)" : "path(evenodd, \"\($0.svgData)\")" } ?? "none",
+                    ]
+                },
+            ]
+        }
+        return ["duration": transition.duration, "layers": layers]
     }
 
     private func frameJSON(_ frame: AnimationFrame, slide: Slide) -> [String: Any] {
