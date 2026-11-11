@@ -181,7 +181,7 @@ public struct KeynoteSlideWriter {
         guard var frame = Frame(drawable?.message(1)) else { return nil }
         let style = shape.reference(2) ?? inherited?.reference(2)
         let pathSource = shape.message(3).flatMap { $0.fields.isEmpty ? nil : $0 } ?? inherited?.message(3)
-        let opacity = styles.opacity(style)
+        let opacity = styles.opacity(style) * drawingOpacity
 
         let fill = KeynoteStyles.fill(styles.drawingProperty(style, .fill), opacity: opacity) { imageRelationship($0) }
             ?? "<a:noFill/>"
@@ -288,7 +288,7 @@ public struct KeynoteSlideWriter {
             sourceRect = "<a:srcRect l=\"\(left)\" t=\"\(top)\" r=\"\(right)\" b=\"\(bottom)\"/>"
             geometry = KeynoteGeometry.xml(mask.message.message(2), size: frame.size)
         }
-        let opacity = styles.opacity(style)
+        let opacity = styles.opacity(style) * drawingOpacity
         let alpha = opacity < 0.999 ? "<a:alphaModFix amt=\"\(Int(opacity * 100_000))\"/>" : ""
         let line = KeynoteStyles.line(styles.drawingProperty(style, .stroke), head: nil, tail: nil, opacity: 1)
         let effects = KeynoteStyles.effects(
@@ -437,12 +437,22 @@ public struct KeynoteSlideWriter {
             """
     }
 
+    /// How opaque the freehand drawing being written is, which DrawingML
+    /// can't say of a group, so each of its strokes says it instead.
+    private var drawingOpacity = 1.0
+
+    /// A group, or a freehand drawing: a `TSD.GroupArchive` whose strokes
+    /// are its children, each a shape with a path.
     private mutating func group(_ group: ProtoMessage) -> String? {
         guard let frame = Frame(group.message(1)?.message(1)) else { return nil }
         // Children are placed in the group's own space, from its top-left
         // corner. The group claims its id before they do.
-        let nonVisual = nonVisual(group.message(1), name: "Group")
+        let isDrawing = group.has(100)
+        let nonVisual = nonVisual(group.message(1), name: isDrawing ? "Drawing" : "Group")
+        let outer = drawingOpacity
+        if let opacity = group.message(100)?.float(2) { drawingOpacity *= min(max(opacity, 0), 1) }
         let children = group.references(2).compactMap { drawable($0) }
+        drawingOpacity = outer
         guard !children.isEmpty else { return nil }
         return """
             <p:grpSp><p:nvGrpSpPr>\(nonVisual)<p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr>\
