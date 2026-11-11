@@ -34,7 +34,8 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
         case table(SlideTable)
         /// A chart, or `nil` for one Dazzle cannot read.
         case chart(Chart?)
-        /// SmartArt, drawn from the shapes PowerPoint saved alongside it.
+        /// SmartArt, drawn from the shapes PowerPoint saved alongside it, or
+        /// laid out from its data when there are none. Never written.
         case diagram([SlideShape])
         /// Anything else: an embedded object, ink, a 3D model.
         case unsupported(String)

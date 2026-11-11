@@ -279,11 +279,26 @@ public final class ShapeParser {
     }
 
     /// SmartArt keeps a drawing of itself in a part of its own, reached
-    /// through the data part's extension.
+    /// through the data part's extension. Without one, it is laid out from
+    /// its data, in shapes that are never saved: its parts are written back
+    /// as they were read.
     private func diagram(_ data: XMLElement?, frame: EMURect) -> SlideShape.Kind? {
-        guard let dataReference = data?.firstChild(named: "relIds")?.attribute("dm"),
-              let dataPath = target(of: dataReference),
+        guard let references = data?.firstChild(named: "relIds"),
+              let dataPath = references.attribute("dm").flatMap(target(of:)),
               let dataPart = parts[dataPath], let model = try? XMLLite.parse(dataPart) else { return nil }
+        if let drawn = drawing(of: model, frame: frame) { return .diagram(drawn) }
+        func part(_ key: String) -> XMLElement? {
+            references.attribute(key).flatMap(target(of:)).flatMap { parts[$0] }.flatMap { try? XMLLite.parse($0) }
+        }
+        let laidOut = DiagramLayout(
+            model: model, layout: part("lo"), colors: part("cs"), style: part("qs"), textBody: textBody
+        ).shapes(in: frame)
+        // A diagram with no points in it is left to the stand-in, which at least says what it is.
+        return laidOut.isEmpty ? nil : .diagram(laidOut)
+    }
+
+    /// The shapes of the drawing PowerPoint saved of a diagram, if it saved one with anything in it.
+    private func drawing(of model: XMLElement, frame: EMURect) -> [SlideShape]? {
         func findDrawingReference(_ element: XMLElement) -> String? {
             if element.name == "dataModelExt", let id = element.attribute("relId") { return id }
             for child in element.children {
@@ -312,9 +327,7 @@ public final class ShapeParser {
             }
             return moved
         }
-        // A drawing with nothing in it is a diagram only its layout engine
-        // could draw; leave it to the stand-in, which at least says so.
-        return shapes.isEmpty ? nil : .diagram(shapes)
+        return shapes.isEmpty ? nil : shapes
     }
 
     private func table(_ element: XMLElement) -> SlideTable {
