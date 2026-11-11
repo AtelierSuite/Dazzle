@@ -127,9 +127,11 @@ public struct KeynoteChart {
         case .column: [13, 14]
         case .bar: [12, 14]
         case .area: [11, 14]
-        case .pie, .doughnut: [17, 14]
-        case .line: [48]
+        case .pie, .doughnut, .pieOfPie, .barOfPie: [17, 14]
+        case .line, .radar, .stock: [48]
         case .scatter: [59, 14]
+        case .bubble: [14, 59]
+        case .surface: [14]
         }
         for field in fields {
             let property = generated(style, field) { $0.message(field) }
