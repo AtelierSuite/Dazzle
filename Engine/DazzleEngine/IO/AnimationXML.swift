@@ -440,6 +440,9 @@ public enum AnimationXML {
                 "animMotion", attributes: " origin=\"\(path.usesSlideOrigin ? "parent" : "layout")\" path=\"\(XMLLite.escape(path.path))\" pathEditMode=\"relative\" ptsTypes=\"\"",
                 additive: path.isAdditive ? " additive=\"sum\"" : "", dur: duration, extra: " fill=\"hold\"", attribute: ["ppt_x", "ppt_y"]
             )
+        case (.other("mediacall"), _):
+            return "<p:cmd type=\"call\" cmd=\"playFrom(0.0)\"><p:cBhvr><p:cTn id=\"\(take(&nextID))\" dur=\"1\" fill=\"hold\"/>"
+                + "<p:tgtEl>\(target)</p:tgtEl></p:cBhvr></p:cmd>"
         default:
             // Nothing Dazzle makes; shown as it fades, so written as one.
             return animation.category == .exit ? fade("out") + visibility("hidden", at: duration - 0.001)

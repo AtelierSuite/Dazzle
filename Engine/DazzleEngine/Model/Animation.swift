@@ -220,9 +220,18 @@ public struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
         )
     }
 
-    /// Whether it starts a video or sound the slide holds.
+    /// Whether it starts a video or sound the slide holds: a play command as
+    /// read, or one Dazzle made.
     public var playsMedia: Bool {
-        category == .other("mediacall") && source?.contains("playFrom") == true
+        category == .other("mediacall") && (source?.contains("playFrom") ?? true)
+    }
+
+    /// Starts the video or sound in the shape, as PowerPoint's play command does.
+    public static func playingMedia(shapeID: Int, trigger: Trigger, delay: Double = 0) -> ShapeAnimation {
+        ShapeAnimation(
+            shapeID: shapeID, category: .other("mediacall"), effect: .preset(id: 1, subtype: 0), trigger: trigger,
+            duration: 0.001, delay: delay
+        )
     }
 }
 
