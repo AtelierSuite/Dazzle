@@ -226,7 +226,7 @@ export class SlideDrawer {
       class: "shape__outline", width: node.w, height: node.h, viewBox: `0 0 ${Math.max(node.w, 0.01)} ${Math.max(node.h, 0.01)}`, overflow: "visible",
     }, parent);
     if (node.fill && node.path) {
-      const fill = svg("path", { d: node.path, "fill-rule": "evenodd" }, geometry);
+      const fill = svg("path", { d: node.path, "fill-rule": node.rule ?? "evenodd" }, geometry);
       this.paint(fill, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
       fill.classList.add("shape__fill");
     }

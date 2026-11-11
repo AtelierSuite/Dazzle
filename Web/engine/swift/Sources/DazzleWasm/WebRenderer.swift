@@ -127,8 +127,15 @@ struct WebRenderer {
         switch shape.geometry {
         case .preset(let name, let adjustments):
             let path = PresetGeometry.path(name, adjustments: adjustments, in: rect)
-            let svg = path.svgData
-            return (svg, svg, PresetGeometry.isOpen(name) || shape.kind == .connector, path)
+            // Lines drawn over the fill with the outline's stroke: a ribbon's folds, a cloud's puffs.
+            var stroke: CGPath = path
+            if let details = PresetGeometry.detailPath(name, adjustments: adjustments, in: rect) {
+                let combined = CGMutablePath()
+                combined.addPath(path)
+                combined.addPath(details)
+                stroke = combined
+            }
+            return (path.svgData, stroke.svgData, PresetGeometry.isOpen(name) || shape.kind == .connector, stroke)
         case .custom(let paths):
             let (fill, stroke) = PresetGeometry.path(paths, in: rect)
             return (fill.svgData, stroke.svgData, false, stroke)
@@ -142,6 +149,9 @@ struct WebRenderer {
         let (fillPath, strokePath, isOpen, strokeShape) = outline(of: shape, size: frame.size)
         node["path"] = fillPath
         if strokePath != fillPath { node["strokePath"] = strokePath }
+        // A cloud callout's bubbles may overlap the cloud. Apple platforms join
+        // them into one outline; here they fill as one where they overlap.
+        if shape.geometry.presetName == "cloudCallout" { node["rule"] = "nonzero" }
         if isOpen { node["open"] = true }
         if !isOpen, var fill = style.fill(for: shape, sources: sources) {
             if fill.fill == .group, let groupFill { fill = groupFill }
