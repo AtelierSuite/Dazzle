@@ -110,7 +110,7 @@ enum MainMenu {
         tables.addItem(item(String(localized: "Table.Other"), #selector(Commands.chooseTableSize(_:))))
         menu.addItem(submenu(tables))
         let charts = NSMenu(title: String(localized: "Menu.Insert.Chart"))
-        for kind in Chart.Kind.allCases {
+        for kind in Chart.Kind.insertable {
             let entry = item(kind.label, #selector(Commands.insertChart(_:)))
             entry.representedObject = kind.rawValue
             entry.image = NSImage(systemSymbolName: kind.symbol, accessibilityDescription: nil)

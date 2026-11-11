@@ -200,7 +200,7 @@ struct FloatingActionBar: View {
     /// A new chart, by kind.
     private var chartMenu: some View {
         Menu {
-            ForEach(Chart.Kind.allCases, id: \.self) { kind in
+            ForEach(Chart.Kind.insertable, id: \.self) { kind in
                 Button {
                     state.insertChart(kind, in: &presentation)
                 } label: {

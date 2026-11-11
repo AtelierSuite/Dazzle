@@ -26,12 +26,12 @@ struct ChartPanel: View {
     private func typeSection(_ chart: Chart) -> some View {
         Section("Chart.Section.Type") {
             Picker("Chart.Type", selection: Binding(get: { chart.kind }, set: { state.setChartKind($0, in: &presentation) })) {
-                ForEach(Chart.Kind.allCases, id: \.self) { kind in
+                ForEach(chart.kind.choices, id: \.self) { kind in
                     Label(kind.label, systemImage: kind.symbol).tag(kind)
                 }
             }
             .accessibilityIdentifier("chartType")
-            if chart.kind.hasAxes, chart.kind != .scatter {
+            if chart.kind.hasGrouping {
                 Picker("Chart.Grouping", selection: Binding(
                     get: { chart.plots.first?.grouping ?? .standard },
                     set: { grouping in state.updateChart(in: &presentation) { chart in
@@ -100,7 +100,7 @@ struct ChartDataGrid: View {
         ScrollView(.horizontal) {
             Grid(horizontalSpacing: 6, verticalSpacing: 6) {
                 GridRow {
-                    Text(chart.kind == .scatter ? "Chart.Data.X" : "Chart.Data.Category")
+                    Text(chart.kind.isXY ? "Chart.Data.X" : "Chart.Data.Category")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .frame(width: Self.columnWidth, alignment: .leading)
