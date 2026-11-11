@@ -364,15 +364,57 @@ public enum Fill: Equatable, Hashable, Sendable {
 
 /// What a picture's `a:blip` does to its colours.
 public struct BlipEffects: Equatable, Hashable, Sendable {
+    /// `clrChange`: one colour of the picture swapped for another, most
+    /// often for transparency ("Set Transparent Colour").
+    public struct ColorChange: Equatable, Hashable, Sendable {
+        public var from: DrawingColor
+        public var to: DrawingColor
+        /// `useA`: whether a pixel's alpha has to match `from`'s too.
+        public var usesAlpha = true
+
+        public init(from: DrawingColor, to: DrawingColor, usesAlpha: Bool = true) {
+            self.from = from
+            self.to = to
+            self.usesAlpha = usesAlpha
+        }
+
+        /// How far a pixel may be from `from` and still be changed: the sum
+        /// of its channels' differences, 0…3. The file gives no tolerance,
+        /// but PowerPoint takes near colours too, without which a JPEG's
+        /// compression would leave a speckled fringe where the colour was.
+        public static let tolerance = 0.1
+
+        var xml: String {
+            "<a:clrChange\(usesAlpha ? "" : " useA=\"0\"")><a:clrFrom>\(from.xml)</a:clrFrom><a:clrTo>\(to.xml)</a:clrTo></a:clrChange>"
+        }
+    }
+
     /// `alphaModFix`: the whole picture partly transparent.
     public var opacity = 1.0
+    public var colorChange: ColorChange?
+    /// `biLevel`: black or white either side of this luminance, 0…1.
+    public var biLevelThreshold: Double?
     /// `grayscl`.
     public var isGreyscale = false
     /// `duotone`: dark to light mapped onto these two colours.
     public var duotone: [DrawingColor] = []
+    /// `hsl`: hue turned by degrees; saturation and luminance moved by −1…1.
+    public var hueShift = 0.0
+    public var saturationShift = 0.0
+    public var luminanceShift = 0.0
+    /// `tint`: colours pulled towards a hue in degrees, by −1…1.
+    public var tintHue = 0.0
+    public var tintAmount = 0.0
     /// `lum`: picture brightness and contrast, distinct from its alpha.
     public var brightness = 0.0
     public var contrast = 0.0
+    /// `a14:imgEffect`s: the artistic effects and picture corrections of
+    /// Office 2010 and later, in the order they were applied.
+    public var artistic: [ArtisticEffect] = []
+    /// Whether `a14:imgLayer` keeps the original picture apart (`r:embed`).
+    /// It does when Office wrote it, and then the blip's own picture is the
+    /// original with `artistic` already applied, to be shown as it is.
+    public var hasOriginalLayer = false
 
     public init() {
         // No effects: the picture as it is.
@@ -380,26 +422,119 @@ public struct BlipEffects: Equatable, Hashable, Sendable {
 
     public init(blip: XMLElement?) {
         guard let blip else { return }
-        opacity = blip.firstChild(named: "alphaModFix")?.attribute("amt").flatMap(Double.init).map { $0 / 100_000 } ?? 1
+        func fraction(_ element: XMLElement?, _ key: String) -> Double? {
+            element?.attribute(key).flatMap(Double.init).map { $0 / 100_000 }
+        }
+        opacity = fraction(blip.firstChild(named: "alphaModFix"), "amt") ?? 1
+        if let change = blip.firstChild(named: "clrChange"),
+           let from = DrawingColor.first(in: change.firstChild(named: "clrFrom")),
+           let to = DrawingColor.first(in: change.firstChild(named: "clrTo")) {
+            colorChange = ColorChange(from: from, to: to, usesAlpha: !["0", "false"].contains(change.attribute("useA") ?? ""))
+        }
+        if let biLevel = blip.firstChild(named: "biLevel") {
+            biLevelThreshold = fraction(biLevel, "thresh") ?? 0
+        }
         isGreyscale = blip.firstChild(named: "grayscl") != nil
         let tones = blip.firstChild(named: "duotone")?.children.compactMap(DrawingColor.init(element:)) ?? []
         if tones.count == 2 { duotone = tones }
+        if let hsl = blip.firstChild(named: "hsl") {
+            hueShift = (hsl.attribute("hue").flatMap(Double.init) ?? 0) / 60_000
+            saturationShift = fraction(hsl, "sat") ?? 0
+            luminanceShift = fraction(hsl, "lum") ?? 0
+        }
+        if let tint = blip.firstChild(named: "tint") {
+            tintHue = (tint.attribute("hue").flatMap(Double.init) ?? 0) / 60_000
+            tintAmount = fraction(tint, "amt") ?? 0
+        }
         if let lum = blip.firstChild(named: "lum") {
-            brightness = (lum.attribute("bright").flatMap(Double.init) ?? 0) / 100_000
-            contrast = (lum.attribute("contrast").flatMap(Double.init) ?? 0) / 100_000
+            brightness = fraction(lum, "bright") ?? 0
+            contrast = fraction(lum, "contrast") ?? 0
+        }
+        // `a:extLst/a:ext/a14:imgProps/a14:imgLayer/a14:imgEffect/…`
+        let layer = blip.firstChild(named: "extLst")?.children(named: "ext")
+            .lazy.compactMap { $0.firstChild(named: "imgProps")?.firstChild(named: "imgLayer") }.first
+        if let layer {
+            hasOriginalLayer = !(layer.attribute("embed") ?? "").isEmpty
+            artistic = layer.children(named: "imgEffect").compactMap { $0.children.first.map(ArtisticEffect.init(element:)) }
         }
     }
 
-    /// Whether the picture's colours change at all.
-    public var altersColor: Bool { isGreyscale || !duotone.isEmpty || brightness != 0 || contrast != 0 }
+    /// The artistic effects still to be applied when the picture is drawn:
+    /// none when the blip's picture already has them.
+    public var pendingArtistic: [ArtisticEffect] {
+        hasOriginalLayer ? [] : artistic.filter { $0.isVisible && $0.look != nil }
+    }
 
-    public var xml: String {
+    /// Whether the picture's colours change at all.
+    public var altersColor: Bool {
+        colorChange != nil || biLevelThreshold != nil || isGreyscale || !duotone.isEmpty
+            || hueShift != 0 || saturationShift != 0 || luminanceShift != 0 || tintAmount != 0
+            || brightness != 0 || contrast != 0 || !pendingArtistic.isEmpty
+    }
+
+    /// The effects' colours resolved, as a renderer applies them.
+    public func resolved(_ color: (DrawingColor) -> RGBAColor) -> ResolvedPictureEffects {
+        var resolved = ResolvedPictureEffects()
+        resolved.colorChange = colorChange.map { (color($0.from), color($0.to), $0.usesAlpha) }
+            .map { ResolvedPictureEffects.ColorChange(from: $0.0, to: $0.1, usesAlpha: $0.2) }
+        resolved.biLevelThreshold = biLevelThreshold
+        resolved.isGreyscale = isGreyscale
+        resolved.duotone = duotone.count == 2 ? duotone.map(color) : []
+        if hueShift != 0 || saturationShift != 0 || luminanceShift != 0 {
+            resolved.hsl = ColorMatrix.hueRotation(hueShift)
+                .then(.saturation(1 + saturationShift))
+                .then(luminanceShift >= 0 ? .linear(slope: 1 - luminanceShift, intercept: luminanceShift)
+                    : .linear(slope: 1 + luminanceShift, intercept: 0))
+        }
+        if tintAmount != 0 {
+            let turn = (tintHue / 360).truncatingRemainder(dividingBy: 1)
+            resolved.tint = ResolvedPictureEffects.Tint(
+                color: RGBAColor(hue: turn < 0 ? turn + 1 : turn, saturation: 1, luminance: 0.5),
+                amount: min(max(tintAmount, -1), 1)
+            )
+        }
+        if brightness != 0 || contrast != 0 { resolved.luminance = .brightnessContrast(brightness, contrast) }
+        resolved.artistic = pendingArtistic.compactMap { effect in effect.look.map { ($0, effect.transparency) } }
+            .map { ResolvedPictureEffects.Artistic(look: $0.0, transparency: $0.1) }
+        return resolved
+    }
+
+    /// The effects as the children of an `a:blip`. Artistic effects are
+    /// written only while they are still to be applied: a picture they were
+    /// applied to is already what they make it, and the original it came
+    /// from is a part only the XML it was read with can point to.
+    public var xml: String { colorXML + artisticXML }
+
+    /// The colour effects alone, each named in `colorElementNames`.
+    public var colorXML: String {
         let alpha = opacity < 1 ? "<a:alphaModFix amt=\"\(Int((opacity * 100_000).rounded()))\"/>" : ""
+        let change = colorChange?.xml ?? ""
+        let biLevel = biLevelThreshold.map { "<a:biLevel thresh=\"\(Int(($0 * 100_000).rounded()))\"/>" } ?? ""
         let grey = isGreyscale ? "<a:grayscl/>" : ""
         let tones = duotone.count == 2 ? "<a:duotone>\(duotone.map(\.xml).joined())</a:duotone>" : ""
+        let hsl = hueShift != 0 || saturationShift != 0 || luminanceShift != 0
+            ? "<a:hsl hue=\"\(Int((hueShift * 60_000).rounded()))\" sat=\"\(Int((saturationShift * 100_000).rounded()))\""
+                + " lum=\"\(Int((luminanceShift * 100_000).rounded()))\"/>" : ""
         let lum = brightness != 0 || contrast != 0
             ? "<a:lum bright=\"\(Int((brightness * 100_000).rounded()))\" contrast=\"\(Int((contrast * 100_000).rounded()))\"/>" : ""
-        return alpha + grey + tones + lum
+        let tint = tintAmount != 0
+            ? "<a:tint hue=\"\(Int((tintHue * 60_000).rounded()))\" amt=\"\(Int((tintAmount * 100_000).rounded()))\"/>" : ""
+        return alpha + change + biLevel + grey + tones + hsl + lum + tint
+    }
+
+    /// The colour effects' element names, which `colorXML` writes in place of any the blip has.
+    public static let colorElementNames: Set<String> = [
+        "alphaModFix", "clrChange", "biLevel", "grayscl", "duotone", "hsl", "lum", "tint",
+    ]
+
+    /// The `a:extLst` carrying artistic effects still to be applied, or nothing.
+    public var artisticXML: String {
+        let effects = hasOriginalLayer ? [] : artistic
+        guard !effects.isEmpty else { return "" }
+        return "<a:extLst><a:ext uri=\"{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}\">"
+            + "<a14:imgProps xmlns:a14=\"\(ArtisticEffect.namespace)\"><a14:imgLayer>"
+            + effects.map { "<a14:imgEffect>\($0.xml)</a14:imgEffect>" }.joined()
+            + "</a14:imgLayer></a14:imgProps></a:ext></a:extLst>"
     }
 }
 

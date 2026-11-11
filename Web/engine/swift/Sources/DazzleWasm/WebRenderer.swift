@@ -269,6 +269,35 @@ struct WebRenderer {
         if effects.duotone.count == 2 { json["duotone"] = effects.duotone.map { css(style.color($0, placeholder: placeholder)) } }
         if effects.brightness != 0 { json["brightness"] = effects.brightness }
         if effects.contrast != 0 { json["contrast"] = effects.contrast }
+        // The rest as the Apple renderer applies them, colours resolved and
+        // adjustments as `feColorMatrix` values.
+        let resolved = effects.resolved { style.color($0, placeholder: placeholder) }
+        func rgba(_ color: RGBAColor) -> [Double] { [color.red, color.green, color.blue, color.alpha] }
+        if let change = resolved.colorChange {
+            json["change"] = ["from": rgba(change.from), "to": rgba(change.to), "tol": BlipEffects.ColorChange.tolerance]
+        }
+        if let threshold = resolved.biLevelThreshold { json["biLevel"] = threshold }
+        if let hsl = resolved.hsl { json["hsl"] = hsl.values }
+        if let tint = resolved.tint { json["tint"] = ["c": rgba(tint.color), "amt": tint.amount] }
+        if !resolved.artistic.isEmpty { json["art"] = resolved.artistic.map(artistic) }
+        return json
+    }
+
+    /// An artistic effect's look, for `effects()` in slide.js to draw as an
+    /// SVG filter; sizes are fractions of the picture's longer side.
+    private func artistic(_ effect: ResolvedPictureEffects.Artistic) -> [String: Any] {
+        var json: [String: Any] = effect.transparency > 0 ? ["trans": effect.transparency] : [:]
+        switch effect.look {
+        case .matrix(let matrix): json["k"] = "matrix"; json["m"] = matrix.values
+        case .blur(let sigma): json["k"] = "blur"; json["s"] = sigma
+        case .sharpen(let amount): json["k"] = "sharpen"; json["v"] = amount
+        case .sketch(let width, let inverted): json["k"] = "sketch"; json["s"] = width; json["inv"] = inverted
+        case .edges(let smoothness): json["k"] = "edges"; json["v"] = smoothness
+        case .paint(let levels, let softness): json["k"] = "paint"; json["n"] = levels; json["v"] = softness
+        case .grain(let strength): json["k"] = "grain"; json["v"] = strength
+        case .distort(let scale): json["k"] = "distort"; json["v"] = scale
+        case .glow(let strength): json["k"] = "glow"; json["v"] = strength
+        }
         return json
     }
 

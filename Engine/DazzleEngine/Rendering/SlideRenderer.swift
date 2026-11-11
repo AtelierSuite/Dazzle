@@ -952,11 +952,8 @@ public struct SlideRenderer {
             return nil
         }
         guard effects.altersColor else { return image }
-        let tones = effects.duotone.map { style.color($0, placeholder: placeholderColor) }
-        return ImageCache.shared.recolored(
-            image, key: "\(path)#\(data.count)#\(effects.isGreyscale)#\(tones.map(\.hexValue))",
-            isGreyscale: effects.isGreyscale, duotone: tones, brightness: effects.brightness, contrast: effects.contrast
-        )
+        let resolved = effects.resolved { style.color($0, placeholder: placeholderColor) }
+        return ImageCache.shared.processed(image, key: "\(path)#\(data.count)", effects: resolved)
     }
 
     /// CoreGraphics draws images bottom-up; the slide is drawn top-down.

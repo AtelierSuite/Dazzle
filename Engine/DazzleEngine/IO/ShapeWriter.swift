@@ -408,11 +408,20 @@ public struct ShapeWriter {
         guard let fill = element.firstChild(named: "blipFill") else { return }
         if let path = picture.imagePath, let blip = fill.firstChild(named: "blip") {
             blip.setAttribute("embed", relationshipID(forImage: path))
-            for child in blip.children where ["alphaModFix", "grayscl", "duotone", "lum"].contains(child.name) {
+            for child in blip.children where BlipEffects.colorElementNames.contains(child.name) {
                 blip.removeChild(child)
             }
-            if let effects = fragment("<a:blip>\(picture.effects.xml)</a:blip>") {
+            if let effects = fragment("<a:blip>\(picture.effects.colorXML)</a:blip>") {
                 for child in effects.children { blip.insertChild(child, at: blip.children.firstIndex { $0.name == "extLst" } ?? blip.children.count) }
+            }
+            // Artistic effects the blip was read with stay as they were, original picture and all.
+            let hasArtistic = blip.firstChild(named: "extLst")?.children(named: "ext").contains { $0.firstChild(named: "imgProps") != nil } ?? false
+            if !hasArtistic, let list = fragment("<a:blip>\(picture.effects.artisticXML)</a:blip>")?.firstChild(named: "extLst") {
+                if let existing = blip.firstChild(named: "extLst") {
+                    for ext in list.children { existing.insertChild(ext, at: 0) }
+                } else {
+                    blip.insertChild(list, at: blip.children.count)
+                }
             }
         }
         fill.firstChild(named: "srcRect").map(fill.removeChild)
