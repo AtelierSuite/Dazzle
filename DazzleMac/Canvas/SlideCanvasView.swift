@@ -947,7 +947,8 @@ final class SlideCanvasView: NSView {
             return InPlaceTextEditor.Target(
                 id: .shape(shape.id), body: shape.text ?? TextBody(paragraphs: [Paragraph(runs: [])]), shape: shape,
                 sources: sources, style: style, slideNumber: slideNumber, fontScale: fontScale,
-                anchor: properties.anchor ?? .top, frame: shape.frame.points, area: area, rotation: shape.rotation
+                anchor: properties.anchor ?? .top, frame: shape.frame.points, area: area, rotation: shape.rotation,
+                vertical: properties.runsVertically ? properties.vertical : nil
             )
         }
         if state.isEditingCell, let shape = deck.selectedShape, case .table(let table) = shape.kind,

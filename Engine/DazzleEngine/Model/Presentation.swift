@@ -215,6 +215,9 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
         /// back only into the Keynote file they came from.
         case tableStandIns
         case charts
+        /// Charts that are kept in their place as stand-ins, and saved
+        /// back only into the Keynote file they came from.
+        case chartStandIns
         case builds
         case approximatedBuilds
         case movies
@@ -225,6 +228,7 @@ public struct UnsupportedFeatureReport: Equatable, Sendable {
             case .tables: String(localized: "Notice.Omission.Tables", bundle: .engine)
             case .tableStandIns: String(localized: "Notice.Omission.TableStandIns", bundle: .engine)
             case .charts: String(localized: "Notice.Omission.Charts", bundle: .engine)
+            case .chartStandIns: String(localized: "Notice.Omission.ChartStandIns", bundle: .engine)
             case .builds: String(localized: "Notice.Omission.Builds", bundle: .engine)
             case .approximatedBuilds: String(localized: "Notice.Omission.ApproximatedBuilds", bundle: .engine)
             case .movies: String(localized: "Notice.Omission.Movies", bundle: .engine)

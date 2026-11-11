@@ -14,18 +14,24 @@ public struct KeynoteChart {
 
     public func chart(_ drawable: ProtoMessage, path: String) -> Chart? {
         guard let info = drawable.message(10_000), let grid = info.message(7) else { return nil }
+        // 3D charts are drawn flat. Mixed and two-axis charts give each
+        // series a kind of its own, all against the one value axis.
+        let type = info.int(1) ?? 1
         let kind: Chart.Kind
         var grouping = Chart.Grouping.standard
-        switch info.int(1) ?? 1 {
-        case 1, 12, 20: kind = .column
+        // Columns of the grid each scatter point takes: x and y, and a bubble's size.
+        var pointWidth = 1
+        switch type {
+        case 1, 10, 11, 12, 20: kind = .column
         case 2, 13, 21: kind = .bar
-        case 3, 14: kind = .line
+        case 3, 14, 27: kind = .line
         case 4, 15: kind = .area
         case 5, 16: kind = .pie
         case 6, 17: kind = .column; grouping = .stacked
         case 7, 18: kind = .bar; grouping = .stacked
         case 8, 19: kind = .area; grouping = .stacked
-        case 9, 23: kind = .scatter
+        case 9, 23: kind = .scatter; pointWidth = 2
+        case 22, 24: kind = .scatter; pointWidth = 3
         case 25, 26: kind = .doughnut
         default: return nil
         }
@@ -39,22 +45,56 @@ public struct KeynoteChart {
         // Series run along rows (1) or down columns (2).
         let byRow = info.int(5) == 1
         let categories = byRow ? columnNames : rowNames
-        let seriesNames = byRow ? rowNames : columnNames
+        let names = byRow ? rowNames : columnNames
+        func cell(_ series: Int, _ category: Int) -> Double? {
+            byRow ? value(series, category) : value(category, series)
+        }
 
         let themeStyles = info.references(17)
-        var privateStyles: [Int: UInt64] = [:]
-        for entry in info.message(18)?.messages(2) ?? [] {
-            if let index = entry.int(1), let reference = entry.reference(2) { privateStyles[index] = reference }
+        let privateStyles = Self.sparse(info.message(18))
+        let nonStyles = Self.sparse(info.message(19))
+        // A scatter series takes its x values from one name's data and its
+        // y values from the next, unless every series shares the first's x
+        // values (2); a bubble's size, after its y values, is not drawn.
+        // Dazzle's charts share their x values, which are the first series' own.
+        let sharesX = kind == .scatter && info.int(2) == 2
+        let stride = sharesX ? pointWidth - 1 : pointWidth
+        let seriesCount = switch (kind, sharesX) {
+        case (.scatter, true): max(0, names.count - 1) / stride
+        case (.scatter, false): names.count / stride
+        default: names.count
         }
-        let series = seriesNames.indices.map { index -> Chart.Series in
+        var plots: [Chart.Plot] = []
+        for index in 0..<seriesCount {
             let style = privateStyles[index] ?? (themeStyles.isEmpty ? nil : themeStyles[index % themeStyles.count])
-            let values = categories.indices.map { byRow ? value(index, $0) : value($0, index) }
-            var series = Chart.Series(name: seriesNames[index], values: values)
-            series.color = color(style, kind: kind)
-            return series
+            var seriesKind = kind
+            if type == 10 || type == 11 {
+                seriesKind = switch generated(nonStyles[index], 26, { $0.int(26) }) {
+                case 3: .line
+                case 4: .area
+                default: .column
+                }
+            }
+            // The name whose data are the series' values.
+            let column = switch (kind, sharesX) {
+            case (.scatter, true): 1 + index * stride
+            case (.scatter, false): index * stride + 1
+            default: index
+            }
+            var series = Chart.Series(name: names[column], values: categories.indices.map { cell(column, $0) })
+            series.color = color(style, kind: seriesKind)
+            if let last = plots.indices.last, plots[last].kind == seriesKind {
+                plots[last].series.append(series)
+            } else {
+                plots.append(Chart.Plot(kind: seriesKind, grouping: grouping, series: [series]))
+            }
         }
+        if plots.isEmpty { plots = [Chart.Plot(kind: kind, grouping: grouping, series: [])] }
 
-        var chart = Chart(path: path, plots: [Chart.Plot(kind: kind, grouping: grouping, series: series)], categories: categories)
+        let xValues = categories.indices.map { index in
+            cell(0, index).map { $0 == $0.rounded() && abs($0) < 1e15 ? String(Int($0)) : String($0) } ?? String(index + 1)
+        }
+        var chart = Chart(path: path, plots: plots, categories: kind == .scatter ? xValues : categories)
         let nonStyle = info.reference(10)
         if generated(nonStyle, 21) { $0.bool(21) } == true {
             chart.title = generated(nonStyle, 23) { $0.string(23) }
@@ -62,6 +102,15 @@ public struct KeynoteChart {
         chart.hasLegend = generated(nonStyle, 20) { $0.bool(20) } ?? false
         chart.showsGridlines = generated(info.references(14).first, 28) { $0.bool(28) } ?? true
         return chart
+    }
+
+    /// Style references by series index, from a `TSP.SparseReferenceArray`.
+    private static func sparse(_ array: ProtoMessage?) -> [Int: UInt64] {
+        var references: [Int: UInt64] = [:]
+        for entry in array?.messages(2) ?? [] {
+            if let index = entry.int(1), let reference = entry.reference(2) { references[index] = reference }
+        }
+        return references
     }
 
     /// A generated property, read through the style's parents.

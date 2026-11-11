@@ -76,6 +76,28 @@ enum EditableText {
         return result
     }
 
+    /// The kinds of vertical text set in vertical lines, where Japanese and
+    /// Chinese stand upright, rather than turned letters and all.
+    static let uprightKinds: Set = ["eaVert", "mongolianVert", "wordArtVert", "wordArtVertRtl"]
+
+    /// What stands Japanese and Chinese upright in a line turned to run down
+    /// the box: their vertical forms.
+    private static var verticalForms: [NSAttributedString.Key: Any] { [.verticalGlyphForm: 1] }
+
+    /// `text` as it is typed in `vertical` lines.
+    static func vertical(_ text: NSAttributedString, _ vertical: String?) -> NSAttributedString {
+        guard let vertical, uprightKinds.contains(vertical) else { return text }
+        let result = NSMutableAttributedString(attributedString: text)
+        result.addAttributes(verticalForms, range: NSRange(location: 0, length: result.length))
+        return result
+    }
+
+    /// What is typed in `vertical` lines looks like.
+    static func vertical(_ attributes: [NSAttributedString.Key: Any], _ vertical: String?) -> [NSAttributedString.Key: Any] {
+        guard let vertical, uprightKinds.contains(vertical) else { return attributes }
+        return attributes.merging(verticalForms) { _, new in new }
+    }
+
     /// What newly typed text looks like where nothing is there yet.
     static func typingAttributes(
         for body: TextBody, shape: SlideShape, sources: [SlideShape], style: SlideStyleContext, scale: CGFloat, fontScale: Double
@@ -140,6 +162,20 @@ enum EditableText {
         }
         style.headIndent = margin
         style.firstLineHeadIndent = !hasBullet ? firstLine : (margin > firstLine ? margin : firstLine + fontSize * 0.6)
+        // Tabs stop where the slide's do.
+        style.tabStops = TabLayout.stops(properties, fontSize: Double(fontSize / max(scale, 0.0001)), hasBullet: hasBullet).map { stop in
+            let location = CGFloat(stop.location) * scale
+            return switch stop.alignment {
+            case .left: NSTextTab(textAlignment: .left, location: location)
+            case .center: NSTextTab(textAlignment: .center, location: location)
+            case .right: NSTextTab(textAlignment: .right, location: location)
+            case .decimal:
+                NSTextTab(textAlignment: .right, location: location, options: [
+                    .columnTerminators: CharacterSet(charactersIn: String(TabLayout.decimalSeparator)),
+                ])
+            }
+        }
+        style.defaultTabInterval = CGFloat(TabLayout.defaultInterval(properties)) * scale
         switch properties.lineSpacing {
         case .percent(let value): style.lineHeightMultiple = CGFloat(max(value, 0.5))
         case .points(let value):
