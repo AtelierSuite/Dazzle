@@ -120,10 +120,6 @@ public enum Fill: Equatable, Hashable, Sendable {
             set { path = newValue ? path ?? .circle : nil }
         }
 
-        /// The centre of `fillToRect`, as fractions across and down the area.
-        public var focusX: Double { (fillToRect.left + 1 - fillToRect.right) / 2 }
-        public var focusY: Double { (fillToRect.top + 1 - fillToRect.bottom) / 2 }
-
         /// The gradient's colour `position` of the way along it, 0…1, with
         /// `resolve` turning each stop's colour into components.
         public func color(at position: Double, resolve: (DrawingColor) -> RGBAColor) -> RGBAColor {

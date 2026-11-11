@@ -256,7 +256,8 @@ function deckWithShapes() {
       <p:spPr>${frame(2743200)}<a:prstGeom prst="cloudCallout"><a:avLst/></a:prstGeom>
         <a:blipFill><a:blip r:embed="rIdTile"/><a:tile tx="12700" ty="25400" sx="50000" sy="25000" flip="xy" algn="ctr"/></a:blipFill>
         <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
-    </p:sp>`;
+    </p:sp>
+    ${gradientShapes(frame)}`;
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
   encode("ppt/slides/slide1.xml", root.replace("</p:spTree>", `${shapes}</p:spTree>`));
@@ -269,11 +270,27 @@ function deckWithShapes() {
   return zip(entries);
 }
 
+/** Shapes filled with each kind of path gradient, and a scaled linear one, named for what they hold. */
+function gradientShapes(frame) {
+  const stops = '<a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst>';
+  const fills = {
+    "Rect gradient": `<a:path path="rect"><a:fillToRect l="25000" t="25000" r="25000" b="25000"/></a:path>`,
+    "Shape gradient": `<a:path path="shape"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path>`,
+    "Circle gradient": `<a:path path="circle"><a:fillToRect r="100000" b="100000"/></a:path><a:tileRect l="-100000" t="-100000"/>`,
+    "Scaled gradient": `<a:lin ang="2700000" scaled="1"/>`,
+  };
+  return Object.entries(fills).map(([name, shade], index) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${910 + index}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200 + 2286000 * index)}<a:prstGeom prst="${name === "Shape gradient" ? "ellipse" : "rect"}"><a:avLst/></a:prstGeom>
+        <a:gradFill rotWithShape="1">${stops}${shade}</a:gradFill></p:spPr>
+    </p:sp>`).join("");
+}
+
 const drawn = (() => {
   try {
     const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
     const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
-    return { info: opened.result, lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled") };
+    return { info: opened.result, shapes, lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled") };
   } catch (error) {
     return { error };
   }
@@ -312,6 +329,23 @@ test("fills a cloud callout as one and strokes its puffs", () => {
 test("names the typefaces the presentation doesn't carry", () => {
   if (drawn.error) throw drawn.error;
   assert.ok(drawn.info.typefaces.includes("Calibri"));
+});
+
+test("draws path gradients from fillToRect to their tile, and scaled linear ones", () => {
+  if (drawn.error) throw drawn.error;
+  const fill = (name) => drawn.shapes.find((node) => node.name === name)?.fill;
+  const rect = fill("Rect gradient");
+  assert.equal(rect?.t, "rect");
+  assert.deepEqual(rect.focus, [0.25, 0.25, 0.25, 0.25]);
+  assert.deepEqual([rect.from, rect.to], ["#ff0000", "#0000ff"], "from its first colour inside fillToRect to its last at the edges");
+  const shape = fill("Shape gradient");
+  assert.equal(shape?.t, "shape");
+  assert.deepEqual([shape.rings[0], shape.rings.at(-1)], ["#0000ff", "#ff0000"], "outline copies from the edge in to the centre");
+  const circle = fill("Circle gradient");
+  assert.equal(circle?.t, "radial");
+  assert.deepEqual([circle.focus, circle.tile], [[0, 0, 1, 1], [-1, -1, 0, 0]], "from the top-left corner");
+  const scaled = fill("Scaled gradient");
+  assert.deepEqual([scaled?.t, scaled?.angle, scaled?.scaled], ["linear", 45, true]);
 });
 
 for (const path of process.argv.slice(2)) {

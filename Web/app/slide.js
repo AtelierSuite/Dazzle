@@ -10,6 +10,20 @@ const SVG = "http://www.w3.org/2000/svg";
 let uniqueId = 0;
 const nextId = (prefix) => `${prefix}${++uniqueId}`;
 
+/** `box` set in from each edge by `[l, t, r, b]`, fractions of its size; the whole box without them. */
+const insetBox = (box, insets) => {
+  const [l, t, r, b] = insets ?? [0, 0, 0, 0];
+  return { x: box.x + box.w * l, y: box.y + box.h * t, w: box.w * (1 - l - r), h: box.h * (1 - t - b) };
+};
+
+/** The outline an SVG path or rectangle draws, as path data. */
+const outlineOf = (element) => {
+  if (element.localName === "path") return element.getAttribute("d");
+  if (element.localName !== "rect") return null;
+  const [x, y, w, h] = ["x", "y", "width", "height"].map((name) => Number(element.getAttribute(name) ?? 0));
+  return `M${x} ${y}H${x + w}V${y + h}H${x}Z`;
+};
+
 /** Text turned a quarter, letters and all, by how far. Other vertical text is set in vertical lines (app.css). */
 const TURNED_TEXT = { vert: 90, vert270: -90 };
 
@@ -309,24 +323,87 @@ export class SlideDrawer {
     }
     if (paint.t === "linear" || paint.t === "radial") {
       const id = nextId("g");
+      const tile = insetBox(box, paint.tile);
       let gradient;
       if (paint.t === "radial") {
-        const cx = box.x + box.w * paint.fx;
-        const cy = box.y + box.h * paint.fy;
-        const r = Math.max(...[[box.x, box.y], [box.x + box.w, box.y], [box.x, box.y + box.h], [box.x + box.w, box.y + box.h]]
-          .map(([x, y]) => Math.hypot(x - cx, y - cy)));
-        gradient = svg("radialGradient", { id, gradientUnits: "userSpaceOnUse", cx, cy, r }, context.defs);
-      } else {
-        const angle = (paint.angle * Math.PI) / 180;
-        const half = (Math.abs(Math.cos(angle)) * box.w + Math.abs(Math.sin(angle)) * box.h) / 2;
-        const cx = box.x + box.w / 2;
-        const cy = box.y + box.h / 2;
-        gradient = svg("linearGradient", {
+        // From a circle around `focus` (fillToRect) to one around the tile.
+        const focus = insetBox(box, paint.focus);
+        gradient = svg("radialGradient", {
           id, gradientUnits: "userSpaceOnUse",
-          x1: cx - Math.cos(angle) * half, y1: cy - Math.sin(angle) * half, x2: cx + Math.cos(angle) * half, y2: cy + Math.sin(angle) * half,
+          cx: tile.x + tile.w / 2, cy: tile.y + tile.h / 2, r: Math.hypot(tile.w, tile.h) / 2,
+          fx: focus.x + focus.w / 2, fy: focus.y + focus.h / 2, fr: Math.hypot(focus.w, focus.h) / 2,
+        }, context.defs);
+      } else {
+        // Across the tile; a scaled gradient's angle is set for a unit square, then stretched to the tile.
+        const angle = (paint.angle * Math.PI) / 180;
+        const w = paint.scaled ? 1 : tile.w;
+        const h = paint.scaled ? 1 : tile.h;
+        const half = (Math.abs(Math.cos(angle)) * w + Math.abs(Math.sin(angle)) * h) / 2;
+        const dx = Math.cos(angle) * half;
+        const dy = Math.sin(angle) * half;
+        gradient = svg("linearGradient", {
+          id, gradientUnits: "userSpaceOnUse", x1: -dx, y1: -dy, x2: dx, y2: dy,
+          gradientTransform: `translate(${tile.x + tile.w / 2} ${tile.y + tile.h / 2})${paint.scaled ? ` scale(${tile.w} ${tile.h})` : ""}`,
         }, context.defs);
       }
       for (const [offset, color] of paint.stops) svg("stop", { offset, "stop-color": color }, gradient);
+      element.setAttribute(attribute, `url(#${id})`);
+      return;
+    }
+    if (paint.t === "rect" || paint.t === "shape") {
+      // Drawn as a pattern of one tile over the area: its end colour throughout, then on top
+      // either the four bands from the start rectangle (fillToRect) out to the tile's edges,
+      // each its own linear gradient, or copies of the outline from the tile in to the start.
+      const id = nextId("p");
+      const pattern = svg("pattern", { id, patternUnits: "userSpaceOnUse", x: box.x, y: box.y, width: box.w, height: box.h }, context.defs);
+      const layer = svg("g", { transform: `translate(${-box.x} ${-box.y})` }, pattern);
+      const focus = insetBox(box, paint.focus);
+      const tile = insetBox(box, paint.tile);
+      const outline = paint.t === "shape" && attribute === "fill" ? outlineOf(element) : null;
+      if (outline) {
+        const rule = element.getAttribute("fill-rule") ?? "nonzero";
+        const steps = paint.rings.length - 1;
+        svg("rect", { x: box.x, y: box.y, width: box.w, height: box.h, fill: paint.rings[0] }, layer);
+        paint.rings.forEach((color, index) => {
+          const position = 1 - index / steps;
+          const x = focus.x + (tile.x - focus.x) * position;
+          const y = focus.y + (tile.y - focus.y) * position;
+          const w = focus.w + (tile.w - focus.w) * position;
+          const h = focus.h + (tile.h - focus.h) * position;
+          if (w <= 0 || h <= 0 || box.w <= 0 || box.h <= 0) return;
+          svg("path", {
+            d: outline, fill: color, "fill-rule": rule,
+            transform: `translate(${x} ${y}) scale(${w / box.w} ${h / box.h}) translate(${-box.x} ${-box.y})`,
+          }, layer);
+        });
+      } else {
+        const from = paint.from ?? paint.rings?.[paint.rings.length - 1];
+        const to = paint.to ?? paint.rings?.[0];
+        const stops = paint.stops;
+        svg("rect", { x: box.x, y: box.y, width: box.w, height: box.h, fill: to }, layer);
+        svg("rect", { x: focus.x, y: focus.y, width: Math.max(focus.w, 0), height: Math.max(focus.h, 0), fill: from }, layer);
+        const outer = [[tile.x, tile.y], [tile.x + tile.w, tile.y], [tile.x + tile.w, tile.y + tile.h], [tile.x, tile.y + tile.h]];
+        const inner = [[focus.x, focus.y], [focus.x + focus.w, focus.y], [focus.x + focus.w, focus.y + focus.h], [focus.x, focus.y + focus.h]];
+        const midX = focus.x + focus.w / 2;
+        const midY = focus.y + focus.h / 2;
+        // Top, right, bottom, left: each running from the start rectangle's edge to the tile's.
+        const lines = [
+          [midX, focus.y, midX, tile.y], [focus.x + focus.w, midY, tile.x + tile.w, midY],
+          [midX, focus.y + focus.h, midX, tile.y + tile.h], [focus.x, midY, tile.x, midY],
+        ];
+        lines.forEach(([x1, y1, x2, y2], side) => {
+          if (Math.hypot(x2 - x1, y2 - y1) < 0.001) return;
+          const next = (side + 1) % 4;
+          const band = nextId("g");
+          const gradient = svg("linearGradient", { id: band, gradientUnits: "userSpaceOnUse", x1, y1, x2, y2 }, context.defs);
+          for (const [offset, color] of stops) svg("stop", { offset, "stop-color": color }, gradient);
+          // Bands meet along the diagonals; softened edges would show there as seams.
+          svg("polygon", {
+            points: [outer[side], outer[next], inner[next], inner[side]].map((point) => point.join(",")).join(" "),
+            fill: `url(#${band})`, "shape-rendering": "crispEdges",
+          }, layer);
+        });
+      }
       element.setAttribute(attribute, `url(#${id})`);
       return;
     }
