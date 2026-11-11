@@ -921,6 +921,73 @@ test("plays a Keynote movie as the slide appears and its sound on a tap, and sav
   assert.match(new TextDecoder().decode(saved.get("ppt/slides/slide1.xml")), /p14:media/);
 });
 
+// MARK: - Slide transitions
+
+/** A new presentation saved with `transition` (slide XML) after its first slide's shapes. */
+function deckWithTransition(transition) {
+  call("new", { name: "Transitions.pptx" });
+  const entries = unzip(call("save", { format: "pptx" }).payload);
+  const name = "ppt/slides/slide1.xml";
+  const namespaces = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main" ';
+  const slide = new TextDecoder().decode(entries.get(name)).replace("<p:sld ", `<p:sld ${namespaces}`);
+  const anchor = slide.includes("</p:clrMapOvr>") ? "</p:clrMapOvr>" : "</p:cSld>";
+  entries.set(name, new TextEncoder().encode(slide.replace(anchor, anchor + transition)));
+  return zip(entries);
+}
+
+const alternate = (choice, fallback = "<p:fade/>") => `<mc:AlternateContent><mc:Choice Requires="p14"><p:transition spd="slow" p14:dur="1500" advTm="2000">${choice}</p:transition></mc:Choice>`
+  + `<mc:Fallback><p:transition spd="slow" advTm="2000">${fallback}</p:transition></mc:Fallback></mc:AlternateContent>`;
+
+test("plays a slide's transition as keyframes the browser animates, a cross-fade when motion is reduced", () => {
+  const opened = call("open", { name: "Push.pptx" }, deckWithTransition(alternate('<p:push dir="u"/>')));
+  const slide = opened.state.slides[0].id;
+  assert.equal(opened.result.unsupported.length, 0, "a push plays, so nothing is said about it");
+  const timeline = call("timeline", { slide }).result;
+  assert.equal(timeline.transition, 1.5, "the exact duration, from p14:dur");
+  assert.equal(timeline.after, 2, "moves on by itself after its time");
+  const { w, h } = call("scene", { slide }).result;
+  const push = call("transition", { slide }).result;
+  assert.equal(push.duration, 1.5);
+  assert.deepEqual(push.layers.map((layer) => layer.content), ["outgoing", "incoming"]);
+  const incoming = push.layers[1].keyframes;
+  assert.ok(incoming.length >= 45, "a moment every thirtieth of a second");
+  assert.equal(incoming[0].offset, 0);
+  assert.equal(incoming.at(-1).offset, 1);
+  assert.equal(incoming[0].transform, `matrix(1, 0, 0, 1, 0, ${h})`, "the new slide starts below");
+  assert.equal(incoming.at(-1).transform, "matrix(1, 0, 0, 1, 0, 0)");
+  assert.equal(push.layers[0].keyframes.at(-1).transform, `matrix(1, 0, 0, 1, 0, -${h})`, "the old one leaves upwards");
+  assert.ok(w > 0);
+
+  const calm = call("transition", { slide, reduceMotion: true }).result;
+  assert.deepEqual(calm.layers.map((layer) => layer.content), ["outgoing", "incoming"]);
+  assert.ok(calm.layers.every((layer) => layer.keyframes.every((frame) => frame.transform === "matrix(1, 0, 0, 1, 0, 0)")), "nothing moves");
+  assert.equal(calm.layers[1].keyframes[0].opacity, 0);
+  assert.equal(calm.layers[1].keyframes.at(-1).opacity, 1);
+});
+
+test("clips patterned transitions, plays unknown ones as a fade, and saves them as they were", () => {
+  const blinds = call("open", { name: "Blinds.pptx" }, deckWithTransition('<p:transition spd="med"><p:blinds dir="vert"/></p:transition>'));
+  const slide = blinds.state.slides[0].id;
+  const played = call("transition", { slide }).result;
+  assert.equal(played.duration, 0.75);
+  const middle = played.layers[1].keyframes[Math.floor(played.layers[1].keyframes.length / 2)];
+  assert.match(middle.clipPath, /^path\(evenodd, "M/);
+  assert.equal(played.layers[1].keyframes[0].clipPath, "polygon(0 0, 0 0, 0 0)", "nothing of the new slide to start with");
+
+  const vortex = call("open", { name: "Vortex.pptx" }, deckWithTransition(alternate('<p14:vortex dir="r"/>')));
+  assert.equal(vortex.result.unsupported.length, 1, "says the vortex plays as something simpler");
+  const fallback = call("transition", { slide: vortex.state.slides[0].id }).result;
+  assert.deepEqual(fallback.layers.map((layer) => layer.content), ["outgoing", "incoming"]);
+  assert.equal(fallback.layers[1].keyframes.at(-1).opacity, 1);
+  const saved = new TextDecoder().decode(unzip(call("save", { format: "pptx", keep: true }).payload).get("ppt/slides/slide1.xml"));
+  assert.match(saved, /<p14:vortex dir="r"\/>/);
+  assert.match(saved, /p14:dur="1500"/);
+
+  const none = call("open", { name: "None.pptx" }, deckWithTransition(""));
+  assert.equal(call("timeline", { slide: none.state.slides[0].id }).result.transition, 0);
+  assert.ok(call("transition", { slide: none.state.slides[0].id }).result == null, "a slide without one cuts");
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
