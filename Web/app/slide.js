@@ -110,6 +110,33 @@ function svg(name, attributes = {}, parent = null) {
   return element;
 }
 
+/**
+ * A preset pattern's tile, `cell` × 8 slide points square: the background, then a rectangle for each run of
+ * foreground cells along a row. `rows` are the eight rows, top first, each a byte with the leftmost cell its highest bit.
+ */
+function patternRects({ rows, cell, fg, bg }) {
+  const size = cell * 8;
+  const rects = [{ x: 0, y: 0, width: size, height: size, fill: bg }];
+  rows.forEach((bits, row) => {
+    for (let column = 0; column < 8; column++) {
+      if (!(bits & (0x80 >> column))) continue;
+      let end = column;
+      while (end + 1 < 8 && bits & (0x80 >> (end + 1))) end++;
+      rects.push({ x: column * cell, y: row * cell, width: (end - column + 1) * cell, height: cell, fill: fg });
+      column = end;
+    }
+  });
+  return rects;
+}
+
+/** A preset pattern as a CSS background, for a table cell: an SVG tile repeated from the top left. */
+function patternBackground(paint) {
+  const size = paint.cell * 8;
+  const rects = patternRects(paint).map((r) => `<rect x="${r.x}" y="${r.y}" width="${r.width}" height="${r.height}" fill="${r.fill}"/>`);
+  const markup = `<svg xmlns="${SVG}" width="${size}" height="${size}" shape-rendering="crispEdges">${rects.join("")}</svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(markup)}") 0 0 / ${size}px ${size}px repeat`;
+}
+
 function html(name, className, parent = null) {
   const element = document.createElement(name);
   if (className) element.className = className;
@@ -271,6 +298,13 @@ export class SlideDrawer {
       const fill = svg("path", { d: node.path, "fill-rule": node.rule ?? "evenodd" }, geometry);
       this.paint(fill, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
       fill.classList.add("shape__fill");
+      // Shaded parts (a cube's sides, a scroll's curls): the fill again, with black or white over it.
+      for (const shade of node.shades ?? []) {
+        const base = svg("path", { d: shade.d, "fill-rule": "evenodd" }, geometry);
+        this.paint(base, node.fill, { x: 0, y: 0, w: node.w, h: node.h }, context, geometry);
+        base.classList.add("shape__fill");
+        svg("path", { d: shade.d, "fill-rule": "evenodd", fill: shade.c, "fill-opacity": shade.o, class: "shape__shade" }, geometry);
+      }
     }
     if (node.line && (node.strokePath ?? node.path)) this.stroke(node.strokePath ?? node.path, node.line, geometry, context, node);
     if (node.text && !(node.prompt && isEmptyText(node.text))) {
@@ -311,7 +345,7 @@ export class SlideDrawer {
     return path;
   }
 
-  /** Fills `element` with a scene's paint, or strokes it when `attribute` is "stroke": a colour, a gradient or a picture. */
+  /** Fills `element` with a scene's paint, or strokes it when `attribute` is "stroke": a colour, a gradient, a pattern or a picture. */
   paint(element, paint, box, context, owner, attribute = "fill") {
     if (!paint) {
       element.setAttribute(attribute, "none");
@@ -404,6 +438,17 @@ export class SlideDrawer {
           }, layer);
         });
       }
+      element.setAttribute(attribute, `url(#${id})`);
+      return;
+    }
+    if (paint.t === "pattern") {
+      // Two colours in a grid of eight by eight cells, repeated from the top left of the area.
+      const id = nextId("p");
+      const size = paint.cell * 8;
+      const pattern = svg("pattern", {
+        id, patternUnits: "userSpaceOnUse", x: box.x, y: box.y, width: size, height: size, "shape-rendering": "crispEdges",
+      }, context.defs);
+      for (const rect of patternRects(paint)) svg("rect", rect, pattern);
       element.setAttribute(attribute, `url(#${id})`);
       return;
     }
@@ -578,6 +623,7 @@ export class SlideDrawer {
       if (cell.fill) {
         if (cell.fill.t === "solid") element.style.background = cell.fill.c;
         else if (cell.fill.t === "linear") element.style.background = `linear-gradient(${cell.fill.angle + 90}deg, ${cell.fill.stops.map(([o, c]) => `${c} ${o * 100}%`).join(", ")})`;
+        else if (cell.fill.t === "pattern") element.style.background = patternBackground(cell.fill);
       }
       if (cell.borders) element.dataset.borders = JSON.stringify(cell.borders);
       if (cell.text) element.append(this.text(cell.text, null, { cell: true }));

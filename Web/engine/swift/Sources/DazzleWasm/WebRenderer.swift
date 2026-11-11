@@ -122,23 +122,19 @@ struct WebRenderer {
     }
 
     /// The outline, in the shape's own space, as SVG and as the path its stroke follows.
-    private func outline(of shape: SlideShape, size: CGSize) -> (fill: String, stroke: String, isOpen: Bool, strokePath: CGPath) {
+    private func outline(
+        of shape: SlideShape, size: CGSize
+    ) -> (fill: String, stroke: String, isOpen: Bool, strokePath: CGPath, shades: [PresetGeometry.Shade]) {
         let rect = CGRect(origin: .zero, size: size)
         switch shape.geometry {
         case .preset(let name, let adjustments):
-            let path = PresetGeometry.path(name, adjustments: adjustments, in: rect)
-            // Lines drawn over the fill with the outline's stroke: a ribbon's folds, a cloud's puffs.
-            var stroke: CGPath = path
-            if let details = PresetGeometry.detailPath(name, adjustments: adjustments, in: rect) {
-                let combined = CGMutablePath()
-                combined.addPath(path)
-                combined.addPath(details)
-                stroke = combined
-            }
-            return (path.svgData, stroke.svgData, PresetGeometry.isOpen(name) || shape.kind == .connector, stroke)
+            // The stroke may add lines over the fill (a ribbon's folds, a cloud's puffs) or leave out parts only filled.
+            let outline = PresetGeometry.outline(name, adjustments: adjustments, in: rect)
+            return (outline.fill.svgData, outline.stroke.svgData, PresetGeometry.isOpen(name) || shape.kind == .connector,
+                    outline.stroke, outline.shades)
         case .custom(let paths):
             let (fill, stroke) = PresetGeometry.path(paths, in: rect)
-            return (fill.svgData, stroke.svgData, false, stroke)
+            return (fill.svgData, stroke.svgData, false, stroke, [])
         }
     }
 
@@ -146,7 +142,7 @@ struct WebRenderer {
         _ shape: SlideShape, sources: [SlideShape], frame: CGRect, style: SlideStyleContext,
         groupFill: SlideStyleContext.ResolvedFill?, into node: inout [String: Any]
     ) {
-        let (fillPath, strokePath, isOpen, strokeShape) = outline(of: shape, size: frame.size)
+        let (fillPath, strokePath, isOpen, strokeShape, shades) = outline(of: shape, size: frame.size)
         node["path"] = fillPath
         if strokePath != fillPath { node["strokePath"] = strokePath }
         // A cloud callout's bubbles may overlap the cloud. Apple platforms join
@@ -155,7 +151,15 @@ struct WebRenderer {
         if isOpen { node["open"] = true }
         if !isOpen, var fill = style.fill(for: shape, sources: sources) {
             if fill.fill == .group, let groupFill { fill = groupFill }
-            if let paint = paint(fill.fill, placeholder: fill.placeholderColor, style: style) { node["fill"] = paint }
+            if let paint = paint(fill.fill, placeholder: fill.placeholderColor, style: style) {
+                node["fill"] = paint
+                // A cube's sides and a scroll's curls: the fill, darkened or lightened.
+                if !shades.isEmpty {
+                    node["shades"] = shades.map { shade -> [String: Any] in
+                        ["d": shade.path.svgData, "c": shade.tone.isLighter ? "#fff" : "#000", "o": Double(shade.tone.opacity)]
+                    }
+                }
+            }
             if case .solid(let color) = fill.fill { node["fillColor"] = css(style.color(color, placeholder: fill.placeholderColor)) }
         }
         if let (line, placeholder) = style.line(for: shape, sources: sources),
@@ -231,6 +235,14 @@ struct WebRenderer {
                 }
             }
             return json
+        case .pattern(let pattern):
+            // Its eight rows of cells, top first, each a byte with the
+            // leftmost cell its highest bit; set cells are the foreground.
+            return [
+                "t": "pattern", "rows": pattern.rows.map(Int.init), "cell": Fill.Pattern.cellSize,
+                "fg": css(style.color(pattern.foreground, placeholder: placeholder)),
+                "bg": css(style.color(pattern.background, placeholder: placeholder)),
+            ]
         case .picture(let path, let effects):
             return ["t": "image", "src": path, "tile": false, "fx": self.effects(effects, placeholder: placeholder, style: style)]
         case .tiledPicture(let path, let effects, let layout):
@@ -282,6 +294,8 @@ struct WebRenderer {
             resolved = css(style.color(color, placeholder: placeholder))
         case .gradient(let gradient):
             resolved = css(style.color(gradient.stops.first?.color ?? .scheme("tx1"), placeholder: placeholder))
+        case .pattern(let pattern):
+            resolved = css(style.color(pattern.foreground, placeholder: placeholder))
         default:
             resolved = css(style.color(.scheme("tx1"), placeholder: placeholder))
         }
@@ -395,7 +409,7 @@ struct WebRenderer {
     private func picturePart(
         _ picture: SlideShape.Picture, shape: SlideShape, frame: CGRect, style: SlideStyleContext, into node: inout [String: Any]
     ) {
-        let (outlinePath, _, _, outlineShape) = outline(of: shape, size: frame.size)
+        let (outlinePath, _, _, outlineShape, _) = outline(of: shape, size: frame.size)
         node["path"] = outlinePath
         if let path = picture.imagePath, presentation.data(at: path) != nil {
             let image = SlideShape.Picture.imageRect(frame: CGRect(origin: .zero, size: frame.size), picture: picture)

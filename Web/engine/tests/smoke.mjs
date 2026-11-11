@@ -257,10 +257,31 @@ function deckWithShapes() {
         <a:blipFill><a:blip r:embed="rIdTile"/><a:tile tx="12700" ty="25400" sx="50000" sy="25000" flip="xy" algn="ctr"/></a:blipFill>
         <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
     </p:sp>
+    <p:sp><p:nvSpPr><p:cNvPr id="903" name="Patterned"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(5029200)}<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>
+        <a:pattFill prst="dkUpDiag"><a:fgClr><a:srgbClr val="FF0000"/></a:fgClr><a:bgClr><a:srgbClr val="FFFF00"/></a:bgClr></a:pattFill>
+        <a:ln w="38100"><a:pattFill prst="smCheck"><a:fgClr><a:srgbClr val="00FF00"/></a:fgClr><a:bgClr><a:srgbClr val="000000"/></a:bgClr></a:pattFill></a:ln></p:spPr>
+    </p:sp>
+    <p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="904" name="Grid"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+      <p:xfrm><a:off x="457200" y="3200400"/><a:ext cx="1828800" cy="740664"/></p:xfrm>
+      <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr/>
+        <a:tblGrid><a:gridCol w="914400"/><a:gridCol w="914400"/></a:tblGrid>
+        <a:tr h="370332"><a:tc><a:txBody><a:bodyPr/><a:p><a:endParaRPr lang="en-US"/></a:p></a:txBody>
+          <a:tcPr><a:pattFill prst="lgGrid"><a:fgClr><a:srgbClr val="0000FF"/></a:fgClr><a:bgClr><a:srgbClr val="FFFFFF"/></a:bgClr></a:pattFill></a:tcPr></a:tc>
+          <a:tc><a:txBody><a:bodyPr/><a:p><a:endParaRPr lang="en-US"/></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+      </a:tbl></a:graphicData></a:graphic></p:graphicFrame>
+    ${["cube", "gear6", "bracePair"].map((prst, index) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${905 + index}" name="${prst}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200 + index * 2286000)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>
+        <a:solidFill><a:srgbClr val="3366CC"/></a:solidFill>
+        <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
+    </p:sp>`).join("")}
     ${gradientShapes(frame)}`;
+  const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
-  encode("ppt/slides/slide1.xml", root.replace("</p:spTree>", `${shapes}</p:spTree>`));
+  encode("ppt/slides/slide1.xml", root.replace(/<p:bg>.*?<\/p:bg>/s, "").replace(/<p:cSld(\s[^>]*)?>/, (tag) => tag + background)
+    .replace("</p:spTree>", `${shapes}</p:spTree>`));
   const relsName = "ppt/slides/_rels/slide1.xml.rels";
   encode(relsName, decode(relsName).replace("</Relationships>",
     '<Relationship Id="rIdTile" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/tile.png"/></Relationships>'));
@@ -289,8 +310,14 @@ function gradientShapes(frame) {
 const drawn = (() => {
   try {
     const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
-    const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
-    return { info: opened.result, shapes, lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled") };
+    const scene = call("scene", { slide: opened.state.slides[0].id }).result;
+    const shapes = scene.shapes;
+    const named = (name) => shapes.find((node) => node.name === name);
+    return {
+      info: opened.result, shapes, slide: opened.state.slides[0].id, scene,
+      lined: named("Lined"), tiled: named("Tiled"), patterned: named("Patterned"), grid: named("Grid"),
+      cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
+    };
   } catch (error) {
     return { error };
   }
@@ -324,6 +351,45 @@ test("fills a cloud callout as one and strokes its puffs", () => {
   if (drawn.error) throw drawn.error;
   assert.equal(drawn.tiled.rule, "nonzero", "bubbles overlapping the cloud don't cut holes");
   assert.ok(drawn.tiled.strokePath?.length > drawn.tiled.path.length, "the puffs' inner curves are stroked too");
+});
+
+test("draws pattern fills on shapes, outlines, table cells and the background, and keeps them on save", () => {
+  if (drawn.error) throw drawn.error;
+  const fill = drawn.patterned.fill;
+  assert.equal(fill?.t, "pattern", "the shape is patterned, not solid");
+  assert.deepEqual([fill.fg, fill.bg, fill.cell], ["#ff0000", "#ffff00", 0.75]);
+  assert.deepEqual(fill.rows, [0x33, 0x66, 0xcc, 0x99, 0x33, 0x66, 0xcc, 0x99], "dark upward diagonal cells, top row first");
+  assert.equal(drawn.patterned.line.paint?.t, "pattern", "the outline is patterned too");
+  assert.equal(drawn.patterned.line.c, "#00ff00", "its foreground stands in where only one colour will do");
+  assert.deepEqual([drawn.scene.bg.t, drawn.scene.bg.fg, drawn.scene.bg.bg], ["pattern", "#333333", "#eeeeee"]);
+  const cell = drawn.grid.table.cells.find((c) => c.r === 0 && c.c === 0);
+  assert.deepEqual([cell.fill?.t, cell.fill?.fg], ["pattern", "#0000ff"]);
+
+  // The inspector shows it as a pattern, and recolouring keeps the preset.
+  call("select", { slide: drawn.slide, shapes: [drawn.patterned.id] });
+  const inspected = call("inspect").result;
+  assert.deepEqual([inspected.shape.fill.kind, inspected.shape.fill.preset, inspected.shape.fill.background], ["pattern", "dkUpDiag", "#ffff00"]);
+  assert.deepEqual([inspected.slide.background.kind, inspected.slide.background.preset], ["pattern", "pct20"]);
+  call("setFill", { fill: { kind: "pattern", preset: "dkUpDiag", color: "#00ff00", background: "#ffff00" } });
+  const recoloured = call("scene", { slide: drawn.slide }).result.shapes.find((node) => node.name === "Patterned");
+  assert.deepEqual([recoloured.fill.t, recoloured.fill.fg, recoloured.fill.rows[0]], ["pattern", "#00ff00", 0x33]);
+
+  const saved = unzip(call("save", { format: "pptx", keep: true }).payload);
+  const slide = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
+  assert.ok(/<a:pattFill prst="dkUpDiag"><a:fgClr><a:srgbClr val="00FF00"\/><\/a:fgClr><a:bgClr><a:srgbClr val="FFFF00"\/>/.test(slide), "the recoloured shape");
+  for (const preset of ["smCheck", "lgGrid", "pct20"]) assert.ok(slide.includes(`<a:pattFill prst="${preset}">`), `keeps ${preset}`);
+});
+
+test("draws the presets ECMA-376 defines rather than their frames", () => {
+  if (drawn.error) throw drawn.error;
+  assert.ok(drawn.gear.path.split("L").length > 20, "a gear has teeth");
+  assert.ok(!drawn.gear.path.startsWith("M0 0L"), "not the frame's rectangle");
+  assert.deepEqual(drawn.cube.shades?.map((shade) => shade.c), ["#000", "#fff"], "the side darkened, the top lightened");
+  assert.ok(drawn.cube.shades.every((shade) => shade.d.length > 0 && shade.o > 0 && shade.o < 1));
+  assert.ok(drawn.cube.strokePath?.length > 0, "the outline and edges are stroked apart from the faces");
+  assert.equal(drawn.braces.open, true, "a brace pair is never filled");
+  assert.equal(drawn.braces.fill, undefined);
+  assert.ok(drawn.braces.path.includes("C"), "its braces curve");
 });
 
 test("names the typefaces the presentation doesn't carry", () => {

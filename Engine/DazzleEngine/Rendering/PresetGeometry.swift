@@ -5,18 +5,83 @@ import Foundation
 
 /// Outlines for DrawingML's preset shapes.
 ///
-/// Covers the shapes decks are actually built from; anything else is drawn
-/// as its bounding rectangle, which keeps it in place and the right size.
+/// The shapes decks are most often built from are drawn by hand here; every
+/// other preset is drawn from ECMA-376's definition (PresetShapeDefinition).
+/// An unknown name is drawn as its bounding rectangle, which keeps it in
+/// place and the right size.
 public enum PresetGeometry {
     /// Whether the preset is a line rather than an area, so is never filled.
     public static func isOpen(_ name: String) -> Bool {
         name == "line" || name == "arc" || name.hasSuffix("Connector1") || name.hasSuffix("Connector2")
             || name.hasSuffix("Connector3") || name.hasSuffix("Connector4") || name.hasSuffix("Connector5")
             || name == "leftBracket" || name == "rightBracket" || name == "leftBrace" || name == "rightBrace"
-            || name == "bracketPair" || name == "bracePair"
+            || name == "bracketPair" || name == "bracePair" || PresetShapeDefinition.named(name)?.isOpen == true
     }
 
+    /// A part of a preset filled darker or lighter than the rest, such as a
+    /// cube's sides: filled with the shape's fill, then `tone` over it.
+    public struct Shade {
+        public enum Tone: Sendable {
+            case darken, darkenLess, lighten, lightenLess
+
+            /// The colour laid over the fill: white when lightening, and how opaque.
+            public var isLighter: Bool { self == .lighten || self == .lightenLess }
+            public var opacity: CGFloat { self == .darken || self == .lighten ? 0.4 : 0.2 }
+        }
+
+        public var path: CGPath
+        public var tone: Tone
+    }
+
+    /// A preset's outline: what is filled, what is stroked (which may hold
+    /// lines drawn over the fill, or leave out parts that are only filled),
+    /// and its shaded parts.
+    public struct Outline {
+        public var fill: CGPath
+        public var stroke: CGPath
+        public var shades: [Shade] = []
+    }
+
+    public static func outline(_ name: String, adjustments: [String: Int], in rect: CGRect) -> Outline {
+        if let path = handWrittenPath(name, adjustments: adjustments, in: rect) {
+            guard let details = detailPath(name, adjustments: adjustments, in: rect) else {
+                return Outline(fill: path, stroke: path)
+            }
+            let stroke = CGMutablePath()
+            stroke.addPath(path)
+            stroke.addPath(details)
+            return Outline(fill: path, stroke: stroke)
+        }
+        guard let definition = PresetShapeDefinition.named(name) else {
+            let path = CGMutablePath()
+            path.addRect(rect)
+            return Outline(fill: path, stroke: path)
+        }
+        let fill = CGMutablePath()
+        let stroke = CGMutablePath()
+        var shades: [Shade] = []
+        for (path, outline) in definition.draw(adjustments: adjustments, in: rect) {
+            switch path.fill {
+            case .norm: fill.addPath(outline)
+            case .none: break
+            case .darken: shades.append(Shade(path: outline, tone: .darken))
+            case .darkenLess: shades.append(Shade(path: outline, tone: .darkenLess))
+            case .lighten: shades.append(Shade(path: outline, tone: .lighten))
+            case .lightenLess: shades.append(Shade(path: outline, tone: .lightenLess))
+            }
+            if path.isStroked { stroke.addPath(outline) }
+        }
+        // A line has nothing filled; its outline is what is stroked.
+        return Outline(fill: definition.isOpen ? stroke : fill, stroke: stroke, shades: shades)
+    }
+
+    /// The area the preset fills (for a line, the line itself).
     public static func path(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath {
+        outline(name, adjustments: adjustments, in: rect).fill
+    }
+
+    /// The presets drawn by hand, or nil for the rest.
+    private static func handWrittenPath(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath? {
         let path = CGMutablePath()
         let w = rect.width
         let h = rect.height
@@ -34,11 +99,6 @@ public enum PresetGeometry {
         }
 
         switch name {
-        case "ellipse", "flowChartConnector":
-            path.addEllipse(in: rect)
-        case "roundRect", "flowChartAlternateProcess":
-            let radius = min(shortSide * adjust("adj", 16_667), shortSide / 2)
-            path.addRoundedRect(in: rect, cornerWidth: radius, cornerHeight: radius)
         case "flowChartTerminator":
             path.addRoundedRect(in: rect, cornerWidth: min(w / 2, h / 2), cornerHeight: h / 2)
         case "round2SameRect":
@@ -53,25 +113,16 @@ public enum PresetGeometry {
         case "snip1Rect":
             let snip = shortSide * adjust("adj", 16_667)
             polygon([point(0, 0), point(w - snip, 0), point(w, snip), point(w, h), point(0, h)])
-        case "triangle", "flowChartExtract":
-            polygon([point(w * adjust("adj", 50_000), 0), point(w, h), point(0, h)])
         case "rtTriangle":
             polygon([point(0, 0), point(w, h), point(0, h)])
-        case "diamond", "flowChartDecision":
-            polygon([point(w / 2, 0), point(w, h / 2), point(w / 2, h), point(0, h / 2)])
         case "parallelogram", "flowChartInputOutput":
             let offset = min(shortSide * adjust("adj", 25_000), w)
             polygon([point(offset, 0), point(w, 0), point(w - offset, h), point(0, h)])
         case "trapezoid":
             let offset = min(shortSide * adjust("adj", 25_000), w / 2)
             polygon([point(offset, 0), point(w - offset, 0), point(w, h), point(0, h)])
-        case "pentagon", "homePlate":
-            if name == "homePlate" {
-                let tip = min(shortSide * adjust("adj", 50_000), w)
-                polygon([point(0, 0), point(w - tip, 0), point(w, h / 2), point(w - tip, h), point(0, h)])
-            } else {
-                polygon(regularPolygon(sides: 5, in: rect))
-            }
+        case "pentagon":
+            polygon(regularPolygon(sides: 5, in: rect))
         case "chevron":
             let tip = min(shortSide * adjust("adj", 50_000), w)
             polygon([point(0, 0), point(w - tip, 0), point(w, h / 2), point(w - tip, h), point(0, h), point(tip, h / 2)])
@@ -98,10 +149,6 @@ public enum PresetGeometry {
             ])
         case "rightArrow", "leftArrow", "upArrow", "downArrow", "leftRightArrow":
             arrow(name, path: path, rect: rect, shaft: adjust("adj1", 50_000), head: adjust("adj2", 50_000))
-        case "donut":
-            path.addEllipse(in: rect)
-            let thickness = shortSide * adjust("adj", 25_000)
-            path.addEllipse(in: rect.insetBy(dx: thickness, dy: thickness))
         case "heart":
             path.move(to: point(w / 2, h / 4))
             path.addCurve(to: point(w / 2, h), control1: point(w * 1.1, -h / 3), control2: point(w * 1.25, h / 2))
@@ -118,12 +165,7 @@ public enum PresetGeometry {
             path.addCurve(to: point(w, h - lid / 2), control1: point(0, h + lid / 6), control2: point(w, h + lid / 6))
             path.addLine(to: point(w, lid / 2))
             path.addEllipse(in: CGRect(x: x, y: y, width: w, height: lid))
-        case "line", "straightConnector1":
-            path.move(to: point(0, 0))
-            path.addLine(to: point(w, h))
-        case "bentConnector2":
-            path.addLines(between: [point(0, 0), point(w, 0), point(w, h)])
-        case "bentConnector3", "bentConnector4", "bentConnector5":
+        case "bentConnector4", "bentConnector5":
             let bend = w * adjust("adj1", 50_000)
             path.addLines(between: [point(0, 0), point(bend, 0), point(bend, h), point(w, h)])
         case "curvedConnector2", "curvedConnector3", "curvedConnector4", "curvedConnector5":
@@ -151,13 +193,14 @@ public enum PresetGeometry {
         case "cloudCallout":
             return cloudCallout(adjustments: adjustments, in: rect)
         default:
-            path.addRect(rect)
+            return nil
         }
         return path
     }
 
-    /// Lines some presets draw over their fill, with the outline's stroke but
-    /// never filled: a ribbon's folds and the inner curves of a cloud's puffs.
+    /// Lines some hand-drawn presets draw over their fill, with the outline's
+    /// stroke but never filled: a ribbon's folds and the inner curves of a
+    /// cloud's puffs. `outline` includes them in its stroke.
     public static func detailPath(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath? {
         switch name {
         case "ellipseRibbon":
@@ -197,20 +240,12 @@ public enum PresetGeometry {
             // ECMA-376's text box for the cloud, in its 21600-unit grid.
             return CGRect(x: rect.minX + w * 2_977 / 21_600, y: rect.minY + h * 3_262 / 21_600,
                           width: w * (17_087 - 2_977) / 21_600, height: h * (17_337 - 3_262) / 21_600)
-        case "ellipse", "flowChartConnector", "donut", "wedgeEllipseCallout":
+        case "wedgeEllipseCallout":
             // The square inscribed in the circle: 1 − 1/√2, halved.
             return inset(left: w * 0.146_4, top: h * 0.146_4, right: w * 0.146_4, bottom: h * 0.146_4)
-        case "roundRect", "flowChartAlternateProcess":
-            let corner = min(shortSide * adjust("adj", 16_667), shortSide / 2) * 0.292_9
-            return inset(left: corner, top: corner, right: corner, bottom: corner)
         case "wedgeRoundRectCallout":
             let corner = min(max(shortSide * adjust("adj3", 16_667), 0), shortSide / 2) * 0.292_9
             return inset(left: corner, top: corner, right: corner, bottom: corner)
-        case "diamond", "flowChartDecision":
-            return inset(left: w / 4, top: h / 4, right: w / 4, bottom: h / 4)
-        case "triangle", "flowChartExtract":
-            let apex = w * adjust("adj", 50_000)
-            return CGRect(x: rect.minX + apex / 2, y: rect.minY + h / 2, width: w / 2, height: h / 2)
         case "rtTriangle":
             return inset(left: w / 12, top: h * 7 / 12, right: w * 7 / 12, bottom: h / 12)
         case "star4", "star5", "star6", "star7", "star8":
@@ -228,11 +263,11 @@ public enum PresetGeometry {
         case "upArrow", "downArrow":
             let shaft = w * (1 - adjust("adj1", 50_000)) / 2
             return inset(left: shaft, top: 0, right: shaft, bottom: 0)
-        case "chevron", "homePlate":
+        case "chevron":
             let tip = min(shortSide * adjust("adj", 50_000), w) * 0.5
-            return inset(left: name == "chevron" ? tip : 0, top: 0, right: tip, bottom: 0)
+            return inset(left: tip, top: 0, right: tip, bottom: 0)
         default:
-            return rect
+            return PresetShapeDefinition.named(name)?.textRect(adjustments: adjustments, in: rect) ?? rect
         }
     }
 
@@ -494,7 +529,7 @@ public enum PresetGeometry {
     /// angles (60000ths of a degree) are where the radius points, not the
     /// ellipse's parameter, so they are converted before drawing.
     @discardableResult
-    private static func arcTo(
+    static func arcTo(
         _ path: CGMutablePath, from current: CGPoint, wR: CGFloat, hR: CGFloat, start: CGFloat, sweep: CGFloat, scale: CGSize
     ) -> CGPoint {
         let fullTurn = 2 * CGFloat.pi

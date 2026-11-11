@@ -345,21 +345,17 @@ public struct SlideRenderer {
         shape.placed(from: child, into: frame)
     }
 
-    private func outline(of shape: SlideShape, in frame: CGRect) -> (fill: CGPath, stroke: CGPath, isOpen: Bool) {
+    private func outline(
+        of shape: SlideShape, in frame: CGRect
+    ) -> (fill: CGPath, stroke: CGPath, isOpen: Bool, shades: [PresetGeometry.Shade]) {
         switch shape.geometry {
         case .preset(let name, let adjustments):
-            let path = PresetGeometry.path(name, adjustments: adjustments, in: frame)
-            var stroke = path
-            if let details = PresetGeometry.detailPath(name, adjustments: adjustments, in: frame) {
-                let combined = CGMutablePath()
-                combined.addPath(path)
-                combined.addPath(details)
-                stroke = combined
-            }
-            return (path, stroke, PresetGeometry.isOpen(name) || shape.kind == .connector)
+            // The stroke may add lines over the fill (a ribbon's folds) or leave out parts only filled.
+            let outline = PresetGeometry.outline(name, adjustments: adjustments, in: frame)
+            return (outline.fill, outline.stroke, PresetGeometry.isOpen(name) || shape.kind == .connector, outline.shades)
         case .custom(let paths):
             let (fill, stroke) = PresetGeometry.path(paths, in: frame)
-            return (fill, stroke, false)
+            return (fill, stroke, false, [])
         }
     }
 
@@ -368,7 +364,7 @@ public struct SlideRenderer {
         groupFill: SlideStyleContext.ResolvedFill?, paragraphAppearances: [Int: AnimatedAppearance] = [:],
         colorChanges: [AnimationColorChange.Target: [AnimationColorChange.Value]] = [:]
     ) {
-        let (fillPath, strokePath, isOpen) = outline(of: shape, in: frame)
+        let (fillPath, strokePath, isOpen, shades) = outline(of: shape, in: frame)
         if !isOpen, var fill = style.fill(for: shape, sources: sources) {
             if fill.fill == .group, let groupFill { fill = groupFill }
             if let changes = colorChanges[.fill], !changes.isEmpty {
@@ -377,6 +373,15 @@ public struct SlideRenderer {
                 fill.fill = .solid(DrawingColor(base: .rgb(color.hexValue), transforms: [.init(name: "alpha", value: Int(color.alpha*100_000))]))
             }
             paint(fill.fill, in: fillPath, bounds: frame, placeholderColor: fill.placeholderColor, style: style, context: context)
+            // A cube's sides and a scroll's curls: the fill, darkened or lightened.
+            if fill.fill != .none {
+                for shade in shades {
+                    paint(fill.fill, in: shade.path, bounds: frame, placeholderColor: fill.placeholderColor, style: style, context: context)
+                    context.addPath(shade.path)
+                    context.setFillColor(CGColor(gray: shade.tone.isLighter ? 1 : 0, alpha: shade.tone.opacity))
+                    context.fillPath(using: .evenOdd)
+                }
+            }
         }
         if let (original, placeholderColor) = style.line(for: shape, sources: sources) {
             var line = original
@@ -457,6 +462,15 @@ public struct SlideRenderer {
             drawGradient(
                 gradient, cgGradient, outline: path, rule: rule, bounds: bounds, context: context,
                 color: { style.color($0, placeholder: placeholderColor) }
+            )
+            context.restoreGState()
+        case .pattern(let pattern):
+            context.saveGState()
+            context.addPath(path)
+            context.clip(using: rule)
+            PatternFill.draw(
+                pattern, foreground: style.color(pattern.foreground, placeholder: placeholderColor),
+                background: style.color(pattern.background, placeholder: placeholderColor), in: bounds, context: context
             )
             context.restoreGState()
         case .picture(let imagePath, let effects):
@@ -731,7 +745,7 @@ public struct SlideRenderer {
                 y: frame.minY - imageRect.height * picture.cropTop
             )
         }
-        let (outlinePath, _, _) = outline(of: shape, in: frame)
+        let (outlinePath, _, _, _) = outline(of: shape, in: frame)
         context.saveGState()
         context.setAlpha(picture.effects.opacity)
         context.addPath(outlinePath)
