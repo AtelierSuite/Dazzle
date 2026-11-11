@@ -256,7 +256,13 @@ function deckWithShapes() {
       <p:spPr>${frame(2743200)}<a:prstGeom prst="cloudCallout"><a:avLst/></a:prstGeom>
         <a:blipFill><a:blip r:embed="rIdTile"/><a:tile tx="12700" ty="25400" sx="50000" sy="25000" flip="xy" algn="ctr"/></a:blipFill>
         <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
-    </p:sp>`;
+    </p:sp>
+    ${["cube", "gear6", "bracePair"].map((prst, index) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${903 + index}" name="${prst}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200 + index * 2286000)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>
+        <a:solidFill><a:srgbClr val="3366CC"/></a:solidFill>
+        <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
+    </p:sp>`).join("")}`;
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
   encode("ppt/slides/slide1.xml", root.replace("</p:spTree>", `${shapes}</p:spTree>`));
@@ -273,7 +279,11 @@ const drawn = (() => {
   try {
     const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
     const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
-    return { info: opened.result, lined: shapes.find((node) => node.name === "Lined"), tiled: shapes.find((node) => node.name === "Tiled") };
+    const named = (name) => shapes.find((node) => node.name === name);
+    return {
+      info: opened.result, lined: named("Lined"), tiled: named("Tiled"),
+      cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
+    };
   } catch (error) {
     return { error };
   }
@@ -307,6 +317,18 @@ test("fills a cloud callout as one and strokes its puffs", () => {
   if (drawn.error) throw drawn.error;
   assert.equal(drawn.tiled.rule, "nonzero", "bubbles overlapping the cloud don't cut holes");
   assert.ok(drawn.tiled.strokePath?.length > drawn.tiled.path.length, "the puffs' inner curves are stroked too");
+});
+
+test("draws the presets ECMA-376 defines rather than their frames", () => {
+  if (drawn.error) throw drawn.error;
+  assert.ok(drawn.gear.path.split("L").length > 20, "a gear has teeth");
+  assert.ok(!drawn.gear.path.startsWith("M0 0L"), "not the frame's rectangle");
+  assert.deepEqual(drawn.cube.shades?.map((shade) => shade.c), ["#000", "#fff"], "the side darkened, the top lightened");
+  assert.ok(drawn.cube.shades.every((shade) => shade.d.length > 0 && shade.o > 0 && shade.o < 1));
+  assert.ok(drawn.cube.strokePath?.length > 0, "the outline and edges are stroked apart from the faces");
+  assert.equal(drawn.braces.open, true, "a brace pair is never filled");
+  assert.equal(drawn.braces.fill, undefined);
+  assert.ok(drawn.braces.path.includes("C"), "its braces curve");
 });
 
 test("names the typefaces the presentation doesn't carry", () => {
