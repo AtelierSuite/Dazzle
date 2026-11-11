@@ -196,8 +196,17 @@ struct WebRenderer {
             return ["t": "linear", "angle": gradient.angle, "stops": stops]
         case .picture(let path, let effects):
             return ["t": "image", "src": path, "tile": false, "fx": self.effects(effects, placeholder: placeholder, style: style)]
-        case .tiledPicture(let path, let effects, _):
-            return ["t": "image", "src": path, "tile": true, "fx": self.effects(effects, placeholder: placeholder, style: style)]
+        case .tiledPicture(let path, let effects, let layout):
+            // How the tiles are laid: their scale, the point of the area the
+            // first sits against (as fractions across and down), the offset
+            // from there in points, and which are mirrored.
+            let anchor = layout.alignment.fractions
+            let tile: [String: Any] = [
+                "sx": layout.scaleX, "sy": layout.scaleY, "ax": anchor.x, "ay": anchor.y,
+                "tx": n(CGFloat(EMU.points(layout.offsetX))), "ty": n(CGFloat(EMU.points(layout.offsetY))),
+                "flip": layout.flip.rawValue,
+            ]
+            return ["t": "image", "src": path, "tile": tile, "fx": self.effects(effects, placeholder: placeholder, style: style)]
         }
     }
 

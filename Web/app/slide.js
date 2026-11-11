@@ -309,13 +309,33 @@ export class SlideDrawer {
       const image = svg("image", { width: box.w, height: box.h, preserveAspectRatio: "none" }, pattern);
       this.setImage(image, paint.src, (natural) => {
         if (!paint.tile || !natural) return;
-        // A tile is laid at its own size: pixels at 96 to the inch.
-        const width = natural.width * 0.75;
-        const height = natural.height * 0.75;
-        pattern.setAttribute("width", width);
-        pattern.setAttribute("height", height);
-        image.setAttribute("width", width);
-        image.setAttribute("height", height);
+        // At 100% a tile is the picture's own size: pixels at 96 to the inch.
+        const tile = paint.tile === true ? {} : paint.tile;
+        const sx = tile.sx ?? 1;
+        const sy = tile.sy ?? 1;
+        const width = natural.width * 0.75 * Math.abs(sx);
+        const height = natural.height * 0.75 * Math.abs(sy);
+        if (width < 1 || height < 1) return;
+        // One tile sits against the alignment point, moved by the offset; the rest repeat from it both ways.
+        // Flipping mirrors every other tile, so the pattern repeats every two; a negative scale mirrors them all.
+        const across = tile.flip === "x" || tile.flip === "xy";
+        const down = tile.flip === "y" || tile.flip === "xy";
+        pattern.setAttribute("x", box.x + (box.w - width) * (tile.ax ?? 0) + (tile.tx ?? 0));
+        pattern.setAttribute("y", box.y + (box.h - height) * (tile.ay ?? 0) + (tile.ty ?? 0));
+        pattern.setAttribute("width", width * (across ? 2 : 1));
+        pattern.setAttribute("height", height * (down ? 2 : 1));
+        for (let column = 0; column < (across ? 2 : 1); column++) {
+          for (let row = 0; row < (down ? 2 : 1); row++) {
+            const copy = column === 0 && row === 0 ? image : pattern.appendChild(image.cloneNode());
+            const mirrorsX = (across && column === 1) !== sx < 0;
+            const mirrorsY = (down && row === 1) !== sy < 0;
+            copy.setAttribute("width", width);
+            copy.setAttribute("height", height);
+            const x = column * width;
+            const y = row * height;
+            copy.setAttribute("transform", `translate(${mirrorsX ? x + width : x} ${mirrorsY ? y + height : y}) scale(${mirrorsX ? -1 : 1} ${mirrorsY ? -1 : 1})`);
+          }
+        }
       });
       this.effects(image, paint.fx, context);
       element.setAttribute(attribute, `url(#${id})`);
