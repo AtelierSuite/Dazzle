@@ -494,7 +494,7 @@ public enum PresetGeometry {
     /// angles (60000ths of a degree) are where the radius points, not the
     /// ellipse's parameter, so they are converted before drawing.
     @discardableResult
-    private static func arcTo(
+    static func arcTo(
         _ path: CGMutablePath, from current: CGPoint, wR: CGFloat, hR: CGFloat, start: CGFloat, sweep: CGFloat, scale: CGSize
     ) -> CGPoint {
         let fullTurn = 2 * CGFloat.pi
