@@ -65,6 +65,8 @@ struct WebRenderer {
         groupFill: SlideStyleContext.ResolvedFill? = nil
     ) -> [String: Any]? {
         guard !shape.isHidden else { return nil }
+        // Effects its style gives it, drawn as though its own.
+        let shape = style.resolvingEffects(of: shape, sources: sources)
         let frame = shape.frame.points
         var node: [String: Any] = [
             "id": shape.id.uuidString, "sid": shape.shapeID, "name": shape.name,
@@ -83,6 +85,7 @@ struct WebRenderer {
                 "dist": EMU.points(reflection.distance), "blur": EMU.points(reflection.blur), "turns": reflection.rotatesWithShape,
             ]
         }
+        if let effects = effects(shape.effects, size: frame.size, style: style) { node["effects"] = effects }
         if let link = shape.link, let json = Self.link(link) { node["link"] = json }
 
         switch shape.kind {
@@ -227,6 +230,43 @@ struct WebRenderer {
         if effects.duotone.count == 2 { json["duotone"] = effects.duotone.map { css(style.color($0, placeholder: placeholder)) } }
         if effects.brightness != 0 { json["brightness"] = effects.brightness }
         if effects.contrast != 0 { json["contrast"] = effects.contrast }
+        return json
+    }
+
+    /// A glow, soft edges, an inner shadow, a preset shadow and a blur, in
+    /// the shape's own space: the preset shadow as where each copy of the
+    /// shape's silhouette goes, farthest first.
+    private func effects(_ effects: ShapeEffects, size: CGSize, style: SlideStyleContext) -> [String: Any]? {
+        guard !effects.isEmpty else { return nil }
+        var json: [String: Any] = [:]
+        if let glow = effects.glow {
+            json["glow"] = ["r": n(CGFloat(EMU.points(glow.radius))), "c": css(style.color(glow.color))]
+        }
+        if let softEdge = effects.softEdge { json["soft"] = n(CGFloat(EMU.points(softEdge))) }
+        if let blur = effects.blur { json["blur"] = ["r": n(CGFloat(EMU.points(blur.radius))), "grow": blur.grows] }
+        var inner = effects.innerShadow.map { shadow -> (offset: CGSize, blur: Double, color: DrawingColor) in
+            let radians = shadow.direction * .pi / 180, distance = EMU.points(shadow.distance)
+            return (CGSize(width: cos(radians) * distance, height: sin(radians) * distance), EMU.points(shadow.blur), shadow.color)
+        }
+        if let preset = effects.presetShadow {
+            if preset.cast.isInner {
+                // The inner box preset is a hard inner shadow.
+                inner = inner ?? (preset.offset, 0, preset.color)
+            } else {
+                json["preset"] = [
+                    "c": css(style.color(preset.color)),
+                    "casts": preset.transforms(in: CGRect(origin: .zero, size: size)).map { t in
+                        [t.a, t.b, t.c, t.d, t.tx, t.ty].map { n(CGFloat($0)) }
+                    },
+                ]
+            }
+        }
+        if let inner {
+            json["inner"] = [
+                "dx": n(inner.offset.width), "dy": n(inner.offset.height), "blur": n(CGFloat(inner.blur)),
+                "c": css(style.color(inner.color)),
+            ]
+        }
         return json
     }
 
