@@ -115,7 +115,14 @@ public struct KeynoteSlideWriter {
             let inherited = object.message.int(2).flatMap { templatePlaceholders[$0] }?.message(1)
             return shapeInfo(info, placeholder: type, inherited: inherited)
         case KeynoteType.image:
-            return image(object.message)
+            if let image = image(object.message) { return image }
+            // An equation keeps its place when its picture can't be shown.
+            if Self.isEquation(object.message),
+               let standIn = standIn(object.message.message(1), label: String(localized: "Object.Equation", bundle: .engine)) {
+                hasEquationStandIns = true
+                return standIn
+            }
+            return nil
         case KeynoteType.movie:
             return movie(object)
         case KeynoteType.group:
@@ -138,10 +145,67 @@ public struct KeynoteSlideWriter {
             }
             skipped.insert(object.type)
             return nil
+        case KeynoteType.olderChart:
+            // Charts from before 2013 are kept in their place as stand-ins.
+            if let standIn = chartStandIn(object.message) {
+                hasChartStandIns = true
+                return standIn
+            }
+            skipped.insert(object.type)
+            return nil
         default:
+            // Anything else with a place on the slide keeps it, as a stand-in.
+            if let standIn = standIn(Self.drawableArchive(in: object.message), label: String(localized: "Object.Other", bundle: .engine)) {
+                hasObjectStandIns = true
+                return standIn
+            }
             skipped.insert(object.type)
             return nil
         }
+    }
+
+    /// The `TSD.DrawableArchive` of an object of a kind Dazzle doesn't know.
+    /// Every drawable keeps it first, or first within the drawable it
+    /// extends: a shape's, a shape with text's, and so on. It is the first
+    /// message along the way that holds a geometry with a size.
+    static func drawableArchive(in message: ProtoMessage) -> ProtoMessage? {
+        var candidate = message.message(1)
+        for _ in 0..<4 {
+            guard let current = candidate else { return nil }
+            if let size = current.message(1)?.message(2), size.float(1) != nil, size.float(2) != nil { return current }
+            candidate = current.message(1)
+        }
+        return nil
+    }
+
+    /// Whether a `TSD.ImageArchive` is an equation, which keeps the source
+    /// it was typeset from alongside its picture.
+    static func isEquation(_ image: ProtoMessage) -> Bool {
+        image.has(103) || image.has(100)
+    }
+
+    /// Whether an equation was written as a stand-in.
+    public private(set) var hasEquationStandIns = false
+    /// Whether an object of a kind Dazzle doesn't know was written as a stand-in.
+    public private(set) var hasObjectStandIns = false
+    /// Whether a 3D object was written, which shows only a still picture of itself.
+    public private(set) var has3DObjects = false
+
+    /// An object Dazzle can't show, kept in its place as a stand-in: a box
+    /// naming what it is. PowerPoint shows the box as it is; Dazzle reads it
+    /// back as a stand-in by the extension it carries.
+    private mutating func standIn(_ drawable: ProtoMessage?, label: String) -> String? {
+        guard let frame = Frame(drawable?.message(1)), frame.size.width > 0, frame.size.height > 0 else { return nil }
+        let nonVisual = nonVisual(drawable, name: label)
+        let text = XMLLite.escape(label)
+        return """
+            <p:sp><p:nvSpPr>\(nonVisual)<p:cNvSpPr/><p:nvPr>\(StandIn.extensionXML(label: label))</p:nvPr></p:nvSpPr>\
+            <p:spPr>\(frame.xml())<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>\
+            <a:solidFill><a:srgbClr val="F2F2F5"/></a:solidFill><a:ln w="12700"><a:solidFill><a:srgbClr val="B3B3BF"/>\
+            </a:solidFill><a:prstDash val="dash"/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" anchor="ctr" rtlCol="0">\
+            <a:normAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="1400">\
+            <a:solidFill><a:srgbClr val="666673"/></a:solidFill></a:rPr><a:t>\(text)</a:t></a:r></a:p></p:txBody></p:sp>
+            """
     }
 
     /// Older documents keep a shape's text in the deprecated field 2.
@@ -259,8 +323,12 @@ public struct KeynoteSlideWriter {
             """
     }
 
+    /// The first of the image's pictures that can be shown: the one it
+    /// shows, the original, or failing those, its thumbnail, as an equation
+    /// typeset into a PDF a platform can't draw may have one it can.
     private mutating func image(_ image: ProtoMessage) -> String? {
-        guard let data = image.reference(11) ?? image.reference(13) ?? image.reference(12) else { return nil }
+        let pictures = [11, 13, 12].compactMap { image.reference($0) }
+        guard let data = pictures.first(where: { media.path(for: $0) != nil }) else { return nil }
         return picture(drawable: image.message(1), data: data, style: image.reference(3), mask: archive[image.reference(5)])
     }
 
@@ -310,6 +378,16 @@ public struct KeynoteSlideWriter {
     /// A movie with neither shows its poster frame and nothing more.
     private mutating func movie(_ object: KeynoteArchive.Object) -> String? {
         let movie = object.message
+        // A 3D object, a `TSA.Object3DInfo` extending the movie, can't turn
+        // here; it shows the still picture it keeps of itself, or a stand-in.
+        if let object3D = movie.message(200) {
+            has3DObjects = true
+            let still = [object3D.reference(5), movie.reference(15)].compactMap { $0 }.first { media.path(for: $0) != nil }
+            if let still, let xml = picture(drawable: movie.message(1), data: still, style: movie.reference(19), mask: nil) {
+                return xml
+            }
+            return standIn(movie.message(1), label: String(localized: "Object.3D", bundle: .engine))
+        }
         let isAudio = movie.bool(9) == true
         let poster = isAudio ? movie.reference(16) ?? movie.reference(15) : movie.reference(15) ?? movie.reference(16)
         let linkType = isAudio ? OOXML.RelationshipType.audio : OOXML.RelationshipType.video

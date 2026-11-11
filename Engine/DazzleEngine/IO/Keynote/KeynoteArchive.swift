@@ -164,6 +164,8 @@ public enum KeynoteType {
     public static let connectionLine: UInt32 = 3009
     public static let shapeStyle: UInt32 = 3015
     public static let mediaStyle: UInt32 = 3016
+    /// A chart from before 2013, a `TSCH.PreUFF.ChartInfoArchive`.
+    public static let olderChart: UInt32 = 5000
     public static let chart: UInt32 = 5021
     public static let table: UInt32 = 6000
     public static let tableModel: UInt32 = 6001

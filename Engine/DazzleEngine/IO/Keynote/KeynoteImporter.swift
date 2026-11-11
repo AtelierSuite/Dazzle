@@ -156,6 +156,15 @@ public enum KeynoteImporter {
         public var origins: [KeynoteSlideOrigin] = []
     }
 
+    /// What a slide's or layout's writer showed only in part.
+    private static func standInOmissions(_ writer: KeynoteSlideWriter) -> Set<UnsupportedFeatureReport.Omission> {
+        var omissions: Set<UnsupportedFeatureReport.Omission> = []
+        if writer.hasEquationStandIns { omissions.insert(.equationStandIns) }
+        if writer.has3DObjects { omissions.insert(.objects3D) }
+        if writer.hasObjectStandIns { omissions.insert(.objectStandIns) }
+        return omissions
+    }
+
     public static func convert(_ archive: KeynoteArchive, media: KeynoteMedia, fittedFrames: [[Int: EMURect]] = []) throws -> Conversion {
         guard let document = archive.objects.values.first(where: { $0.type == KeynoteType.document }),
               let show = archive[document.message.reference(2)] else {
@@ -199,6 +208,7 @@ public enum KeynoteImporter {
                     omissions.formUnion(writer.skipped.map(omission))
                     if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
                     if writer.hasTableStandIns { omissions.insert(.tableStandIns) }
+                    omissions.formUnion(standInOmissions(writer))
                     layoutPaths[template.identifier] = path
                     layoutPath = path
                 }
@@ -222,6 +232,7 @@ public enum KeynoteImporter {
             omissions.formUnion(writer.skipped.map(omission))
             if writer.hasChartStandIns { omissions.insert(.chartStandIns) }
             if writer.hasTableStandIns { omissions.insert(.tableStandIns) }
+            omissions.formUnion(standInOmissions(writer))
             let builds = KeynoteBuilds(archive: archive).animations(
                 slide, shapeIDs: writer.shapeIDs, media: writer.mediaDrawables
             )
