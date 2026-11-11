@@ -61,4 +61,65 @@ struct FontFallbackTests {
         #expect(CTFontCopyFamilyName(font("Georgia")) as String == "Georgia")
         #expect(CTFontCopyFamilyName(font("Calibri")) as String != "Times New Roman")
     }
+
+    private func isInstalled(_ family: String) -> Bool {
+        CTFontCopyFamilyName(CTFontCreateWithName(family as CFString, 12, nil)) as String == family
+    }
+
+    @Test("Office and Windows families are drawn in metric-compatible stand-ins first, then the nearest in look")
+    func substituteTable() {
+        #expect(FontResolver.substitutes(for: "Calibri")?.first == "Carlito")
+        #expect(FontResolver.substitutes(for: "Calibri Light")?.first == "Carlito")
+        #expect(FontResolver.substitutes(for: "Cambria")?.first == "Caladea")
+        #expect(FontResolver.substitutes(for: "Arial") == ["Helvetica"])
+        #expect(FontResolver.substitutes(for: "Liberation Sans")?.first == "Arial")
+        #expect(FontResolver.substitutes(for: "Meiryo UI") == ["Hiragino Sans"])
+        #expect(FontResolver.substitutes(for: "Yu Gothic") == ["Hiragino Sans"])
+        #expect(FontResolver.substitutes(for: "ＭＳ Ｐゴシック") == ["Hiragino Sans"])
+        // The longest prefix wins, and whole-name entries don't take in their longer relatives.
+        #expect(FontResolver.substitutes(for: "Arial Nova") == [""])
+        #expect(FontResolver.substitutes(for: "Arial Narrow") == nil)
+        #expect(FontResolver.substitutes(for: "Open Sans") == nil)
+    }
+
+    @Test("A stand-in is used only where the device has it")
+    func installedStandIns() {
+        #expect(CTFontCopyFamilyName(font("Calibri")) as String == (isInstalled("Carlito") ? "Carlito" : CTFontCopyFamilyName(font("Aptos")) as String))
+        #expect(CTFontCopyFamilyName(font("Cambria")) as String == (isInstalled("Caladea") ? "Caladea" : "Georgia"))
+        #expect(CTFontCopyFamilyName(font("Meiryo")) as String == "Hiragino Sans")
+        #expect(CTFontCopyFamilyName(font("Arial")) as String == (isInstalled("Arial") ? "Arial" : "Helvetica"))
+        #if os(iOS)
+        // iOS ships Carlito, metric-compatible with Calibri.
+        #expect(CTFontCopyFamilyName(font("Calibri")) as String == "Carlito")
+        #endif
+    }
+
+    @Test("Substitutes are named, and fonts the device has or the deck carries are not")
+    func substituteNames() {
+        #expect(FontResolver.shared.substitute(for: "Georgia") == nil)
+        #expect(FontResolver.shared.substitute(for: "Meiryo") == "Hiragino Sans")
+        #expect(FontResolver.shared.substitute(for: "Merriweather") == "Times New Roman")
+        #expect(FontResolver.shared.substitute(for: "Aptos") == "SF Pro")
+        #expect(FontResolver.shared.substitute(for: "") == nil)
+    }
+
+    @Test("A deck lists the fonts it uses that are drawn in others, theme fonts included")
+    func presentationSubstitutions() {
+        var presentation = Presentation.blank
+        var properties = RunProperties()
+        properties.latinFont = "Meiryo"
+        var box = SlideShape(shapeID: 90, name: "Box", kind: .shape, frame: EMURect(x: 0, y: 0, width: 100, height: 100))
+        box.text = TextBody(paragraphs: [Paragraph(runs: [TextRun(text: "こんにちは", properties: properties)])])
+        properties.latinFont = "Georgia"
+        box.text?.paragraphs.append(Paragraph(runs: [TextRun(text: "Hello", properties: properties)]))
+        presentation.slides[0].shapes.append(box)
+        let substitutions = presentation.fontSubstitutions
+        #expect(substitutions.contains(FontSubstitution(requested: "Meiryo", substitute: "Hiragino Sans")))
+        #expect(!substitutions.contains { $0.requested == "Georgia" })
+        #expect(presentation.typefaces.contains("Georgia"))
+        // The theme's fonts are what titles and body text use unless told otherwise.
+        let theme = presentation.resources.master(for: presentation.layout(for: presentation.slides[0]))?.theme
+        #expect(presentation.typefaces.contains(theme?.minorFont ?? ""))
+        #expect(substitutions.noticeMessage.contains("• Meiryo → Hiragino Sans"))
+    }
 }
