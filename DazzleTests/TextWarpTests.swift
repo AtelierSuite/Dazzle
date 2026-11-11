@@ -1,4 +1,5 @@
 import CoreGraphics
+@testable import Dazzle
 @testable import DazzleEngine
 import Foundation
 import Testing
@@ -233,6 +234,27 @@ struct TextWarpTests {
         let flat = try wordArt("")
         let flatTyping = try ink(flat, options: SlideRenderer.Options(bulletsOnlyShapeID: flat.id, drawsBackground: false))
         #expect(try ink(shape, options: typing) == flatTyping)
+    }
+
+    @Test("WordArt that grows to fit its text keeps its box when typed into, so the warp keeps its shape")
+    @MainActor func typingKeepsTheBox() throws {
+        @MainActor func typed(_ warp: String) throws -> (before: EMURect, after: EMURect) {
+            var shape = try wordArt(warp)
+            shape.text?.properties.autofit = .shape
+            var presentation = Presentation.blank
+            presentation.slides[0].shapes = [shape]
+            let state = EditorState()
+            state.reconcile(with: presentation)
+            state.selectedShapeID = shape.id
+            var body = try #require(shape.text)
+            body.paragraphs[0] = body.paragraphs[0].replacingText("Typed")
+            state.setTextBody(body, in: &presentation)
+            return (shape.frame, presentation.slides[0].shapes[0].frame)
+        }
+        let flat = try typed("")
+        #expect(flat.after.height != flat.before.height, "Flat text still fits its box to itself")
+        let warped = try typed(warp("textArchUp"))
+        #expect(warped.after == warped.before)
     }
 
     @Test("A warp is kept when the text is edited and saved, and written for text made in Dazzle")
