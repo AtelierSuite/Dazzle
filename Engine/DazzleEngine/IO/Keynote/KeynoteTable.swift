@@ -208,15 +208,19 @@ public struct KeynoteTable {
             guard let tile = archive[entry.reference(2)]?.message else { continue }
             let firstRow = (entry.int(1) ?? 0) * tileSize
             for row in tile.messages(5) {
-                guard case .bytes(let storage)? = row.fields[6]?.last, case .bytes(let offsetBytes)? = row.fields[7]?.last else {
+                // Cells as Keynote has kept them since 2019, then as it kept them before.
+                let storage: (buffer: [UInt8], offsets: [UInt8])
+                if case .bytes(let buffer)? = row.fields[6]?.last, case .bytes(let offsets)? = row.fields[7]?.last, !offsets.isEmpty {
+                    storage = (Array(buffer), Array(offsets))
+                } else if case .bytes(let buffer)? = row.fields[3]?.last, case .bytes(let offsets)? = row.fields[4]?.last {
+                    storage = (Array(buffer), Array(offsets))
+                } else {
                     continue
                 }
-                let buffer = Array(storage)
-                let offsets = Array(offsetBytes)
                 let scale = row.bool(8) == true ? 4 : 1
-                for column in 0..<(offsets.count / 2) {
-                    let raw = Int(offsets[column * 2]) | Int(offsets[column * 2 + 1]) << 8
-                    guard raw != 0xFFFF, let cell = Self.cell(buffer, at: raw * scale) else { continue }
+                for column in 0..<(storage.offsets.count / 2) {
+                    let raw = Int(storage.offsets[column * 2]) | Int(storage.offsets[column * 2 + 1]) << 8
+                    guard raw != 0xFFFF, let cell = Self.cell(storage.buffer, at: raw * scale) else { continue }
                     result[[firstRow + (row.int(1) ?? 0), column]] = cell
                 }
             }
@@ -227,7 +231,8 @@ public struct KeynoteTable {
     /// One packed cell: a version, a type, then a word of flags saying which
     /// of the optional fields follow, in flag order.
     private static func cell(_ buffer: [UInt8], at offset: Int) -> Cell? {
-        guard offset + 12 <= buffer.count, buffer[offset] >= 5 else { return nil }
+        guard offset + 12 <= buffer.count else { return nil }
+        guard buffer[offset] >= 5 else { return olderCell(buffer, at: offset) }
         var cell = Cell(type: buffer[offset + 1])
         func word(_ at: Int) -> UInt32 {
             (0..<4).reduce(0) { $0 | UInt32(buffer[at + $1]) << (8 * UInt32($1)) }
@@ -261,6 +266,43 @@ public struct KeynoteTable {
             default: break
             }
         }
+        return cell
+    }
+
+    /// A packed cell as Keynote kept it before 2019, versions 2 to 4: the
+    /// flags come first and the value last, after the keys. Versions before
+    /// 4 keep the type a byte later.
+    private static func olderCell(_ buffer: [UInt8], at offset: Int) -> Cell? {
+        let version = buffer[offset]
+        guard (2...4).contains(version) else { return nil }
+        var cell = Cell(type: buffer[offset + (version >= 4 ? 1 : 2)])
+        func word(_ at: Int) -> UInt32 {
+            (0..<4).reduce(0) { $0 | UInt32(buffer[at + $1]) << (8 * UInt32($1)) }
+        }
+        let flags = word(offset + 4)
+        var cursor = offset + 12
+        func take(_ length: Int) -> Int? {
+            guard cursor + length <= buffer.count else { return nil }
+            defer { cursor += length }
+            return cursor
+        }
+        // Styles, formats and formulas, four bytes each, in flag order.
+        for bit in [0x2, 0x4, 0x8, 0x80, 0x100, 0x400, 0x800] as [UInt32] where flags & bit != 0 {
+            guard let at = take(4) else { return nil }
+            switch bit {
+            case 0x2: cell.cellStyle = word(at)
+            case 0x80: cell.textStyle = word(at)
+            default: break
+            }
+        }
+        if flags & 0x200 != 0, let at = take(4) { cell.richText = word(at) }
+        for bit in [0x1000, 0x2000] as [UInt32] where flags & bit != 0 { _ = take(4) }
+        if flags & 0x10 != 0, let at = take(4) { cell.string = word(at) }
+        func double(_ at: Int) -> Double {
+            Double(bitPattern: (0..<8).reduce(UInt64(0)) { $0 | UInt64(buffer[at + $1]) << (8 * UInt64($1)) })
+        }
+        if flags & 0x20 != 0, let at = take(8) { cell.number = double(at) }
+        if flags & 0x40 != 0, let at = take(8) { cell.seconds = double(at) }
         return cell
     }
 
