@@ -272,14 +272,36 @@ function deckWithShapes() {
         <a:blipFill><a:blip r:embed="rIdTile"/><a:tile tx="12700" ty="25400" sx="50000" sy="25000" flip="xy" algn="ctr"/></a:blipFill>
         <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
     </p:sp>
-    ${picture(903, "Recoloured", 4572000, `
+    <p:sp><p:nvSpPr><p:cNvPr id="903" name="Patterned"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(5029200)}<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>
+        <a:pattFill prst="dkUpDiag"><a:fgClr><a:srgbClr val="FF0000"/></a:fgClr><a:bgClr><a:srgbClr val="FFFF00"/></a:bgClr></a:pattFill>
+        <a:ln w="38100"><a:pattFill prst="smCheck"><a:fgClr><a:srgbClr val="00FF00"/></a:fgClr><a:bgClr><a:srgbClr val="000000"/></a:bgClr></a:pattFill></a:ln></p:spPr>
+    </p:sp>
+    <p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="904" name="Grid"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+      <p:xfrm><a:off x="457200" y="3200400"/><a:ext cx="1828800" cy="740664"/></p:xfrm>
+      <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl><a:tblPr/>
+        <a:tblGrid><a:gridCol w="914400"/><a:gridCol w="914400"/></a:tblGrid>
+        <a:tr h="370332"><a:tc><a:txBody><a:bodyPr/><a:p><a:endParaRPr lang="en-US"/></a:p></a:txBody>
+          <a:tcPr><a:pattFill prst="lgGrid"><a:fgClr><a:srgbClr val="0000FF"/></a:fgClr><a:bgClr><a:srgbClr val="FFFFFF"/></a:bgClr></a:pattFill></a:tcPr></a:tc>
+          <a:tc><a:txBody><a:bodyPr/><a:p><a:endParaRPr lang="en-US"/></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+      </a:tbl></a:graphicData></a:graphic></p:graphicFrame>
+    ${["cube", "gear6", "bracePair"].map((prst, index) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${905 + index}" name="${prst}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200 + index * 2286000)}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>
+        <a:solidFill><a:srgbClr val="3366CC"/></a:solidFill>
+        <a:ln w="12700"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></p:spPr>
+    </p:sp>`).join("")}
+    ${gradientShapes(frame)}
+    ${picture(920, "Recoloured", 4572000, `
       <a:clrChange><a:clrFrom><a:srgbClr val="FFFFFF"/></a:clrFrom><a:clrTo><a:srgbClr val="FFFFFF"><a:alpha val="0"/></a:srgbClr></a:clrTo></a:clrChange>
       <a:biLevel thresh="50000"/><a:hsl hue="7200000" sat="0" lum="0"/><a:tint hue="14400000" amt="50000"/>
       ${artistic("", '<a14:artisticPencilSketch trans="20000" pressure="40"/>', '<a14:saturation sat="0"/>')}`)}
-    ${picture(904, "Stylised", 6400800, artistic(' r:embed="rIdTile"', '<a14:artisticWatercolorSponge brushSize="4"/>'))}`;
+    ${picture(921, "Stylised", 6400800, artistic(' r:embed="rIdTile"', '<a14:artisticWatercolorSponge brushSize="4"/>'))}`;
+  const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
   const root = slide.includes("xmlns:r=") ? slide : slide.replace("<p:sld ", '<p:sld xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
-  encode("ppt/slides/slide1.xml", root.replace("</p:spTree>", `${shapes}</p:spTree>`));
+  encode("ppt/slides/slide1.xml", root.replace(/<p:bg>.*?<\/p:bg>/s, "").replace(/<p:cSld(\s[^>]*)?>/, (tag) => tag + background)
+    .replace("</p:spTree>", `${shapes}</p:spTree>`));
   const relsName = "ppt/slides/_rels/slide1.xml.rels";
   encode(relsName, decode(relsName).replace("</Relationships>",
     '<Relationship Id="rIdTile" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/tile.png"/></Relationships>'));
@@ -289,12 +311,34 @@ function deckWithShapes() {
   return zip(entries);
 }
 
+/** Shapes filled with each kind of path gradient, and a scaled linear one, named for what they hold. */
+function gradientShapes(frame) {
+  const stops = '<a:gsLst><a:gs pos="0"><a:srgbClr val="FF0000"/></a:gs><a:gs pos="100000"><a:srgbClr val="0000FF"/></a:gs></a:gsLst>';
+  const fills = {
+    "Rect gradient": `<a:path path="rect"><a:fillToRect l="25000" t="25000" r="25000" b="25000"/></a:path>`,
+    "Shape gradient": `<a:path path="shape"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path>`,
+    "Circle gradient": `<a:path path="circle"><a:fillToRect r="100000" b="100000"/></a:path><a:tileRect l="-100000" t="-100000"/>`,
+    "Scaled gradient": `<a:lin ang="2700000" scaled="1"/>`,
+  };
+  return Object.entries(fills).map(([name, shade], index) => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${910 + index}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(457200 + 2286000 * index)}<a:prstGeom prst="${name === "Shape gradient" ? "ellipse" : "rect"}"><a:avLst/></a:prstGeom>
+        <a:gradFill rotWithShape="1">${stops}${shade}</a:gradFill></p:spPr>
+    </p:sp>`).join("");
+}
+
 const drawn = (() => {
   try {
     const opened = call("open", { name: "Shapes.pptx" }, deckWithShapes());
-    const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
+    const scene = call("scene", { slide: opened.state.slides[0].id }).result;
+    const shapes = scene.shapes;
     const named = (name) => shapes.find((node) => node.name === name);
-    return { info: opened.result, lined: named("Lined"), tiled: named("Tiled"), recoloured: named("Recoloured"), stylised: named("Stylised") };
+    return {
+      info: opened.result, shapes, slide: opened.state.slides[0].id, scene,
+      lined: named("Lined"), tiled: named("Tiled"), patterned: named("Patterned"), grid: named("Grid"),
+      cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
+      recoloured: named("Recoloured"), stylised: named("Stylised"),
+    };
   } catch (error) {
     return { error };
   }
@@ -328,6 +372,45 @@ test("fills a cloud callout as one and strokes its puffs", () => {
   if (drawn.error) throw drawn.error;
   assert.equal(drawn.tiled.rule, "nonzero", "bubbles overlapping the cloud don't cut holes");
   assert.ok(drawn.tiled.strokePath?.length > drawn.tiled.path.length, "the puffs' inner curves are stroked too");
+});
+
+test("draws pattern fills on shapes, outlines, table cells and the background, and keeps them on save", () => {
+  if (drawn.error) throw drawn.error;
+  const fill = drawn.patterned.fill;
+  assert.equal(fill?.t, "pattern", "the shape is patterned, not solid");
+  assert.deepEqual([fill.fg, fill.bg, fill.cell], ["#ff0000", "#ffff00", 0.75]);
+  assert.deepEqual(fill.rows, [0x33, 0x66, 0xcc, 0x99, 0x33, 0x66, 0xcc, 0x99], "dark upward diagonal cells, top row first");
+  assert.equal(drawn.patterned.line.paint?.t, "pattern", "the outline is patterned too");
+  assert.equal(drawn.patterned.line.c, "#00ff00", "its foreground stands in where only one colour will do");
+  assert.deepEqual([drawn.scene.bg.t, drawn.scene.bg.fg, drawn.scene.bg.bg], ["pattern", "#333333", "#eeeeee"]);
+  const cell = drawn.grid.table.cells.find((c) => c.r === 0 && c.c === 0);
+  assert.deepEqual([cell.fill?.t, cell.fill?.fg], ["pattern", "#0000ff"]);
+
+  // The inspector shows it as a pattern, and recolouring keeps the preset.
+  call("select", { slide: drawn.slide, shapes: [drawn.patterned.id] });
+  const inspected = call("inspect").result;
+  assert.deepEqual([inspected.shape.fill.kind, inspected.shape.fill.preset, inspected.shape.fill.background], ["pattern", "dkUpDiag", "#ffff00"]);
+  assert.deepEqual([inspected.slide.background.kind, inspected.slide.background.preset], ["pattern", "pct20"]);
+  call("setFill", { fill: { kind: "pattern", preset: "dkUpDiag", color: "#00ff00", background: "#ffff00" } });
+  const recoloured = call("scene", { slide: drawn.slide }).result.shapes.find((node) => node.name === "Patterned");
+  assert.deepEqual([recoloured.fill.t, recoloured.fill.fg, recoloured.fill.rows[0]], ["pattern", "#00ff00", 0x33]);
+
+  const saved = unzip(call("save", { format: "pptx", keep: true }).payload);
+  const slide = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
+  assert.ok(/<a:pattFill prst="dkUpDiag"><a:fgClr><a:srgbClr val="00FF00"\/><\/a:fgClr><a:bgClr><a:srgbClr val="FFFF00"\/>/.test(slide), "the recoloured shape");
+  for (const preset of ["smCheck", "lgGrid", "pct20"]) assert.ok(slide.includes(`<a:pattFill prst="${preset}">`), `keeps ${preset}`);
+});
+
+test("draws the presets ECMA-376 defines rather than their frames", () => {
+  if (drawn.error) throw drawn.error;
+  assert.ok(drawn.gear.path.split("L").length > 20, "a gear has teeth");
+  assert.ok(!drawn.gear.path.startsWith("M0 0L"), "not the frame's rectangle");
+  assert.deepEqual(drawn.cube.shades?.map((shade) => shade.c), ["#000", "#fff"], "the side darkened, the top lightened");
+  assert.ok(drawn.cube.shades.every((shade) => shade.d.length > 0 && shade.o > 0 && shade.o < 1));
+  assert.ok(drawn.cube.strokePath?.length > 0, "the outline and edges are stroked apart from the faces");
+  assert.equal(drawn.braces.open, true, "a brace pair is never filled");
+  assert.equal(drawn.braces.fill, undefined);
+  assert.ok(drawn.braces.path.includes("C"), "its braces curve");
 });
 
 test("names the typefaces the presentation doesn't carry", () => {
@@ -365,6 +448,106 @@ test("saves picture effects as they were read", () => {
     assert.match(xml, part);
   }
   assert.equal(xml.match(/<a:clrChange>/g).length, 1, "once");
+});
+
+test("draws path gradients from fillToRect to their tile, and scaled linear ones", () => {
+  if (drawn.error) throw drawn.error;
+  const fill = (name) => drawn.shapes.find((node) => node.name === name)?.fill;
+  const rect = fill("Rect gradient");
+  assert.equal(rect?.t, "rect");
+  assert.deepEqual(rect.focus, [0.25, 0.25, 0.25, 0.25]);
+  assert.deepEqual([rect.from, rect.to], ["#ff0000", "#0000ff"], "from its first colour inside fillToRect to its last at the edges");
+  const shape = fill("Shape gradient");
+  assert.equal(shape?.t, "shape");
+  assert.deepEqual([shape.rings[0], shape.rings.at(-1)], ["#0000ff", "#ff0000"], "outline copies from the edge in to the centre");
+  const circle = fill("Circle gradient");
+  assert.equal(circle?.t, "radial");
+  assert.deepEqual([circle.focus, circle.tile], [[0, 0, 1, 1], [-1, -1, 0, 0]], "from the top-left corner");
+  const scaled = fill("Scaled gradient");
+  assert.deepEqual([scaled?.t, scaled?.angle, scaled?.scaled], ["linear", 45, true]);
+});
+
+test("keeps path gradients when saved and when the inspector changes their colours or style", () => {
+  if (drawn.error) throw drawn.error;
+  const reopened = call("open", { name: "Saved.pptx" }, call("save", { format: "pptx", keep: true }).payload);
+  const slide = reopened.state.slides[0].id;
+  const shapes = call("scene", { slide }).result.shapes;
+  const circle = shapes.find((node) => node.name === "Circle gradient");
+  assert.deepEqual([circle.fill.t, circle.fill.focus, circle.fill.tile], ["radial", [0, 0, 1, 1], [-1, -1, 0, 0]]);
+  assert.equal(shapes.find((node) => node.name === "Scaled gradient").fill.scaled, true);
+
+  // The inspector sends back what it was told, with one thing changed, as inspector.js does.
+  call("select", { slide, shapes: [circle.id] });
+  const told = call("inspect").result.shape.fill;
+  assert.deepEqual([told.path, told.focus, told.tile, told.scaled], ["circle", [0, 0, 1, 1], [-1, -1, 0, 0], false]);
+  call("setFill", { fill: { ...told, kind: "gradient", end: "#00ff00", path: "rect" } });
+  const changed = call("scene", { slide }).result.shapes.find((node) => node.name === "Circle gradient").fill;
+  assert.deepEqual([changed.t, changed.focus, changed.tile, changed.to], ["rect", [0, 0, 1, 1], [-1, -1, 0, 0], "#00ff00"]);
+});
+
+/**
+ * The presentation as saved, with shapes that glow, fade at their edges, cast inner and preset shadows and blur,
+ * and one that takes a glow from the theme's second effect style.
+ */
+function deckWithEffects() {
+  const { payload } = call("save", { format: "pptx" });
+  const entries = unzip(payload);
+  const decode = (name) => new TextDecoder().decode(entries.get(name));
+  const encode = (name, text) => entries.set(name, new TextEncoder().encode(text));
+  const shape = (id, name, effects, style = "") => `
+    <p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+      <p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/></a:xfrm>
+        <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>${effects}</p:spPr>${style}
+    </p:sp>`;
+  const shapes = shape(911, "Glowing", `<a:effectLst><a:glow rad="127000"><a:srgbClr val="00FF00"/></a:glow>
+      <a:innerShdw blurRad="25400" dist="50800" dir="2700000"><a:srgbClr val="0000FF"/></a:innerShdw>
+      <a:softEdge rad="63500"/></a:effectLst>`)
+    + shape(912, "Blurred", `<a:effectLst><a:blur rad="38100" grow="0"/>
+      <a:prstShdw prst="shdw13" dist="25400" dir="2700000"><a:srgbClr val="000000"/></a:prstShdw></a:effectLst>`)
+    + shape(913, "Boxed", `<a:effectLst><a:prstShdw prst="shdw18" dist="25400" dir="2700000"><a:srgbClr val="000000"/></a:prstShdw></a:effectLst>`)
+    + shape(914, "Themed", "", `<p:style><a:lnRef idx="0"><a:schemeClr val="accent1"/></a:lnRef>
+      <a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef><a:effectRef idx="2"><a:srgbClr val="FFFF00"/></a:effectRef>
+      <a:fontRef idx="minor"/></p:style>`);
+  encode("ppt/slides/slide1.xml", decode("ppt/slides/slide1.xml").replace("</p:spTree>", `${shapes}</p:spTree>`));
+  const theme = decode("ppt/theme/theme1.xml");
+  const empty = "<a:effectStyle><a:effectLst/></a:effectStyle>";
+  const second = theme.indexOf(empty, theme.indexOf(empty) + empty.length);
+  assert.ok(second > 0, "the theme has an empty second effect style");
+  const glow = '<a:effectStyle><a:effectLst><a:glow rad="63500"><a:schemeClr val="phClr"><a:alpha val="50000"/></a:schemeClr></a:glow></a:effectLst></a:effectStyle>';
+  encode("ppt/theme/theme1.xml", theme.slice(0, second) + glow + theme.slice(second + empty.length));
+  return zip(entries);
+}
+
+test("draws glows, soft edges, inner, preset and themed shadows and blurs, and saves them as they were", () => {
+  const opened = call("open", { name: "Effects.pptx" }, deckWithEffects());
+  const shapes = call("scene", { slide: opened.state.slides[0].id }).result.shapes;
+  const named = (name) => shapes.find((node) => node.name === name)?.effects;
+
+  const glowing = named("Glowing");
+  assert.deepEqual(glowing.glow, { r: 10, c: "#00ff00" });
+  assert.equal(glowing.soft, 5);
+  assert.deepEqual([glowing.inner.dx, glowing.inner.dy, glowing.inner.blur, glowing.inner.c], [2.83, 2.83, 2, "#0000ff"]);
+
+  const blurred = named("Blurred");
+  assert.deepEqual(blurred.blur, { r: 3, grow: false });
+  assert.equal(blurred.preset.casts.length, 2, "a double shadow is cast twice");
+  const [far, near] = blurred.preset.casts;
+  assert.ok(far[4] > near[4] && far[5] > near[5], "the farther copy first, twice as far");
+  assert.ok(Math.abs(near[4] - 1.41) < 0.01 && Math.abs(near[5] - 1.41) < 0.01);
+
+  const boxed = named("Boxed");
+  assert.equal(boxed.preset, undefined, "the inner box preset falls inside");
+  assert.ok(boxed.inner && boxed.inner.blur === 0, "as a hard inner shadow");
+
+  const themed = named("Themed");
+  assert.equal(themed?.glow?.r, 5, "the glow comes from the theme's effect style");
+  assert.match(themed.glow.c, /^rgba\(255, ?255, ?0, ?0\.5\)$/, "in the reference's colour, at the style's alpha");
+
+  const saved = unzip(call("save", { format: "pptx" }).payload);
+  const slide = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
+  for (const element of ["<a:glow ", "<a:innerShdw ", "<a:softEdge ", "<a:blur ", 'prst="shdw13"', 'prst="shdw18"']) {
+    assert.ok(slide.includes(element), `keeps ${element}`);
+  }
 });
 
 for (const path of process.argv.slice(2)) {
