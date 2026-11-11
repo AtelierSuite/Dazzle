@@ -14,10 +14,10 @@ public struct TextRenderer {
 
     /// The kinds of vertical text, by their name in the file, all laid out
     /// across the shape and turned a quarter.
-    static let verticalKinds: Set = ["vert", "eaVert", "vert270", "wordArtVert", "wordArtVertRtl", "mongolianVert"]
-    /// Those set in vertical lines (縦書き and stacked), where Japanese and
-    /// Chinese stand upright, rather than turned letters and all.
-    static let uprightKinds: Set = ["eaVert", "wordArtVert", "wordArtVertRtl"]
+    static let verticalKinds = BodyProperties.verticalKinds
+    /// Those set in vertical lines (縦書き, Mongolian and stacked), where
+    /// Japanese and Chinese stand upright, rather than turned letters and all.
+    static let uprightKinds: Set = ["eaVert", "mongolianVert", "wordArtVert", "wordArtVertRtl"]
 
     /// Text laid out in a shape: the frame CoreText made, and where it sits.
     private struct Layout {
@@ -28,6 +28,9 @@ public struct TextRenderer {
         var height: CGFloat
         /// For vertical text: the point turned about, and by how much.
         var turn: (center: CGPoint, angle: CGFloat)?
+        /// Whether the lines follow each other the other way across the
+        /// turned box, so vertical lines run left to right.
+        var reversesLines = false
     }
 
     private func layout(
@@ -46,20 +49,15 @@ public struct TextRenderer {
         guard inner.width > 0 || properties.wraps == false else { return nil }
 
         // Vertical text is laid out across the shape's height, then turned.
+        // Lines that run left to right, but not turned anticlockwise, follow
+        // each other the other way across the turned box.
         var turn: (center: CGPoint, angle: CGFloat)?
-        if let vertical = properties.vertical, Self.verticalKinds.contains(vertical) {
-            turn = (CGPoint(x: inner.midX, y: inner.midY), vertical == "vert270" ? -.pi / 2 : .pi / 2)
+        if properties.runsVertically {
+            turn = (CGPoint(x: inner.midX, y: inner.midY), properties.vertical == "vert270" ? -.pi / 2 : .pi / 2)
             inner = CGRect(x: -inner.height / 2, y: -inner.width / 2, width: inner.height, height: inner.width)
         }
-        // Set in vertical lines rather than turned, Japanese and Chinese take
-        // their vertical forms, which CoreText draws upright in the turned line.
-        let upright = properties.vertical.map(Self.uprightKinds.contains) ?? false
-        func shaped(_ string: NSAttributedString) -> NSAttributedString {
-            guard upright else { return string }
-            let shaped = NSMutableAttributedString(attributedString: string)
-            shaped.addAttribute(NSAttributedString.Key(kCTVerticalFormsAttributeName as String), value: true, range: NSRange(location: 0, length: shaped.length))
-            return shaped
-        }
+        let reversesLines = properties.runsVertically && !properties.linesStartAtRight && properties.vertical != "vert270"
+        func shaped(_ string: NSAttributedString) -> NSAttributedString { Self.shaped(string, vertical: properties.vertical) }
 
         var fontScale = 1.0
         var spacingReduction = 0.0
@@ -111,7 +109,40 @@ public struct TextRenderer {
 
         let path = CGPath(rect: CGRect(x: 0, y: 0, width: frameWidth, height: frameHeight), transform: nil)
         let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0), path, nil)
-        return Layout(frame: frame, origin: CGPoint(x: originX, y: inner.minY + offset), height: frameHeight, turn: turn)
+        return Layout(
+            frame: frame, origin: CGPoint(x: originX, y: inner.minY + offset), height: frameHeight, turn: turn,
+            reversesLines: reversesLines
+        )
+    }
+
+    /// Each line of a layout and where it starts, in the frame's CoreText
+    /// space. Lines running the other way across the turned box are set in
+    /// the opposite order about its middle, which is where it is turned.
+    private func placedLines(_ layout: Layout) -> [(line: CTLine, origin: CGPoint)] {
+        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
+        var origins = [CGPoint](repeating: .zero, count: lines.count)
+        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
+        guard layout.reversesLines else { return Array(zip(lines, origins)) }
+        return zip(lines, origins).map { line, origin in
+            var ascent: CGFloat = 0
+            var descent: CGFloat = 0
+            CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+            let baseline = layout.origin.y + layout.height - origin.y
+            let reversed = -baseline + ascent - descent
+            return (line, CGPoint(x: origin.x, y: layout.origin.y + layout.height - reversed))
+        }
+    }
+
+    /// Text as it is set in `vertical` lines. Japanese and Chinese take their
+    /// vertical forms, which CoreText draws upright in the turned line.
+    static func shaped(_ string: NSAttributedString, vertical: String?) -> NSAttributedString {
+        guard let vertical, uprightKinds.contains(vertical) else { return string }
+        let shaped = NSMutableAttributedString(attributedString: string)
+        shaped.addAttribute(
+            NSAttributedString.Key(kCTVerticalFormsAttributeName as String), value: true,
+            range: NSRange(location: 0, length: shaped.length)
+        )
+        return shaped
     }
 
     /// Draws `body` into `rect`, in a context whose y axis points down.
@@ -145,14 +176,15 @@ public struct TextRenderer {
         context.scaleBy(x: 1, y: -1)
         context.textMatrix = .identity
         // Every shadow goes down before any letter, so none falls across another run's letters.
-        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
-        for (line, origin) in zip(lines, origins) {
+        let lines = placedLines(layout)
+        for (line, origin) in lines {
             drawShadows(of: line, at: origin, space: space, context: context)
         }
-        CTFrameDraw(layout.frame, context)
-        drawStrikethroughs(in: layout.frame, context: context)
+        for (line, origin) in lines {
+            context.textPosition = origin
+            CTLineDraw(line, context)
+            drawStrikethroughs(in: line, origin: origin, context: context)
+        }
     }
 
     /// Draws only the shadows a line's letters cast from `origin`. `space` is
@@ -180,11 +212,8 @@ public struct TextRenderer {
     /// Draw whole paragraphs in their unchanged CoreText layout. Wrapped lines,
     /// bullets, links, and decorations move together around the paragraph bounds.
     private func drawParagraphs(_ layout: Layout, appearances: [Int: AnimatedAppearance], context: CGContext) {
-        let lines = CTFrameGetLines(layout.frame) as? [CTLine] ?? []
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(layout.frame, CFRange(location: 0, length: 0), &origins)
         var paragraphs: [Int: [(line: CTLine, baseline: CGPoint, bounds: CGRect)]] = [:]
-        for (line, origin) in zip(lines, origins) {
+        for (line, origin) in placedLines(layout) {
             let runs = CTLineGetGlyphRuns(line) as? [CTRun] ?? []
             let index = runs.first.flatMap { (CTRunGetAttributes($0) as NSDictionary)[Self.paragraphIndexKey.rawValue] as? Int } ?? 0
             var ascent: CGFloat = 0
@@ -282,7 +311,10 @@ public struct TextRenderer {
         let properties = style.bodyProperties(for: shape, sources: []).merged(over: body.properties)
         let horizontal = EMU.points((properties.leftInset ?? 91_440) + (properties.rightInset ?? 91_440))
         let vertical = EMU.points((properties.topInset ?? 45_720) + (properties.bottomInset ?? 45_720))
-        let string = attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil)
+        let string = Self.shaped(
+            attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil),
+            vertical: properties.vertical
+        )
         let size = suggestedSize(CTFramesetterCreateWithAttributedString(string), string: string, width: max(width - horizontal, 1))
         return ceil(size.height) + vertical
     }
@@ -291,7 +323,10 @@ public struct TextRenderer {
     public func unwrappedWidth(of body: TextBody, shape: SlideShape) -> CGFloat {
         let properties = style.bodyProperties(for: shape, sources: []).merged(over: body.properties)
         let horizontal = EMU.points((properties.leftInset ?? 91_440) + (properties.rightInset ?? 91_440))
-        let string = attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil)
+        let string = Self.shaped(
+            attributedString(body, shape: shape, sources: [], scale: 1, spacingReduction: 0, colorOverride: nil),
+            vertical: properties.vertical
+        )
         let framesetter = CTFramesetterCreateWithAttributedString(string)
         let size = suggestedSize(framesetter, string: string, width: 100_000)
         return ceil(size.width + trailingWhitespace(framesetter)) + 1 + horizontal
@@ -565,16 +600,6 @@ public struct TextRenderer {
     }
 
     /// Strikethrough is a TextKit attribute that CoreText does not draw.
-    private func drawStrikethroughs(in frame: CTFrame, context: CGContext) {
-        let lines = CTFrameGetLines(frame) as? [CTLine] ?? []
-        guard !lines.isEmpty else { return }
-        var origins = [CGPoint](repeating: .zero, count: lines.count)
-        CTFrameGetLineOrigins(frame, CFRange(location: 0, length: 0), &origins)
-        for (line, origin) in zip(lines, origins) {
-            drawStrikethroughs(in: line, origin: origin, context: context)
-        }
-    }
-
     private func drawStrikethroughs(in line: CTLine, origin: CGPoint, context: CGContext) {
         for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
             let attributes = CTRunGetAttributes(run) as NSDictionary
