@@ -637,11 +637,12 @@ public struct TextRenderer {
         }
         // The first line starts at the indent, where a bullet hangs; the tab
         // after the bullet lands on the margin, where the rest of the lines start.
+        // The paragraph's own tab stops go alongside, and past them a stop
+        // every default tab size.
         var firstLine = max(marginLeft + indent, 0)
         var head = marginLeft
-        let tabLocation = marginLeft > firstLine || !hasBullet ? marginLeft : firstLine + fontSize * 0.6
-        var tabs = [CTTextTabCreate(.left, Double(tabLocation), nil)] as CFArray
-        var defaultTab: CGFloat = 72
+        var tabs = TabLayout.stops(properties, fontSize: Double(fontSize), hasBullet: hasBullet).map(Self.textTab) as CFArray
+        var defaultTab = CGFloat(TabLayout.defaultInterval(properties))
 
         var lineMultiple: CGFloat = 1
         var minimumLine: CGFloat = 0
@@ -690,6 +691,22 @@ public struct TextRenderer {
             settings.append(setting(.lineHeightMultiple, &lineMultiple))
         }
         return CTParagraphStyleCreate(settings, settings.count)
+    }
+
+    /// A stop as CoreText takes it. A decimal stop is a right-aligned one that
+    /// ends its column at the decimal point.
+    private static func textTab(_ stop: TabLayout.Stop) -> CTTextTab {
+        let alignment: CTTextAlignment = switch stop.alignment {
+        case .left: .left
+        case .center: .center
+        case .right, .decimal: .right
+        }
+        var options: CFDictionary?
+        if stop.alignment == .decimal {
+            let terminators = CFCharacterSetCreateWithCharactersInString(nil, String(TabLayout.decimalSeparator) as CFString)
+            options = [kCTTabColumnTerminatorsAttributeName as String: terminators] as CFDictionary
+        }
+        return CTTextTabCreate(alignment, stop.location, options)
     }
 
     /// Strikethrough is a TextKit attribute that CoreText does not draw.

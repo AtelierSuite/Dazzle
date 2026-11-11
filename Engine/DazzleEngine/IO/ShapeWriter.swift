@@ -555,6 +555,7 @@ public struct ShapeWriter {
         }
         if let margin = properties.marginLeft { element.setAttribute("marL", String(margin)) }
         if let indent = properties.indent { element.setAttribute("indent", String(indent)) }
+        if let size = properties.defaultTabSize { element.setAttribute("defTabSz", String(size)) }
 
         // Children, each in its place in the schema's order.
         func place(_ xml: String, replacing names: Set<String>) {
@@ -572,6 +573,7 @@ public struct ShapeWriter {
         if let line = properties.lineSpacing { place("<a:lnSpc>\(spacing(line))</a:lnSpc>", replacing: ["lnSpc"]) }
         if let before = properties.spaceBefore { place("<a:spcBef>\(spacing(before))</a:spcBef>", replacing: ["spcBef"]) }
         if let after = properties.spaceAfter { place("<a:spcAft>\(spacing(after))</a:spcAft>", replacing: ["spcAft"]) }
+        if let stops = properties.tabStops { place(TabStop.xml(stops), replacing: ["tabLst"]) }
         if let font = properties.bulletFont {
             place("<a:buFont typeface=\"\(XMLLite.escape(font))\"/>", replacing: ["buFont", "buFontTx"])
         }

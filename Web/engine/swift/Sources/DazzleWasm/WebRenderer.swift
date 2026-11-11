@@ -683,6 +683,20 @@ struct WebRenderer {
             }
             json["sb"] = spacing(properties.spaceBefore)
             json["sa"] = spacing(properties.spaceAfter)
+            // Tab stops, in points from the left of the text: the paragraph's own
+            // and the margin's, with the default stops past them every `dts`.
+            json["dts"] = n(CGFloat(TabLayout.defaultInterval(properties)))
+            if paragraph.runs.contains(where: { $0.kind == .text && $0.text.contains("\t") }) {
+                let hasBullet = !paragraph.plainText.isEmpty && {
+                    switch properties.bullet {
+                    case .character?, .autoNumber?: true
+                    default: false
+                    }
+                }()
+                json["tabs"] = TabLayout.ownStops(properties, fontSize: baseSize, hasBullet: hasBullet).map {
+                    [n(CGFloat($0.location)), $0.alignment.rawValue] as [Any]
+                }
+            }
 
             // Numbering continues through a level until something interrupts it.
             for deeper in counters.keys where deeper > level { counters[deeper] = nil }

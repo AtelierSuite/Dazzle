@@ -301,6 +301,16 @@ function deckWithShapes() {
       <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
       <p:txBody><a:bodyPr wrap="square" numCol="3" spcCol="457200" rtlCol="1"><a:normAutofit/></a:bodyPr><a:lstStyle/>
         <a:p><a:r><a:rPr lang="en-US"/><a:t>First</a:t></a:r></a:p><a:p><a:r><a:rPr lang="en-US"/><a:t>Second</a:t></a:r></a:p></p:txBody>
+    </p:sp>
+    <p:sp><p:nvSpPr><p:cNvPr id="931" name="Tabbed"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+      <p:txBody><a:bodyPr/><a:lstStyle><a:lvl1pPr defTabSz="457200"/></a:lstStyle>
+        <a:p><a:pPr><a:tabLst><a:tab pos="1828800" algn="dec"/><a:tab pos="914400" algn="ctr"/></a:tabLst></a:pPr>
+          <a:r><a:rPr lang="en-US"/><a:t>Item\tMiddle\t12.5</a:t></a:r></a:p>
+        <a:p><a:pPr marL="342900" indent="-342900"><a:buChar char="•"/><a:tabLst><a:tab pos="114300"/><a:tab pos="1371600" algn="r"/></a:tabLst></a:pPr>
+          <a:r><a:rPr lang="en-US"/><a:t>Bullet\tRight</a:t></a:r></a:p>
+        <a:p><a:r><a:rPr lang="en-US"/><a:t>No tabs</a:t></a:r></a:p>
+      </p:txBody>
     </p:sp>`;
   const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
@@ -343,7 +353,7 @@ const drawn = (() => {
       lined: named("Lined"), tiled: named("Tiled"), patterned: named("Patterned"), grid: named("Grid"),
       cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
       recoloured: named("Recoloured"), stylised: named("Stylised"),
-      columned: named("Columned"),
+      columned: named("Columned"), tabbed: named("Tabbed"),
     };
   } catch (error) {
     return { error };
@@ -491,6 +501,33 @@ test("draws path gradients from fillToRect to their tile, and scaled linear ones
   assert.deepEqual([circle.focus, circle.tile], [[0, 0, 1, 1], [-1, -1, 0, 0]], "from the top-left corner");
   const scaled = fill("Scaled gradient");
   assert.deepEqual([scaled?.t, scaled?.angle, scaled?.scaled], ["linear", 45, true]);
+});
+
+test("sets tabbed text on its stops and the default tab size, and saves them", () => {
+  if (drawn.error) throw drawn.error;
+  const [stops, bulleted, plain] = drawn.tabbed.text.paras;
+  assert.deepEqual(stops.tabs, [[0, "l"], [72, "ctr"], [144, "dec"]], "in order along the line, with the margin's");
+  assert.equal(stops.dts, 36, "the default tab size comes from the list style");
+  assert.deepEqual(bulleted.tabs, [[27, "l"], [108, "r"]], "the bullet's tab still reaches the margin");
+  assert.equal(plain.tabs, undefined, "only tabbed paragraphs are laid out by stop");
+
+  // Typed into, the paragraphs are written again, their stops with them.
+  call("select", { slide: drawn.slide, shapes: [drawn.tabbed.id] });
+  call("beginText", { shape: drawn.tabbed.id });
+  call("setText", { paras: [
+    { src: 0, runs: [{ src: [0, 0], t: "Item\tMiddle\t99.25" }] },
+    { src: 1, runs: [{ src: [1, 0], t: "Bullet\tRight" }] },
+    { src: 2, runs: [{ src: [2, 0], t: "No tabs" }] },
+  ] });
+  call("endText");
+  const saved = call("save", { format: "pptx" }).payload;
+  const slide = new TextDecoder().decode(unzip(saved).get("ppt/slides/slide1.xml"));
+  assert.match(slide, /99\.25/, "the typed text is saved");
+  assert.match(slide, /<a:tabLst><a:tab algn="ctr" pos="914400"\/><a:tab algn="dec" pos="1828800"\/><\/a:tabLst>/);
+  const reopened = call("open", { name: "Tabbed.pptx" }, saved);
+  const again = call("scene", { slide: reopened.state.slides[0].id }).result.shapes.find((node) => node.name === "Tabbed");
+  assert.deepEqual(again.text.paras[0].tabs, stops.tabs);
+  assert.equal(again.text.paras[0].dts, 36);
 });
 
 test("keeps path gradients when saved and when the inspector changes their colours or style", () => {

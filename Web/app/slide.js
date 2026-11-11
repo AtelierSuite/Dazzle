@@ -237,9 +237,10 @@ export class SlideDrawer {
     return root;
   }
 
-  /** Shrinks text that says it shrinks to fit, once the slide is laid out on the page. */
+  /** Sets text in its columns, puts tabbed text on its stops and shrinks text that says it shrinks to fit, once the slide is laid out on the page. */
   fit(root) {
     for (const flow of root.querySelectorAll(".text__flow[data-columns]")) layoutColumns(flow.parentElement);
+    alignTabs(root);
     for (const box of root.querySelectorAll(".text[data-fit='shrink']")) fitText(box);
     for (const table of root.querySelectorAll(".table")) drawTableBorders(table);
   }
@@ -811,6 +812,7 @@ export class SlideDrawer {
     flow.replaceChildren();
     flow.dataset.scale = scale;
     for (const paragraph of body.paras) flow.append(this.paragraph(paragraph, { scale, reduce, prompt, editable }));
+    if (flow.isConnected) alignTabs(flow);
   }
 
   paragraph(paragraph, { scale = 1, reduce = 0, prompt = false, editable = false }) {
@@ -838,6 +840,33 @@ export class SlideDrawer {
       const tab = paragraph.ml > first ? paragraph.ml : first + size * 0.6;
       bullet.style.minWidth = `${Math.max(tab - first, 0)}px`;
     }
+    // Default tab stops, until the stops are laid out once the paragraph is on the page.
+    if (paragraph.dts) element.style.tabSize = `${paragraph.dts}px`;
+    // With tabs, the text between them is held in segments, so each can be
+    // measured and the tab before it widened to put it on its stop; for
+    // decimal stops, the part before the decimal point is held apart too.
+    const tabbed = Boolean(paragraph.tabs) && !prompt;
+    const decimal = tabbed && paragraph.tabs.some(([, alignment]) => alignment === "dec");
+    let segment = element;
+    let lead = null;
+    const startSegment = () => {
+      segment = html("span", "text__seg", element);
+      lead = decimal ? html("span", "text__lead", segment) : null;
+    };
+    if (tabbed) {
+      element.dataset.tabs = JSON.stringify(paragraph.tabs);
+      element.dataset.dts = paragraph.dts;
+      startSegment();
+    }
+    const piece = (run, text, parent, className = "text__run") => {
+      const span = html("span", className, parent);
+      span.dataset.p = paragraph.i;
+      span.dataset.r = run.r;
+      span.textContent = text;
+      runStyle(span, run, scale);
+      if (run.link) span.dataset.link = JSON.stringify(run.link);
+      return span;
+    };
     let hasText = false;
     for (const run of paragraph.runs) {
       if (run.br) {
@@ -845,20 +874,35 @@ export class SlideDrawer {
         br.dataset.p = paragraph.i;
         br.dataset.r = run.r;
         element.append(br);
+        if (tabbed) startSegment();
         continue;
       }
-      const span = html("span", "text__run", element);
-      span.dataset.p = paragraph.i;
-      span.dataset.r = run.r;
-      span.textContent = run.t;
-      runStyle(span, run, scale);
-      if (run.field) {
-        span.dataset.field = run.field;
-        span.dataset.len = run.len ?? run.t.length;
-        if (editable) span.contentEditable = "false";
-      }
-      if (run.link) span.dataset.link = JSON.stringify(run.link);
       if (run.t) hasText = true;
+      if (run.field || !tabbed) {
+        const span = piece(run, run.t, lead ?? segment);
+        if (run.field) {
+          span.dataset.field = run.field;
+          span.dataset.len = run.len ?? run.t.length;
+          if (editable) span.contentEditable = "false";
+        }
+        continue;
+      }
+      for (const [index, part] of run.t.split("\t").entries()) {
+        if (index > 0) {
+          piece(run, "\t", element, "text__run text__tab");
+          startSegment();
+        }
+        if (!part) continue;
+        const point = lead ? part.indexOf(".") : -1;
+        if (point < 0) {
+          piece(run, part, lead ?? segment);
+          continue;
+        }
+        if (point > 0) piece(run, part.slice(0, point), lead);
+        lead = null;
+        piece(run, ".", segment, "text__run text__point");
+        if (point + 1 < part.length) piece(run, part.slice(point + 1), segment);
+      }
     }
     if (!hasText) {
       // An empty paragraph still takes a line, as tall as its end-of-paragraph text.
@@ -1000,6 +1044,45 @@ export function runStyle(element, run, scale = 1) {
     element.style.paintOrder = "stroke fill";
   }
   if (run.shadow) element.style.textShadow = `${run.shadow.dx}px ${run.shadow.dy}px ${run.shadow.blur / 2}px ${run.shadow.c}`;
+}
+
+/**
+ * Widens each tab in the paragraphs under `root` so the text after it lies on
+ * its stop as PowerPoint lays it: from the left of the text, by its left
+ * edge, middle or right edge, or with its decimal point centred on the stop;
+ * past the paragraph's own stops, on every multiple of the default tab size.
+ * Measured with offsets, which slide zoom and turned text leave alone.
+ * Text set in vertical lines keeps the page's own tabs.
+ */
+export function alignTabs(root) {
+  for (const paragraph of root.querySelectorAll(".text__p[data-tabs]")) {
+    if (paragraph.closest(".text[data-vertical]")) continue;
+    const stops = JSON.parse(paragraph.dataset.tabs);
+    const interval = Number(paragraph.dataset.dts) || 72;
+    const tabs = [...paragraph.querySelectorAll(":scope > .text__tab")];
+    for (const tab of tabs) tab.style.paddingInlineStart = "0px";
+    for (const tab of tabs) {
+      const at = tab.offsetLeft - paragraph.offsetLeft;
+      const [stop, alignment] = stops.find(([location]) => location > at + 0.5)
+        ?? [(Math.floor(at / interval + 0.001) + 1) * interval, "l"];
+      const segment = tab.nextElementSibling?.classList.contains("text__seg") ? tab.nextElementSibling : null;
+      let before = 0;
+      if (segment && alignment === "ctr") before = segment.offsetWidth / 2;
+      if (segment && alignment === "r") before = segment.offsetWidth;
+      if (segment && alignment === "dec") {
+        const point = segment.querySelector(".text__point");
+        const lead = segment.querySelector(".text__lead");
+        before = point ? (lead?.offsetWidth ?? 0) + point.offsetWidth / 2 : segment.offsetWidth;
+      }
+      // Widened, then corrected by where the text after it actually lands, as
+      // some browsers still give a tab of no size a space's width.
+      const target = stop - before;
+      tab.style.paddingInlineStart = `${Math.max(target - at, 0)}px`;
+      if (!segment) continue;
+      const off = segment.offsetLeft - paragraph.offsetLeft - Math.max(target, at);
+      if (Math.abs(off) > 0.25) tab.style.paddingInlineStart = `${Math.max(target - at - off, 0)}px`;
+    }
+  }
 }
 
 function isEmptyText(body) {

@@ -3,7 +3,7 @@
 // here, and typed into in place; every change goes to the engine, which
 // draws the slide again.
 
-import { SlideDrawer, fitText, drawTableBorders, layoutColumns } from "./slide.js";
+import { SlideDrawer, fitText, drawTableBorders, layoutColumns, alignTabs } from "./slide.js";
 
 const HANDLE = 8;
 const SNAP = 5;
@@ -555,7 +555,10 @@ export class SlideCanvas extends EventTarget {
     this.drawer.fillFlow(flow, body, { scale: body.scale ?? 1, reduce: body.reduce ?? 0, editable: true });
     // Text in columns is typed in its columns, flowing from one to the next as it goes.
     const columns = body.cols > 1;
-    if (columns) layoutColumns(box);
+    if (columns) {
+      layoutColumns(box);
+      alignTabs(flow);
+    }
     flow.contentEditable = "true";
     flow.spellcheck = true;
     flow.classList.add("is-editing");
@@ -565,6 +568,7 @@ export class SlideCanvas extends EventTarget {
     this.drawOverlay();
     flow.addEventListener("input", () => {
       if (columns) layoutColumns(box);
+      alignTabs(flow);
       this.scheduleSync();
     });
     flow.addEventListener("paste", (event) => {
@@ -715,7 +719,11 @@ export function readParagraphs(flow) {
     const visit = (node, origin) => {
       if (node.nodeType === Node.TEXT_NODE) {
         const text = node.textContent.replace(/​/g, "");
-        if (text) runs.push({ src: origin, t: text });
+        if (!text) return;
+        // A run drawn in pieces, around its tabs, is one run again.
+        const last = runs.at(-1);
+        if (last && origin && !last.br && !last.field && last.src?.[0] === origin[0] && last.src?.[1] === origin[1]) last.t += text;
+        else runs.push({ src: origin, t: text });
         return;
       }
       if (node.nodeType !== Node.ELEMENT_NODE) return;
