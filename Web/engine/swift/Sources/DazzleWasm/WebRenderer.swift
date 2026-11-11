@@ -152,8 +152,13 @@ struct WebRenderer {
         // them into one outline; here they fill as one where they overlap.
         if shape.geometry.presetName == "cloudCallout" { node["rule"] = "nonzero" }
         if isOpen { node["open"] = true }
-        if !isOpen, var fill = style.fill(for: shape, sources: sources) {
-            if fill.fill == .group, let groupFill { fill = groupFill }
+        var resolvedFill = isOpen ? nil : style.fill(for: shape, sources: sources)
+        if resolvedFill?.fill == .group, let groupFill { resolvedFill = groupFill }
+        let bounds = CGRect(origin: .zero, size: frame.size)
+        if let look = look3D(style.threeDLook(for: shape, bounds: bounds, fill: resolvedFill, isOpen: isOpen)) {
+            node["look3d"] = look
+        }
+        if let fill = resolvedFill {
             if let paint = paint(fill.fill, placeholder: fill.placeholderColor, style: style) {
                 node["fill"] = paint
                 // A cube's sides and a scroll's curls: the fill, darkened or lightened.
@@ -338,6 +343,31 @@ struct WebRenderer {
         return json
     }
 
+    /// A shape's look in 3D, in its own space: its sides as where each copy
+    /// of its outline goes, farthest first, and the colour of each; its
+    /// contour; and its bevel as bands of white or black over its face, each
+    /// what stays inside the outline set off by `k` but not by `x`.
+    private func look3D(_ look: Shape3DLook?) -> [String: Any]? {
+        guard let look else { return nil }
+        var json: [String: Any] = [:]
+        if !look.bands.isEmpty {
+            json["bands"] = look.bands.map { band -> [String: Any] in
+                [
+                    "kx": n(band.kept.width), "ky": n(band.kept.height), "xx": n(band.cut.width), "xy": n(band.cut.height),
+                    "c": band.isLight ? "#fff" : "#000", "o": band.opacity,
+                ]
+            }
+        }
+        if let extrusion = look.extrusion {
+            json["sides"] = [
+                "casts": extrusion.transforms.map { t in [t.a, t.b, t.c, t.d, t.tx, t.ty].map { (Double($0) * 1000).rounded() / 1000 } },
+                "cs": extrusion.colors.map(css),
+            ]
+        }
+        if let contour = look.contour { json["contour"] = ["w": n(contour.width), "c": css(contour.color)] }
+        return json
+    }
+
     private func shadow(_ shadow: Shadow, style: SlideStyleContext) -> [String: Any] {
         let radians = shadow.direction * .pi / 180
         let distance = EMU.points(shadow.distance)
@@ -485,6 +515,8 @@ struct WebRenderer {
             node["src"] = path
             node["image"] = rect(image)
             node["fx"] = effects(picture.effects, placeholder: nil, style: style)
+            let bounds = CGRect(origin: .zero, size: frame.size)
+            if let look = look3D(style.threeDLook(for: shape, bounds: bounds, fill: nil)) { node["look3d"] = look }
         } else {
             node["kind"] = "standin"
             node["label"] = String(localized: "Object.Picture", bundle: .engine)
