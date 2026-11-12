@@ -212,7 +212,7 @@ final class SlideshowView: NSView {
             }
         }
         guard role == .audience else { return }
-        if session.advancesOnTap { session.next() }
+        if session.advancesOnTap { session.next() } else { session.noteActivity() }
     }
 
     override func rightMouseUp(with event: NSEvent) {

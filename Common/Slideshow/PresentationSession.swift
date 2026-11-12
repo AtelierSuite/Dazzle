@@ -41,6 +41,12 @@ final class PresentationSession {
     let media = MediaPlayback()
     /// Whether the show starts over after its last slide.
     private(set) var loops = false
+    /// How the presentation asks to be played.
+    private(set) var settings = SlideshowSettings()
+    /// The order the show started in, which a kiosk show goes back to when left alone.
+    private var startingOrder: [Int] = []
+    /// Starting a kiosk show over, once it has been left alone long enough.
+    @ObservationIgnored private var restartTask: Task<Void, Never>?
     /// How many of the current slide's animation steps have begun.
     private(set) var builds = 0
     /// When the latest of them began.
@@ -82,9 +88,12 @@ final class PresentationSession {
         isBlanked = false
         startedAt = Date()
         ownerID = owner
-        loops = presentation.loopsSlideshow
+        settings = presentation.showSettings
+        loops = settings.playsInLoop
+        startingOrder = order
         isPresenting = true
         beginSlide()
+        noteActivity()
         publish()
     }
 
@@ -102,14 +111,27 @@ final class PresentationSession {
         builds = 0
         isAnimating = false
         animatingTask?.cancel()
+        restartTask?.cancel()
+        restartTask = nil
         finishTransition()
         publish()
     }
 
     // MARK: - Moving
 
-    /// Plays the slide's next animation step, or with none left, moves on.
+    /// A kiosk show moves on only by its timings and links, never by a tap or key.
+    var isKiosk: Bool { settings.isKiosk }
+
+    /// Plays the slide's next animation step, or with none left, moves on,
+    /// as a tap or key asks.
     func next() {
+        noteActivity()
+        guard !isKiosk else { return }
+        advance()
+    }
+
+    /// Plays the slide's next animation step, or with none left, moves on.
+    private func advance() {
         guard isPresenting else { return }
         if transition != nil {
             // A tap while the slide arrives finishes its arrival.
@@ -140,7 +162,7 @@ final class PresentationSession {
 
     /// Whether a tap on the slide moves the show on: as the slide says, but
     /// always while animations wait for one.
-    var advancesOnTap: Bool { hasStepsLeft || (currentSlide?.advancesOnClick ?? true) }
+    var advancesOnTap: Bool { !isKiosk && (hasStepsLeft || (currentSlide?.advancesOnClick ?? true)) }
 
     /// Whether the current slide has animations still to play.
     var hasStepsLeft: Bool { builds < (currentSlide?.animationTimeline.steps.count ?? 0) }
@@ -153,7 +175,7 @@ final class PresentationSession {
         advanceFor = now
         advanceTask?.cancel()
         advanceTask = nil
-        guard isPresenting, !isBlanked, let seconds = currentSlide?.autoAdvanceAfter else { return }
+        guard isPresenting, !isBlanked, settings.followsTimings, let seconds = currentSlide?.autoAdvanceAfter else { return }
         let shown = (position, builds)
         let wait = max(seconds, 0.1) + max(animationTimeLeft, transitionTimeLeft)
         guard wait.isFinite else { return }
@@ -162,19 +184,27 @@ final class PresentationSession {
             guard !Task.isCancelled, let self, self.isPresenting, self.position == shown.0, self.builds == shown.1,
                   !self.isBlanked else { return }
             self.advanceFor = nil
-            self.next()
+            self.advance()
         }
     }
 
-    /// Takes back the last animation step, or with none played, goes back a slide.
+    /// Takes back the last animation step, or with none played, goes back a
+    /// slide, as a tap or key asks.
     func previous() {
+        noteActivity()
+        guard !isKiosk else { return }
+        stepBack()
+    }
+
+    /// Takes back the last animation step, or with none played, goes back a slide.
+    private func stepBack() {
         guard isPresenting else { return }
         // Going back is straight back, without a transition.
         if transition != nil {
             finishTransition()
             buildStartedAt = min(buildStartedAt, Date())
         }
-        if builds > (currentSlide?.animationTimeline.initiallyBegun ?? 0) {
+        if settings.showsAnimations, builds > (currentSlide?.animationTimeline.initiallyBegun ?? 0) {
             // Back to how the slide looked before the step, without playing it backwards.
             builds -= 1
             buildStartedAt = .distantPast
@@ -190,7 +220,14 @@ final class PresentationSession {
         publish()
     }
 
+    /// Goes to a slide of the show, as the presenter asks.
     func go(toPosition index: Int) {
+        noteActivity()
+        guard !isKiosk else { return }
+        jump(to: index)
+    }
+
+    private func jump(to index: Int) {
         guard isPresenting, order.indices.contains(index) else { return }
         isBlanked = false
         if index == position {
@@ -291,7 +328,8 @@ final class PresentationSession {
     /// begin, the rest wait for taps.
     private func beginSlide(fullyBuilt: Bool = false) {
         let timeline = currentSlide?.animationTimeline
-        if fullyBuilt {
+        // Without animations, every slide shows as it ends up.
+        if fullyBuilt || !settings.showsAnimations {
             builds = timeline?.steps.count ?? 0
             buildStartedAt = .distantPast
         } else {
@@ -351,22 +389,23 @@ final class PresentationSession {
     /// caller to open.
     func follow(_ link: Hyperlink) -> URL? {
         guard isPresenting else { return nil }
+        noteActivity()
         switch link {
         case .url(let address):
             return URL(string: address)
         case .slide(let id):
             guard let presentation, let index = presentation.index(of: id) else { return nil }
             if let target = order.firstIndex(of: index) {
-                go(toPosition: target)
+                jump(to: target)
             } else {
                 // A hidden slide shows when a link leads to it.
                 order.insert(index, at: position + 1)
-                go(toPosition: position + 1)
+                jump(to: position + 1)
             }
-        case .nextSlide: next()
-        case .previousSlide: previous()
-        case .firstSlide: go(toPosition: 0)
-        case .lastSlide: go(toPosition: order.count - 1)
+        case .nextSlide: advance()
+        case .previousSlide: stepBack()
+        case .firstSlide: jump(to: 0)
+        case .lastSlide: jump(to: order.count - 1)
         case .endShow: end()
         case .customShow(let id, let returns):
             guard let presentation, let show = presentation.customShow(withID: id),
@@ -378,6 +417,24 @@ final class PresentationSession {
         case .slidePart, .other: break
         }
         return nil
+    }
+
+    /// Someone touched the show: a kiosk show waits that much longer before starting over.
+    func noteActivity() {
+        restartTask?.cancel()
+        restartTask = nil
+        guard isPresenting, isKiosk else { return }
+        let wait = max(settings.kioskRestartAfter, 1)
+        restartTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, let self, self.isPresenting else { return }
+            self.restartTask = nil
+            self.returnPoints = []
+            self.isBlanked = false
+            if self.position != 0 || self.order != self.startingOrder { self.move(to: 0, in: self.startingOrder) }
+            self.noteActivity()
+            self.publish()
+        }
     }
 
     func toggleBlank() {

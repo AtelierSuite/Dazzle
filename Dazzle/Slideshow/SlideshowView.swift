@@ -86,6 +86,9 @@ private struct AudienceControls: View {
                         session.previous()
                     } else if session.advancesOnTap {
                         session.next()
+                    } else {
+                        // A kiosk show doesn't move on by a tap, but notices it.
+                        session.noteActivity()
                     }
                 }
             )

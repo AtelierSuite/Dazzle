@@ -46,7 +46,7 @@ final class MediaPlayback {
                     self?.players[id]?.seek(to: .zero)
                 }
             })
-            if media.playsAutomatically { play(id) }
+            if media.playsAutomatically, !media.isNarration || presentation.showSettings.playsNarration { play(id) }
         }
     }
 
