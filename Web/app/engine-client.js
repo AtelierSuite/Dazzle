@@ -20,6 +20,7 @@ export const PAGE_EDITS = new Set(["setText", "setNotes"]);
 const DOCUMENT_COMMANDS = new Set([
   "new", "open", "rename", "save", "undo", "redo", "addSlide", "duplicateSlides", "deleteSlides", "moveSlides",
   "toggleHidden", "setLayout", "setSlideSize", "paste", "loop", "replace", "headerFooter",
+  "addCustomShow", "renameCustomShow", "setCustomShowSlides", "duplicateCustomShow", "deleteCustomShow",
 ]);
 
 export class EngineClient extends EventTarget {

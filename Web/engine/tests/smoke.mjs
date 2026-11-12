@@ -1420,6 +1420,34 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
+test("makes custom shows, plays them in their order and keeps them on saving", () => {
+  call("new", { name: "Shows.pptx" });
+  const layout = call("info").result.layouts[1].path;
+  call("addSlide", { layout });
+  call("addSlide", { layout });
+  const slides = call("info").state.slides.map((slide) => slide.id);
+  const id = call("addCustomShow", { slides: [slides[2]] }).result;
+  call("setCustomShowSlides", { id, slides: [slides[2], slides[0]] });
+  call("renameCustomShow", { id, name: "Highlights" });
+  const info = call("info").result;
+  assert.deepEqual(info.customShows, [{ id, name: "Highlights", slides: [slides[2], slides[0]] }]);
+  assert.deepEqual(call("slideshowOrder", { customShow: id }).result, [slides[2], slides[0]]);
+  assert.deepEqual(call("slideshowOrder").result, slides);
+
+  call("insertTextBox");
+  call("setLink", { link: { customShow: id, return: true } });
+  const linked = call("scene", { slide: slides[2] }).result.shapes.find((node) => node.link);
+  assert.deepEqual(linked.link, { customShow: id, return: true });
+
+  const saved = call("save", { format: "pptx", keep: true }).payload;
+  const reopened = call("open", { name: "Shows again.pptx" }, saved);
+  const again = reopened.state.slides.map((slide) => slide.id);
+  assert.deepEqual(call("info").result.customShows.map((show) => show.slides), [[again[2], again[0]]]);
+  call("duplicateCustomShow", { id });
+  call("deleteCustomShow", { id });
+  assert.deepEqual(call("info").result.customShows.map((show) => show.name), ["Highlights Copy"]);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));

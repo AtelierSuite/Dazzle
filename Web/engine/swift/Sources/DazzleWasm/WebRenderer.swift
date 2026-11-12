@@ -847,6 +847,7 @@ struct WebRenderer {
         case .firstSlide: ["action": "first"]
         case .lastSlide: ["action": "last"]
         case .endShow: ["action": "end"]
+        case .customShow(let id, let returns): ["customShow": id, "return": returns]
         case .slidePart, .other: nil
         }
     }

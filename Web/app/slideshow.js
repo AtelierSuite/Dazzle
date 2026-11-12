@@ -73,15 +73,17 @@ export class Slideshow extends EventTarget {
    * asks for the audience window and presenter view; without it, or when the
    * window can't open, the show plays full screen here.
    */
-  async start(slideID, { presenter = hasSecondDisplay() } = {}) {
+  async start(slideID, { presenter = hasSecondDisplay(), customShow = null } = {}) {
     if (this.active) return;
     const state = this.engine.state;
     const slides = state.slides;
-    // Hidden slides are left out, unless every slide is.
-    this.order = slides.filter((slide) => !slide.hidden).map((slide) => slide.id);
+    // Hidden slides are left out, unless every slide is; a custom show plays its own.
+    this.order = await this.engine.call("slideshowOrder", customShow != null ? { customShow } : {});
     if (!this.order.length) this.order = slides.map((slide) => slide.id);
     const startIndex = slides.findIndex((slide) => slide.id === slideID);
-    this.position = Math.max(this.order.findIndex((id) => slides.findIndex((slide) => slide.id === id) >= startIndex), 0);
+    this.position = customShow != null ? 0 : Math.max(this.order.findIndex((id) => slides.findIndex((slide) => slide.id === id) >= startIndex), 0);
+    // Where to come back to as each custom show a link started ends, the latest last.
+    this.returnPoints = [];
     this.active = true;
     this.blanked = false;
     this.startedAt = Date.now();
@@ -200,15 +202,20 @@ export class Slideshow extends EventTarget {
       this.updatePresenter();
       return;
     }
+    let fullyBuilt = false;
     if (this.position < this.order.length - 1) {
       this.position += 1;
+    } else if (this.returnPoints.length) {
+      // A custom show played from a link comes back to the link's slide, as it was left.
+      ({ order: this.order, position: this.position } = this.returnPoints.pop());
+      fullyBuilt = true;
     } else if (timeline.loop) {
       this.position = 0;
     } else {
       // Moving on from the last slide ends the show, as in Keynote.
       return this.end();
     }
-    await this.showSlide({ fullyBuilt: false, transition: true });
+    await this.showSlide({ fullyBuilt, transition: true });
   }
 
   /** Takes back the last animation step, or with none played, goes back a slide. */
@@ -248,6 +255,18 @@ export class Slideshow extends EventTarget {
       index = this.position + 1;
     }
     await this.go(index);
+  }
+
+  /** Plays a custom show from its start, coming back afterwards when `returns`. */
+  async playCustomShow(id, returns) {
+    const order = await this.engine.call("slideshowOrder", { customShow: id });
+    const show = (this.engine.info?.customShows ?? []).find((entry) => entry.id === id);
+    if (!this.active || !show?.slides.length || !order.length) return;
+    if (returns) this.returnPoints.push({ order: this.order, position: this.position });
+    this.order = order;
+    this.position = 0;
+    this.setBlank(false, { quiet: true });
+    await this.showSlide({ fullyBuilt: false, transition: true });
   }
 
   setBlank(on, { quiet = false } = {}) {
@@ -465,6 +484,8 @@ export class Slideshow extends EventTarget {
       window.open(link.url, "_blank", "noopener");
     } else if (link.slide) {
       this.goToSlide(link.slide);
+    } else if (link.customShow != null) {
+      this.playCustomShow(link.customShow, link.return);
     } else {
       ({ next: () => this.next(), previous: () => this.previous(), first: () => this.go(0), last: () => this.go(this.order.length - 1), end: () => this.end() })[link.action]?.();
     }

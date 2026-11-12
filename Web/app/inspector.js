@@ -187,7 +187,8 @@ export class Inspector extends EventTarget {
     if (!info.sizePreset) sizes.push(["custom", t("SlideSize.Custom")]);
     html += this.section(t("Format.Section.Presentation"),
       this.row(t("Format.SlideSize"), this.popup("slideSize", t("Format.SlideSize"), sizes, info.sizePreset ?? "custom"))
-      + this.row("", this.check("loop", t("Format.LoopSlideshow"), info.loop)));
+      + this.row("", this.check("loop", t("Format.LoopSlideshow"), info.loop))
+      + this.row("", this.buttons([["customShows", t("Menu.Play.CustomShows")]])));
     return html;
   }
 
@@ -365,15 +366,20 @@ export class Inspector extends EventTarget {
   linkSection(shape) {
     const t = this.t;
     const link = shape.link;
-    const kind = !link ? "none" : link.url ? "url" : link.slide ? "slide" : link.action;
+    const kind = !link ? "none" : link.url ? "url" : link.slide ? "slide" : link.customShow != null ? "customShow" : link.action;
     const slides = (this.engine.info?.outline ?? []).map((slide) => [slide.id, `${slide.number}. ${slide.title || t("Slide.Untitled")}`]);
+    const shows = (this.engine.info?.customShows ?? []).map((show) => [show.id, show.name]);
+    if (kind === "customShow" && !shows.some(([id]) => id === link.customShow)) shows.push([link.customShow, t("Link.CustomShow.Missing")]);
     return this.section(t("Format.Section.Link"),
       this.row(t("Link.Kind"), this.popup("linkKind", t("Link.Kind"), [
         ["none", t("Link.None")], ["url", t("Link.URL")], ["slide", t("Link.Slide")], ["next", t("Link.Next")],
         ["previous", t("Link.Previous")], ["first", t("Link.First")], ["last", t("Link.Last")], ["end", t("Link.End")],
+        ...(shows.length ? [["customShow", t("Link.CustomShow")]] : []),
       ], kind))
       + (kind === "url" ? this.row("", this.text("linkURL", t("Link.URL"), link.url, { placeholder: t("Link.URL.Placeholder") })) : "")
       + (kind === "slide" ? this.row("", this.popup("linkSlide", t("Link.Slide"), slides, link.slide)) : "")
+      + (kind === "customShow" ? this.row("", this.popup("linkCustomShow", t("Link.CustomShow"), shows, link.customShow))
+        + this.row("", this.check("linkCustomShowReturn", t("Link.CustomShow.Return"), link.return)) : "")
       + this.note(t("Format.Link.Footer")), { open: Boolean(link) });
   }
 
@@ -517,7 +523,7 @@ export class Inspector extends EventTarget {
       case "ungroup": return engine.call("ungroup");
       case "rowAbove": case "rowBelow": case "columnLeft": case "columnRight": case "deleteRow": case "deleteColumn":
         return engine.call("table", { op: action });
-      case "headerFooter": case "chartData": case "crop": case "resetCrop": case "replacePicture": case "previewAnimations":
+      case "headerFooter": case "customShows": case "chartData": case "crop": case "resetCrop": case "replacePicture": case "previewAnimations":
         return this.run(action);
       case "fillPicture":
         return this.run("fillPicture");
@@ -663,9 +669,12 @@ export class Inspector extends EventTarget {
         if (value === "none") return engine.call("setLink", {});
         if (value === "url") return engine.call("setLink", { link: { url: shape.link?.url || "https://" } });
         if (value === "slide") return engine.call("setLink", { link: { slide: this.engine.info?.outline?.[0]?.id } });
+        if (value === "customShow") return engine.call("setLink", { link: { customShow: this.engine.info?.customShows?.[0]?.id, return: true } });
         return engine.call("setLink", { link: { action: value } });
       case "linkURL": return engine.call("setLink", { link: { url: value } });
       case "linkSlide": return engine.call("setLink", { link: { slide: value } });
+      case "linkCustomShow": return engine.call("setLink", { link: { customShow: Number(value), return: shape.link?.return ?? true } });
+      case "linkCustomShowReturn": return engine.call("setLink", { link: { customShow: shape.link?.customShow, return: value } });
       // Slide
       case "layout": return engine.call("setLayout", { layout: value });
       case "hidden": return engine.call("toggleHidden", { ids: [data.slide.id] });

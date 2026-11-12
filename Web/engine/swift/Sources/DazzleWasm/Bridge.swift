@@ -204,6 +204,27 @@ final class Bridge {
             }
         case "loop":
             edit { state, presentation in state.setLoopsSlideshow(r["on"] as? Bool ?? false, in: &presentation) }
+
+        // Custom shows
+        case "addCustomShow":
+            var id = 0
+            edit { state, presentation in id = state.addCustomShow(slides: uuids(r["slides"]), in: &presentation) }
+            return id
+        case "renameCustomShow":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.renameCustomShow(id, to: r["name"] as? String ?? "", in: &presentation) }
+        case "setCustomShowSlides":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.setCustomShowSlides(id, to: uuids(r["slides"]), in: &presentation) }
+        case "duplicateCustomShow":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.duplicateCustomShow(id, in: &presentation) }
+        case "deleteCustomShow":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.deleteCustomShow(id, in: &presentation) }
+        case "slideshowOrder":
+            // The slides a slideshow plays, in order: a custom show's when asked for.
+            return presentation.slideshowOrder(customShow: r["customShow"] as? Int).map { presentation.slides[$0].id.uuidString }
         case "headerFooter":
             var settings = HeaderFooterSettings()
             settings.showsDate = r["date"] as? Bool ?? false
@@ -666,6 +687,7 @@ final class Bridge {
         guard let json = value as? [String: Any] else { return nil }
         if let url = json["url"] as? String, !url.isEmpty { return .url(Hyperlink.normalizedAddress(url)) }
         if let slide = uuid(json["slide"]) { return .slide(slide) }
+        if let show = json["customShow"] as? Int { return .customShow(show, returns: json["return"] as? Bool ?? true) }
         switch json["action"] as? String {
         case "next": return .nextSlide
         case "previous": return .previousSlide
@@ -954,6 +976,12 @@ final class Bridge {
             "sizePreset": SlideSizeConverter.Preset.matching(presentation.slideSize)?.rawValue as Any,
             "layouts": presentation.resources.orderedLayouts.map { ["path": $0.path, "name": $0.name] },
             "loop": presentation.loopsSlideshow,
+            "customShows": presentation.customShows.map { show -> [String: Any] in
+                [
+                    "id": show.id, "name": show.name,
+                    "slides": show.slideIDs.filter { presentation.index(of: $0) != nil }.map(\.uuidString),
+                ]
+            },
             "fonts": fonts.sorted(),
             "hasEmbeddedFonts": !presentation.resources.embeddedFonts.isEmpty,
             // The typefaces the slides ask for that the presentation doesn't carry,
