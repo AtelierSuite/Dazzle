@@ -86,7 +86,7 @@ struct WebRenderer {
             ]
         }
         if let effects = effects(shape.effects, size: frame.size, style: style) { node["effects"] = effects }
-        if let link = shape.link, let json = Self.link(link) { node["link"] = json }
+        if let link = shape.link, let json = Self.link(link, tooltip: shape.linkTooltip) { node["link"] = json }
 
         switch shape.kind {
         case .group(let group):
@@ -808,7 +808,7 @@ struct WebRenderer {
                     if runProperties.capitalization == "all" { text = text.uppercased() }
                     json["t"] = TextLabels.symbolsMapped(text)
                 }
-                if let link = textRun.properties.link, let linkJSON = Self.link(link) { json["link"] = linkJSON }
+                if let link = textRun.properties.link, let linkJSON = Self.link(link, tooltip: textRun.properties.linkTooltip) { json["link"] = linkJSON }
                 runs.append(json)
             }
             json["runs"] = runs
@@ -838,17 +838,21 @@ struct WebRenderer {
         return json
     }
 
-    static func link(_ link: Hyperlink) -> [String: Any]? {
+    /// Where a link goes, with the ScreenTip pointing at it shows.
+    static func link(_ link: Hyperlink, tooltip: String? = nil) -> [String: Any]? {
+        var json: [String: Any]
         switch link {
-        case .url(let address): ["url": address]
-        case .slide(let id): ["slide": id.uuidString]
-        case .nextSlide: ["action": "next"]
-        case .previousSlide: ["action": "previous"]
-        case .firstSlide: ["action": "first"]
-        case .lastSlide: ["action": "last"]
-        case .endShow: ["action": "end"]
-        case .slidePart, .other: nil
+        case .url(let address): json = ["url": address]
+        case .slide(let id): json = ["slide": id.uuidString]
+        case .nextSlide: json = ["action": "next"]
+        case .previousSlide: json = ["action": "previous"]
+        case .firstSlide: json = ["action": "first"]
+        case .lastSlide: json = ["action": "last"]
+        case .endShow: json = ["action": "end"]
+        case .slidePart, .other: return nil
         }
+        if let tooltip = tooltip?.nilIfEmpty { json["tooltip"] = tooltip }
+        return json
     }
 
     // MARK: - Numbers
