@@ -825,8 +825,11 @@ struct WebRenderer {
         if let eastAsian = style.typeface(run.eastAsianFont, eastAsian: true) ?? style.theme.minorEastAsianFont { json["ea"] = eastAsian }
         if run.isBold == true { json["b"] = true }
         if run.isItalic == true { json["i"] = true }
-        if run.isUnderlined == true { json["u"] = true }
-        if run.isStruckThrough == true { json["s"] = true }
+        if let underline = run.underline, underline != .none {
+            json["u"] = underline.rawValue
+            if let color = run.underlineColor { json["uc"] = css(style.color(color)) }
+        }
+        if let strike = run.strike, strike != .none { json["s"] = strike == .double ? 2 : 1 }
         if let baseline = run.baseline, baseline != 0 { json["base"] = baseline > 0 ? 1 : -1 }
         // Character spacing, in points (`spc` is hundredths of a point).
         if let spacing = run.spacing, spacing != 0 { json["sp"] = Double(spacing) / 100 }

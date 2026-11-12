@@ -1078,6 +1078,20 @@ export class SlideDrawer {
   }
 }
 
+/** The CSS text-decoration styles for each OOXML underline. */
+const underlineStyles = { dbl: "double", wavyDbl: "double", dotted: "dotted", dottedHeavy: "dotted", wavy: "wavy", wavyHeavy: "wavy" };
+
+/** Puts `lines` on `element` in the style `kind` gives: an underline style, or 2 for a double strikethrough. */
+function decorate(element, lines, kind, color) {
+  element.style.textDecorationLine = lines;
+  if (kind === 2) element.style.textDecorationStyle = "double";
+  else if (typeof kind === "string") {
+    element.style.textDecorationStyle = underlineStyles[kind] ?? (/^d(ash|ot)/.test(kind) ? "dashed" : "solid");
+    if (/Heavy$/.test(kind) || kind === "heavy") element.style.textDecorationThickness = "0.12em";
+  }
+  if (color) element.style.textDecorationColor = color;
+}
+
 /** A run's look, as CSS. */
 export function runStyle(element, run, scale = 1) {
   const size = run.sz * scale * (run.base ? 2 / 3 : 1);
@@ -1086,8 +1100,9 @@ export function runStyle(element, run, scale = 1) {
   element.style.color = run.c;
   if (run.b) element.style.fontWeight = "700";
   if (run.i) element.style.fontStyle = "italic";
+  // CSS gives one style to all of an element's lines; an underline's style wins over a strikethrough's.
   const lines = [run.u && "underline", run.s && "line-through"].filter(Boolean);
-  if (lines.length) element.style.textDecoration = lines.join(" ");
+  if (lines.length) decorate(element, lines.join(" "), run.u ?? run.s, run.uc);
   if (run.base) element.style.verticalAlign = run.base > 0 ? "super" : "sub";
   // Spacing shrinks with text fitted to its box, as Apple platforms kern it, but not with superscript.
   if (run.sp) element.style.letterSpacing = `${run.sp * scale}px`; // design-lint-allow (document content)

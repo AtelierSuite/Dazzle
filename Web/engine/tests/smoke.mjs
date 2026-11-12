@@ -1420,6 +1420,43 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
+function deckWithLineStyles() {
+  call("new", { name: "Lines.pptx" });
+  const entries = unzip(call("save", { format: "pptx" }).payload);
+  const name = "ppt/slides/slide1.xml";
+  const run = (attributes, children = "") => `<a:r><a:rPr lang="en-US" ${attributes}>${children}</a:rPr><a:t>Line</a:t></a:r>`;
+  const shapes = `
+    <p:sp><p:nvSpPr><p:cNvPr id="960" name="Lined"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr><a:xfrm><a:off x="457200" y="457200"/><a:ext cx="4572000" cy="457200"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+      <p:txBody><a:bodyPr wrap="none"/><a:lstStyle/><a:p>${run('u="wavyDbl"', '<a:uFill><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:uFill>')}${run('u="dotDashHeavy" strike="dblStrike"')}${run('strike="sngStrike"')}</a:p></p:txBody>
+    </p:sp>`;
+  entries.set(name, new TextEncoder().encode(new TextDecoder().decode(entries.get(name)).replace("</p:spTree>", `${shapes}</p:spTree>`)));
+  return zip(entries);
+}
+
+test("draws underline and strikethrough styles and colours, and keeps them through an edit", () => {
+  const opened = call("open", { name: "Lines.pptx" }, deckWithLineStyles());
+  const slide = opened.state.slides[0].id;
+  const runs = call("scene", { slide }).result.shapes.find((node) => node.name === "Lined").text.paras[0].runs;
+  assert.equal(runs[0].u, "wavyDbl");
+  assert.ok(runs[0].uc, "the underline has its own colour");
+  assert.equal(runs[1].u, "dotDashHeavy");
+  assert.equal(runs[1].s, 2, "a double strikethrough");
+  assert.equal(runs[2].s, 1);
+  assert.equal(runs[2].u, undefined);
+  const shape = call("scene", { slide }).result.shapes.find((node) => node.name === "Lined");
+  call("select", { slide, shapes: [shape.id] });
+  call("format", { set: { bold: true } });
+  call("beginText", { shape: shape.id });
+  call("setText", { paras: [{ src: 0, runs: [{ src: [0, 0], t: "Edited" }, { src: [0, 1], t: "Line" }, { src: [0, 2], t: "Line" }] }] });
+  call("endText");
+  const saved = new TextDecoder().decode(unzip(call("save", { format: "pptx", keep: true }).payload).get("ppt/slides/slide1.xml"));
+  assert.match(saved, /<a:t>Edited<\/a:t>/);
+  assert.match(saved, /<a:uFill><a:solidFill><a:srgbClr val="FF0000"\/><\/a:solidFill><\/a:uFill>/);
+  assert.match(saved, /u="wavyDbl"/);
+  assert.match(saved, /u="dotDashHeavy"[^>]*strike="dblStrike"|strike="dblStrike"[^>]*u="dotDashHeavy"/);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
