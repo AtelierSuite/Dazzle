@@ -101,6 +101,13 @@ extension DocumentWindowController: NSMenuItemValidation {
         sheet.present(over: window)
     }
 
+    @objc func showProperties(_ sender: Any?) {
+        guard let window else { return }
+        let sheet = PropertiesSheet(deck: deck)
+        propertiesSheet = sheet
+        sheet.present(over: window)
+    }
+
     @objc func previousSlide(_ sender: Any?) { step(by: -1) }
 
     @objc func nextSlide(_ sender: Any?) { step(by: 1) }
