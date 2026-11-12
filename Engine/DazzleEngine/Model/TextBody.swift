@@ -455,6 +455,8 @@ public struct RunProperties: Equatable, Hashable, Sendable {
     public var outline: TextOutline?
     /// A shadow each letter casts.
     public var shadow: TextShadow?
+    /// A colour drawn behind the letters.
+    public var highlight: TextHighlight?
     /// Where clicking the text goes. Never inherited.
     public var link: Hyperlink?
 
@@ -487,6 +489,7 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         shadow = element.firstChild(named: "effectLst").map {
             Shadow(element: $0.firstChild(named: "outerShdw")).map(TextShadow.shadow) ?? TextShadow.none
         }
+        highlight = DrawingColor.first(in: element.firstChild(named: "highlight")).map(TextHighlight.color)
     }
 
     /// Values left unsaid here are taken from `base`.
@@ -505,6 +508,7 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         result.capitalization = capitalization ?? base.capitalization
         result.outline = outline ?? base.outline
         result.shadow = shadow ?? base.shadow
+        result.highlight = highlight ?? base.highlight
         return result
     }
 }
@@ -557,6 +561,17 @@ public enum TextShadow: Equatable, Hashable, Sendable {
         case .none: "<a:effectLst/>"
         case .shadow(let shadow): "<a:effectLst>\(shadow.xml)</a:effectLst>"
         }
+    }
+}
+
+/// `a:highlight` in run properties: a colour behind the letters, or none,
+/// which takes away one the text would inherit.
+public enum TextHighlight: Equatable, Hashable, Sendable {
+    case none
+    case color(DrawingColor)
+
+    public var color: DrawingColor? {
+        if case .color(let color) = self { color } else { nil }
     }
 }
 

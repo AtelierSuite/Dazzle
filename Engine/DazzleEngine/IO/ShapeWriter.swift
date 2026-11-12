@@ -662,6 +662,23 @@ public struct ShapeWriter {
             let after = element.children.lastIndex { $0.name == "ln" || Fill.elementNames.contains($0.name) }
             element.insertChild(effects, at: after.map { $0 + 1 } ?? 0)
         }
+        switch properties.highlight {
+        case .color(let color)?:
+            if let highlight = fragment("<a:highlight>\(color.xml)</a:highlight>") {
+                if let existing = element.firstChild(named: "highlight") {
+                    element.replaceChild(existing, with: highlight)
+                } else {
+                    // A highlight follows the line, fill and effects, before underlines and typefaces.
+                    let after = element.children.lastIndex {
+                        ["ln", "effectLst", "effectDag"].contains($0.name) || Fill.elementNames.contains($0.name)
+                    }
+                    element.insertChild(highlight, at: after.map { $0 + 1 } ?? 0)
+                }
+            }
+        case TextHighlight.none?:
+            if let existing = element.firstChild(named: "highlight") { element.removeChild(existing) }
+        case nil: break
+        }
         if let font = properties.latinFont, let latin = fragment("<a:latin typeface=\"\(XMLLite.escape(font))\"/>") {
             if let existing = element.firstChild(named: "latin") {
                 element.replaceChild(existing, with: latin)
