@@ -37,7 +37,7 @@ struct CustomShowTests {
         #expect(try #require(xml.range(of: "<p:custShowLst")).lowerBound > size.lowerBound)
 
         let copy = try PPTXReader.presentation(from: data)
-        #expect(copy.customShows.map(\.name) == ["Short & sweet", "Custom Show 2"])
+        #expect(copy.customShows.map(\.name) == ["Short & sweet", String(format: String(localized: "CustomShow.DefaultName"), 1)])
         let copyIDs = copy.slides.map(\.id)
         #expect(copy.customShows[0].slideIDs == [copyIDs[3], copyIDs[1]])
         #expect(copy.customShows[1].slideIDs == [copyIDs[0]])
@@ -57,7 +57,8 @@ struct CustomShowTests {
         state.toggleSlide(copy.slides[0].id, inCustomShow: id, in: &copy)
         #expect(copy.customShows[0].slideIDs == [copy.slides[1].id, copy.slides[0].id])
         state.duplicateCustomShow(id, in: &copy)
-        #expect(copy.customShows.map(\.name) == ["Custom Show 1", "Custom Show 1 Copy"])
+        let first = String(format: String(localized: "CustomShow.DefaultName"), 1)
+        #expect(copy.customShows.map(\.name) == [first, String(format: String(localized: "CustomShow.CopyName"), first)])
         state.deleteCustomShow(id, in: &copy)
         state.deleteCustomShow(copy.customShows[0].id, in: &copy)
         let emptied = try reread(copy)
@@ -69,7 +70,10 @@ struct CustomShowTests {
     @Test("Links that start a custom show are read and written as PowerPoint writes them")
     func links() throws {
         let read = { (action: String) in
-            Hyperlink(element: try XMLLite.parse(Data("<a:hlinkClick xmlns:a=\"\(OOXML.drawingML)\" xmlns:r=\"\(OOXML.relationshipsNS)\" r:id=\"\" action=\"\(action)\"/>".utf8))) { _ in nil }
+            let escaped = XMLLite.escape(action)
+            return Hyperlink(element: try XMLLite.parse(Data(
+                "<a:hlinkClick xmlns:a=\"\(OOXML.drawingML)\" xmlns:r=\"\(OOXML.relationshipsNS)\" r:id=\"\" action=\"\(escaped)\"/>".utf8
+            ))) { _ in nil }
         }
         #expect(try read("ppaction://customshow?id=2&return=true") == .customShow(2, returns: true))
         #expect(try read("ppaction://customshow?id=0") == .customShow(0, returns: false))
