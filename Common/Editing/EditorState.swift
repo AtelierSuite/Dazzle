@@ -1157,7 +1157,7 @@ final class EditorState {
     }
 
     func effectiveAlignment(in presentation: Presentation) -> ParagraphAlignment {
-        effectiveParagraphProperties(in: presentation).alignment ?? .left
+        effectiveParagraphProperties(in: presentation).effectiveAlignment
     }
 
     func updateRuns(in presentation: inout Presentation, _ change: (inout RunProperties) -> Void) {
@@ -1217,9 +1217,18 @@ final class EditorState {
         updateRuns(in: &presentation) { $0.size = target }
     }
 
-    /// A typeface by name, or a theme font such as `+mn-lt`.
+    /// A typeface by name, or a theme font such as `+mn-lt`. Arabic, Hebrew
+    /// and other complex-script text takes it too, as it does in PowerPoint.
     func setFontFamily(_ family: String, in presentation: inout Presentation) {
-        updateRuns(in: &presentation) { $0.latinFont = family }
+        let complexScript = switch family {
+        case "+mj-lt": "+mj-cs"
+        case "+mn-lt": "+mn-cs"
+        default: family
+        }
+        updateRuns(in: &presentation) {
+            $0.latinFont = family
+            $0.complexScriptFont = complexScript
+        }
     }
 
     func setAlignment(_ alignment: ParagraphAlignment, in presentation: inout Presentation) {
