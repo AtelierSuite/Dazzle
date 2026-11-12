@@ -803,6 +803,11 @@ struct WebRenderer {
                     } else {
                         json["t"] = textRun.text
                     }
+                case .equation(let equation):
+                    // The browser lays the equation out, from MathML.
+                    json["math"] = equation.mathML { $0.color.map { css(style.color($0)) } }
+                    json["len"] = textRun.editingLength
+                    json["t"] = textRun.text
                 case .text:
                     var text = textRun.text
                     if runProperties.capitalization == "all" { text = text.uppercased() }

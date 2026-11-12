@@ -888,6 +888,14 @@ export class SlideDrawer {
         continue;
       }
       if (run.t) hasText = true;
+      if (run.math) {
+        // An equation: MathML the engine made, which the browser lays out. It is one piece, never typed into.
+        const span = piece(run, "", lead ?? segment, "text__run text__math");
+        span.innerHTML = run.math;
+        span.dataset.len = run.len ?? run.t.length;
+        span.contentEditable = "false";
+        continue;
+      }
       if (run.field || !tabbed) {
         const span = piece(run, run.t, lead ?? segment);
         if (run.field) {

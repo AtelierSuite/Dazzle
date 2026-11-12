@@ -19,6 +19,11 @@ public struct TextBody: Equatable, Hashable, Sendable {
 
     public var isEmpty: Bool { paragraphs.allSatisfy { $0.plainText.isEmpty } }
 
+    /// Whether any of the text is an equation, which is drawn but not edited.
+    public var hasEquation: Bool {
+        paragraphs.contains { $0.runs.contains { if case .equation = $0.kind { true } else { false } } }
+    }
+
     /// Replaces the text, keeping the formatting of every paragraph whose
     /// text did not change, and lending new paragraphs the formatting of the
     /// paragraph that was in their place.
@@ -257,6 +262,9 @@ public struct TextRun: Equatable, Hashable, Sendable {
         case lineBreak
         /// `a:fld`: text PowerPoint fills in, such as the slide number.
         case field(type: String)
+        /// `a14:m`: an equation, laid out as math and set in the line as
+        /// one piece. The run's text is the equation written along a line.
+        case equation(MathEquation)
     }
 
     public var kind: Kind = .text

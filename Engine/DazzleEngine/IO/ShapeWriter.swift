@@ -553,6 +553,10 @@ public struct ShapeWriter {
                 let id = run.fieldID ?? "{\(UUID().uuidString)}"
                 xml += "<a:fld id=\"\(XMLLite.escape(id))\" type=\"\(XMLLite.escape(type))\">\(properties)"
                     + "<a:t>\(XMLLite.escape(run.text))</a:t></a:fld>"
+            case .equation:
+                // An equation is only written from the XML it was read from,
+                // with its shape; on its own it is written as its text.
+                if !run.text.isEmpty { xml += "<a:r>\(properties)<a:t>\(XMLLite.escape(run.text))</a:t></a:r>" }
             case .text:
                 let lines = run.text.components(separatedBy: "\u{2028}")
                 for (index, line) in lines.enumerated() {

@@ -70,9 +70,11 @@ public final class ShapeParser {
         case "AlternateContent":
             // Two renditions of one thing for different readers. The fallback
             // is the one every reader understands; it is drawn, and the whole
-            // is kept as it was.
-            let fallback = element.firstChild(named: "Fallback")?.children.first
-                ?? element.firstChild(named: "Choice")?.children.first
+            // is kept as it was. An equation's fallback is only a picture of
+            // it, so there the equation itself is the one drawn.
+            let choice = element.firstChild(named: "Choice")?.children.first
+            let fallback = choice.flatMap { MathParser.containsMath($0) ? $0 : nil }
+                ?? element.firstChild(named: "Fallback")?.children.first ?? choice
             guard let fallback, var shape = shape(from: fallback) else { return nil }
             shape.isLocked = true
             return shape
@@ -90,9 +92,12 @@ public final class ShapeParser {
 
     /// A shape's `cNvPr`, looking inside an alternative's rendition if need be.
     private static func commonProperties(of element: XMLElement) -> XMLElement? {
-        let shape = element.name == "AlternateContent"
-            ? (element.firstChild(named: "Fallback") ?? element.firstChild(named: "Choice"))?.children.first
-            : element
+        var shape: XMLElement? = element
+        if element.name == "AlternateContent" {
+            let choice = element.firstChild(named: "Choice")?.children.first
+            shape = choice.flatMap { MathParser.containsMath($0) ? $0 : nil }
+                ?? (element.firstChild(named: "Fallback") ?? element.firstChild(named: "Choice"))?.children.first
+        }
         return shape?.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "cNvPr")
     }
 
@@ -131,6 +136,8 @@ public final class ShapeParser {
         applyEffects(properties, to: &shape)
         shape.style = StyleReferences(element: element.firstChild(named: "style"))
         shape.text = element.firstChild(named: "txBody").map(textBody)
+        // An equation is drawn, but cannot be written back from what is read of it.
+        if shape.text?.hasEquation == true { shape.isLocked = true }
         if let textTransform = element.firstChild(named: "txXfrm") {
             var holder = SlideShape(shapeID: 0, name: "", kind: .shape, frame: .zero)
             applyTransform(textTransform, to: &holder)
@@ -501,6 +508,15 @@ public final class ShapeParser {
                 run.properties.link = link(in: properties)
                 run.sourceProperties = properties.flatMap(capture)
                 paragraph.runs.append(run)
+            case "m":
+                // `a14:m`: an equation, or a math paragraph of them, each on a line of its own.
+                let math = MathParser.equations(in: child)
+                let properties = RunProperties(element: MathParser.firstRunProperties(in: child))
+                for (index, equation) in math.equations.enumerated() {
+                    if index > 0 { paragraph.runs.append(TextRun(kind: .lineBreak, text: "\u{2028}", properties: properties)) }
+                    paragraph.runs.append(TextRun(kind: .equation(equation), text: equation.linearText, properties: properties))
+                }
+                if paragraph.properties.alignment == nil, !math.equations.isEmpty { paragraph.properties.alignment = math.alignment }
             case "endParaRPr":
                 paragraph.endProperties = RunProperties(element: child)
                 paragraph.sourceEndProperties = capture(child)
