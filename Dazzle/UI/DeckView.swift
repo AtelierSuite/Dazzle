@@ -58,7 +58,7 @@ struct DeckView: View {
             if horizontalSizeClass == .compact {
                 Divider()
                 SlideStrip(presentation: presentation, state: state, play: play) {
-                    PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
+                    PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }, customShows: document.presentation.customShows, playCustomShow: playCustomShow) {
                         Image(systemName: "play.fill")
                             .font(.system(size: 17))
                             .frame(width: 44, height: 44)
@@ -92,6 +92,7 @@ struct DeckView: View {
                         }
                     }
             }
+            .environment(\.playCustomShow) { playCustomShow($0) }
             .navigationTransition(.zoom(sourceID: panel, in: panelTransition))
             // Formatting panels stay at half height, so the slide they change
             // is always in view; export needs the room for its slide picker.
@@ -215,6 +216,13 @@ struct DeckView: View {
         session.start(document.presentation, title: name, fromSlide: index, owner: editorID)
     }
 
+    private func playCustomShow(_ id: CustomShow.ID) {
+        guard !session.isPresenting else { return }
+        state.presentedPanel = nil
+        state.isDrawing = false
+        session.start(document.presentation, title: name, fromSlide: 0, customShow: id, owner: editorID)
+    }
+
     /// Lets the watch start this presentation, as the one most recently in front.
     private func offerToRemote() {
         session.offer(PresentationSession.Candidate(id: editorID, title: name) { [state] in
@@ -259,7 +267,7 @@ struct DeckView: View {
         if horizontalSizeClass != .compact {
             ToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
-                PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
+                PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }, customShows: document.presentation.customShows, playCustomShow: playCustomShow) {
                     Label("Toolbar.Play", systemImage: "play.fill")
                 }
                 .buttonStyle(.glassProminent)
@@ -554,16 +562,25 @@ struct DeckView: View {
     }
 }
 
-/// Play, from the slide being edited; held, from the beginning instead.
+/// Play, from the slide being edited; held, from the beginning or a custom show instead.
 private struct PlayMenu<Label: View>: View {
     let play: (Int) -> Void
     let current: () -> Int
+    var customShows: [CustomShow] = []
+    var playCustomShow: (CustomShow.ID) -> Void = { _ in }
     @ViewBuilder var label: () -> Label
 
     var body: some View {
         Menu {
             Button("Toolbar.PlayFromStart", systemImage: "backward.end") { play(0) }
             Button("Toolbar.PlayFromCurrent", systemImage: "play") { play(current()) }
+            if !customShows.isEmpty {
+                Menu("Toolbar.PlayCustomShow", systemImage: "list.bullet.rectangle") {
+                    ForEach(customShows) { show in
+                        Button(show.name) { playCustomShow(show.id) }
+                    }
+                }
+            }
         } label: {
             label()
         } primaryAction: {

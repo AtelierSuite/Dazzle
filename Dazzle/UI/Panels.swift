@@ -501,6 +501,14 @@ struct FormatPanel: View {
                     set: { state.setLoopsSlideshow($0, in: &presentation) }
                 ))
                 .accessibilityIdentifier("loopSlideshow")
+                NavigationLink {
+                    CustomShowsView(presentation: $presentation, state: state)
+                } label: {
+                    LabeledContent("CustomShow.Title") {
+                        if !presentation.customShows.isEmpty { Text(verbatim: "\(presentation.customShows.count)") }
+                    }
+                }
+                .accessibilityIdentifier("customShows")
                 .confirmationDialog(
                     "SlideSize.Scaling.Title", isPresented: Binding(get: { pendingSize != nil }, set: { if !$0 { pendingSize = nil } }),
                     titleVisibility: .visible
