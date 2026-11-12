@@ -36,7 +36,9 @@ public struct ShapeWriter {
         if edits.contains(.table), case .table(let table) = shape.kind {
             writeTable(table, into: element)
         }
-        if edits.contains(.effects), shape.source != nil || shape.shadow != nil || shape.reflection != nil {
+        if edits.contains(.effects),
+           shape.source != nil || shape.shadow != nil || shape.reflection != nil || !shape.effects.isEmpty
+            || shape.scene3D != nil || shape.shape3D != nil {
             writeEffects(of: shape, into: element)
         }
         if edits.contains(.picture), case .picture(let picture) = shape.kind {
@@ -271,38 +273,51 @@ public struct ShapeWriter {
         properties.insertChild(new, at: (after ?? -1) + 1)
     }
 
-    /// Replaces the shape's effects with its shadow and reflection, or with
-    /// none at all, which outranks any its style would give it.
+    /// Replaces the shape's effects with its shadow, reflection, glow, soft
+    /// edges and inner shadow, or with none at all, which outranks any its
+    /// style would give it; and its camera, lights, bevel and depth.
     private func writeEffects(of shape: SlideShape, into element: XMLElement) {
         guard let properties = properties(of: element) else { return }
         for child in properties.children where child.name == "effectDag" { properties.removeChild(child) }
-        // Effects Dazzle draws but does not edit, such as a glow or soft edges, stay as they were.
+        // A preset shadow or a blur, which Dazzle draws but does not edit, stays as it was.
         guard let effects = properties.firstChild(named: "effectLst") ?? fragment("<a:effectLst/>") else { return }
         if effects.parent !== properties {
             let before = properties.children.firstIndex { ["scene3d", "sp3d", "extLst"].contains($0.name) }
             properties.insertChild(effects, at: before ?? properties.children.count)
         }
-        // A shadow or reflection that reads back as the model has it keeps its own spelling.
-        if let old = effects.firstChild(named: "outerShdw"), Shadow(element: old) != shape.shadow {
-            effects.removeChild(old)
-        }
-        if let shadow = shape.shadow {
+        if shape.shadow != nil {
             for old in effects.children(named: "prstShdw") { effects.removeChild(old) }
-            if effects.firstChild(named: "outerShdw") == nil, let new = fragment(shadow.xml) {
-                effects.insertChild(new, at: effects.children.count)
-            }
         }
-        if let old = effects.firstChild(named: "reflection"), Reflection(element: old) != shape.reflection {
-            effects.removeChild(old)
+        // Each effect that reads back as the model has it keeps its own spelling.
+        replace("outerShdw", in: effects, with: shape.shadow?.xml) { Shadow(element: $0) == shape.shadow }
+        replace("reflection", in: effects, with: shape.reflection?.xml) { Reflection(element: $0) == shape.reflection }
+        replace("glow", in: effects, with: shape.effects.glow?.xml) { Glow(element: $0) == shape.effects.glow }
+        replace("innerShdw", in: effects, with: shape.effects.innerShadow?.xml) {
+            InnerShadow(element: $0) == shape.effects.innerShadow
         }
-        if let reflection = shape.reflection, effects.firstChild(named: "reflection") == nil,
-            let new = fragment(reflection.xml) {
-            effects.insertChild(new, at: effects.children.count)
+        replace("softEdge", in: effects, with: shape.effects.softEdge.map { "<a:softEdge rad=\"\($0)\"/>" }) {
+            $0.attribute("rad").flatMap(Int.init) == shape.effects.softEdge
         }
         let order = ["blur", "fillOverlay", "glow", "innerShdw", "outerShdw", "prstShdw", "reflection", "softEdge"]
         effects.reorderChildren(effects.children.sorted {
             (order.firstIndex(of: $0.name) ?? order.count) < (order.firstIndex(of: $1.name) ?? order.count)
         })
+        // The camera and lights, then the bevel and depth, after the effects and before any extensions.
+        replace("scene3d", in: properties, with: shape.scene3D?.xml) { Scene3D(element: $0) == shape.scene3D }
+        replace("sp3d", in: properties, with: shape.shape3D?.xml) { Shape3D(element: $0) == shape.shape3D }
+        let ranks = ["scene3d": 1, "sp3d": 2, "extLst": 3]
+        properties.reorderChildren(properties.children.enumerated().sorted {
+            (ranks[$0.element.name] ?? 0, $0.offset) < (ranks[$1.element.name] ?? 0, $1.offset)
+        }.map(\.element))
+    }
+
+    /// Takes out `parent`'s `name` children that `keeps` turns down, and adds
+    /// `xml` at the end in their place, unless one it keeps is left.
+    private func replace(_ name: String, in parent: XMLElement, with xml: String?, keeps: (XMLElement) -> Bool) {
+        for old in parent.children(named: name) where xml == nil || !keeps(old) { parent.removeChild(old) }
+        if let xml, parent.firstChild(named: name) == nil, let new = fragment(xml) {
+            parent.insertChild(new, at: parent.children.count)
+        }
     }
 
     /// Writes the outline's fill, width, compound, cap, dash, join and
@@ -364,7 +379,10 @@ public struct ShapeWriter {
             if let spacing = text.properties.columnSpacing { properties.setAttribute("spcCol", String(spacing)) }
             if let rightToLeft = text.properties.columnsRightToLeft { properties.setAttribute("rtlCol", rightToLeft ? "1" : "0") }
             if case .normal(let scale, let reduction) = text.properties.autofit { writeShrink(scale, reduction, into: properties) }
-            // A WordArt warp the file didn't say, first among bodyPr's children. One it said is kept as it was.
+            // The WordArt warp, first among bodyPr's children. One that reads back the same is kept as it was.
+            for old in properties.children(named: "prstTxWarp") where TextWarp(element: old) != text.properties.warp {
+                properties.removeChild(old)
+            }
             if let warp = text.properties.warp, properties.firstChild(named: "prstTxWarp") == nil,
                let element = fragment(warp.xml) {
                 properties.insertChild(element, at: 0)
