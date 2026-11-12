@@ -19,7 +19,7 @@ export const PAGE_EDITS = new Set(["setText", "setNotes"]);
 /** Commands after which the presentation's details may have changed. */
 const DOCUMENT_COMMANDS = new Set([
   "new", "open", "rename", "save", "undo", "redo", "addSlide", "duplicateSlides", "deleteSlides", "moveSlides",
-  "toggleHidden", "setLayout", "setSlideSize", "paste", "loop", "replace", "headerFooter",
+  "toggleHidden", "setLayout", "setSlideSize", "paste", "loop", "showSettings", "replace", "headerFooter",
   "addCustomShow", "renameCustomShow", "setCustomShowSlides", "duplicateCustomShow", "deleteCustomShow",
 ]);
 

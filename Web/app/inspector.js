@@ -187,9 +187,36 @@ export class Inspector extends EventTarget {
     if (!info.sizePreset) sizes.push(["custom", t("SlideSize.Custom")]);
     html += this.section(t("Format.Section.Presentation"),
       this.row(t("Format.SlideSize"), this.popup("slideSize", t("Format.SlideSize"), sizes, info.sizePreset ?? "custom"))
-      + this.row("", this.check("loop", t("Format.LoopSlideshow"), info.loop))
       + this.row("", this.buttons([["customShows", t("Menu.Play.CustomShows")]])));
+    html += this.showSection(info);
     return html;
+  }
+
+  /** How every slideshow of the presentation plays: PowerPoint's Set Up Slide Show. */
+  showSection(info) {
+    const t = this.t;
+    const show = info.show ?? {};
+    const shows = (info.customShows ?? []).map((entry) => [entry.id, entry.name]);
+    const ranges = [["all", t("Show.Range.All")], ["slides", t("Show.Range.Slides")]];
+    if (shows.length || show.range === "customShow") ranges.push(["customShow", t("Show.Range.CustomShow")]);
+    if (show.range === "customShow" && !shows.some(([id]) => id === show.show)) shows.push([show.show, t("Link.CustomShow.Missing")]);
+    const count = info.outline?.length ?? 1;
+    let body = this.row(t("Show.Range"), this.popup("showRange", t("Show.Range"), ranges, show.range ?? "all"));
+    if (show.range === "slides") {
+      body += this.row(t("Show.From"), this.stepper("showFrom", t("Show.From"), show.from, { min: 1, max: count }))
+        + this.row(t("Show.To"), this.stepper("showTo", t("Show.To"), show.to, { min: 1, max: count }));
+    }
+    if (show.range === "customShow") body += this.row("", this.popup("showCustomShow", t("Show.Range.CustomShow"), shows, show.show));
+    body += this.row("", this.check("showKiosk", t("Show.Kiosk"), show.kiosk));
+    if (show.kiosk) {
+      body += this.row(t("Show.KioskRestart"), this.stepper("showRestart", t("Show.KioskRestart"), (show.restart ?? 300) / 60, { min: 1, max: 60, unit: t("Show.Minutes") }));
+    }
+    body += this.row("", this.check("loop", t("Format.LoopSlideshow"), show.loop))
+      + this.row("", this.check("showTimings", t("Show.UseTimings"), show.timings))
+      + this.row("", this.check("showAnimations", t("Show.ShowAnimations"), show.animations !== false))
+      + this.row("", this.check("showNarration", t("Show.PlayNarration"), show.narration))
+      + this.note(t(show.kiosk ? "Show.Kiosk.Footer" : "Show.Footer"));
+    return this.section(t("Show.Title"), body);
   }
 
   gradientRows(prefix, fill) {
@@ -688,6 +715,15 @@ export class Inspector extends EventTarget {
         return engine.call("setSlideSize", { preset: value, scaling });
       }
       case "loop": return engine.call("loop", { on: value });
+      case "showRange": return engine.call("showSettings", { range: value });
+      case "showFrom": return engine.call("showSettings", { range: "slides", from: Number(value), to: Math.max(Number(value), this.engine.info?.show?.to ?? 1) });
+      case "showTo": return engine.call("showSettings", { range: "slides", from: Math.min(Number(value), this.engine.info?.show?.from ?? 1), to: Number(value) });
+      case "showCustomShow": return engine.call("showSettings", { range: "customShow", show: Number(value) });
+      case "showKiosk": return engine.call("showSettings", { kiosk: value });
+      case "showRestart": return Number(value) > 0 && engine.call("showSettings", { restart: Number(value) * 60 });
+      case "showTimings": return engine.call("showSettings", { timings: value });
+      case "showAnimations": return engine.call("showSettings", { animations: value });
+      case "showNarration": return engine.call("showSettings", { narration: value });
       // Animations
       case "addAnimation": {
         if (!value) return null;

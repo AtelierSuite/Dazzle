@@ -204,6 +204,30 @@ final class Bridge {
             }
         case "loop":
             edit { state, presentation in state.setLoopsSlideshow(r["on"] as? Bool ?? false, in: &presentation) }
+        case "showSettings":
+            // Any of: range ("all", "slides", "customShow") with from, to and show; kiosk, restart
+            // (seconds), timings, animations, narration.
+            edit { state, presentation in
+                let slideCount = max(presentation.slides.count, 1)
+                let firstShow = presentation.customShows.first?.id
+                state.updateShowSettings(in: &presentation) { settings in
+                    switch r["range"] as? String {
+                    case "all": settings.range = .all
+                    case "slides":
+                        let from = min(max(r["from"] as? Int ?? 1, 1), slideCount)
+                        let to = min(max(r["to"] as? Int ?? slideCount, from), slideCount)
+                        settings.range = .slides(from: from, to: to)
+                    case "customShow":
+                        settings.range = (r["show"] as? Int ?? firstShow).map(SlideshowSettings.Range.customShow) ?? .all
+                    default: break
+                    }
+                    if let kiosk = r["kiosk"] as? Bool { settings.isKiosk = kiosk }
+                    if let restart = r["restart"] as? Double { settings.kioskRestartAfter = max(restart, 60) }
+                    if let timings = r["timings"] as? Bool { settings.usesTimings = timings }
+                    if let animations = r["animations"] as? Bool { settings.showsAnimations = animations }
+                    if let narration = r["narration"] as? Bool { settings.playsNarration = narration }
+                }
+            }
 
         // Custom shows
         case "addCustomShow":
@@ -491,7 +515,7 @@ final class Bridge {
                 },
                 "through": timeline.playingThroughDuration.isFinite ? timeline.playingThroughDuration : -1,
                 "after": slide.autoAdvanceAfter as Any, "onClick": slide.advancesOnClick, "notes": slide.notes,
-                "loop": presentation.loopsSlideshow,
+                "loop": presentation.showSettings.playsInLoop,
                 "transition": slide.transition.map { $0.isAnimated ? $0.duration : 0 } ?? 0,
             ]
         case "transition":
@@ -681,6 +705,19 @@ final class Bridge {
         default:
             return nil
         }
+    }
+
+    private func showSettingsJSON(_ settings: SlideshowSettings) -> [String: Any] {
+        var json: [String: Any] = [
+            "kiosk": settings.isKiosk, "restart": settings.kioskRestartAfter, "loop": settings.playsInLoop,
+            "timings": settings.followsTimings, "animations": settings.showsAnimations, "narration": settings.playsNarration,
+        ]
+        switch settings.range {
+        case .all: json["range"] = "all"
+        case .slides(let from, let to): json["range"] = "slides"; json["from"] = from; json["to"] = to
+        case .customShow(let id): json["range"] = "customShow"; json["show"] = id
+        }
+        return json
     }
 
     private func hyperlink(_ value: Any?) -> Hyperlink? {
@@ -976,6 +1013,7 @@ final class Bridge {
             "sizePreset": SlideSizeConverter.Preset.matching(presentation.slideSize)?.rawValue as Any,
             "layouts": presentation.resources.orderedLayouts.map { ["path": $0.path, "name": $0.name] },
             "loop": presentation.loopsSlideshow,
+            "show": showSettingsJSON(presentation.showSettings),
             "customShows": presentation.customShows.map { show -> [String: Any] in
                 [
                     "id": show.id, "name": show.name,

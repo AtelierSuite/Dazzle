@@ -528,7 +528,7 @@ struct WebRenderer {
         if let media = picture.media {
             node["media"] = [
                 "kind": media.kind == .video ? "video" : "audio", "path": media.path as Any, "url": media.url as Any,
-                "auto": media.playsAutomatically,
+                "auto": media.playsAutomatically, "narration": media.isNarration,
             ]
         }
         if let crop = Optional(picture), crop.cropLeft != 0 || crop.cropTop != 0 || crop.cropRight != 0 || crop.cropBottom != 0 {

@@ -1448,6 +1448,27 @@ test("makes custom shows, plays them in their order and keeps them on saving", (
   assert.deepEqual(call("info").result.customShows.map((show) => show.name), ["Highlights Copy"]);
 });
 
+test("honours and keeps the slideshow settings", () => {
+  call("new", { name: "Settings.pptx" });
+  const layout = call("info").result.layouts[1].path;
+  call("addSlide", { layout });
+  call("addSlide", { layout });
+  const slides = call("info").state.slides.map((slide) => slide.id);
+  call("toggleHidden", { ids: [slides[1]] });
+  call("showSettings", { range: "slides", from: 2, to: 3 });
+  assert.deepEqual(call("slideshowOrder").result, [slides[2]], "plays the range, without its hidden slide");
+  call("showSettings", { kiosk: true, restart: 120, timings: false, animations: false, narration: false });
+  const show = call("info").result.show;
+  assert.deepEqual(show, { range: "slides", from: 2, to: 3, kiosk: true, restart: 120, loop: true, timings: true, animations: false, narration: false });
+  assert.equal(call("timeline", { slide: slides[0] }).result.loop, true, "a kiosk show loops");
+
+  const saved = call("save", { format: "pptx", keep: true }).payload;
+  call("open", { name: "Settings again.pptx" }, saved);
+  assert.deepEqual(call("info").result.show, show);
+  call("showSettings", { range: "all", kiosk: false });
+  assert.equal(call("info").result.show.timings, false);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
