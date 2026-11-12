@@ -1,6 +1,30 @@
 import DazzleEngine
 import Foundation
 
+extension SlideTable.StyleOption {
+    var label: String {
+        switch self {
+        case .headerRow: String(localized: "Table.HeaderRow")
+        case .totalRow: String(localized: "Table.TotalRow")
+        case .bandedRows: String(localized: "Table.BandedRows")
+        case .firstColumn: String(localized: "Table.FirstColumn")
+        case .lastColumn: String(localized: "Table.LastColumn")
+        case .bandedColumns: String(localized: "Table.BandedColumns")
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .headerRow: "tablecells"
+        case .totalRow: "sum"
+        case .bandedRows: "rectangle.grid.1x2"
+        case .firstColumn: "rectangle.lefthalf.filled"
+        case .lastColumn: "rectangle.righthalf.filled"
+        case .bandedColumns: "rectangle.split.3x1"
+        }
+    }
+}
+
 extension ShapeAnimation.Category {
     var label: String {
         switch self {

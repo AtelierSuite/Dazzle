@@ -798,12 +798,9 @@ final class EditorState {
         selectCell(next)
     }
 
-    func setTableHeaderRow(_ isOn: Bool, in presentation: inout Presentation) {
-        updateTable(in: &presentation) { $0.hasHeaderRow = isOn }
-    }
-
-    func setTableBandedRows(_ isOn: Bool, in presentation: inout Presentation) {
-        updateTable(in: &presentation) { $0.hasBandedRows = isOn }
+    /// Turns one of the table style's options, such as its header row or banded columns, on or off.
+    func setTableOption(_ option: SlideTable.StyleOption, _ isOn: Bool, in presentation: inout Presentation) {
+        updateTable(in: &presentation) { $0[option] = isOn }
     }
 
     func setCellText(_ body: TextBody, in presentation: inout Presentation) {
