@@ -14,6 +14,9 @@ struct WebRenderer {
     struct Options {
         /// Prompts in empty placeholders and badges on media, as the editor shows them.
         var editing = false
+        /// Zooms show the slide they lead to as it is now. Off inside such a
+        /// picture, so a zoom to its own slide does not go on forever.
+        var drawsZoomPreviews = true
     }
 
     let presentation: Presentation
@@ -107,6 +110,17 @@ struct WebRenderer {
         case .picture(let picture):
             node["kind"] = "picture"
             picturePart(picture, shape: shape, frame: frame, style: style, into: &node)
+            if case .zoom(let zoom)? = shape.link, zoom.showsPreview, options.drawsZoomPreviews,
+               let target = zoom.previewSlide(in: presentation) {
+                var preview = WebRenderer(presentation: presentation, slide: target)
+                preview.options.drawsZoomPreviews = false
+                var scene = preview.scene()
+                if !zoom.showsBackground {
+                    scene["bg"] = NSNull()
+                    scene["art"] = [[String: Any]]()
+                }
+                node["zoomScene"] = scene
+            }
         case .table(let table):
             node["kind"] = "table"
             node["table"] = self.table(table, shape: shape, frame: frame, style: style)
