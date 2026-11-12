@@ -86,7 +86,11 @@ struct WebRenderer {
             ]
         }
         if let effects = effects(shape.effects, size: frame.size, style: style) { node["effects"] = effects }
-        if let link = shape.link, let json = Self.link(link) { node["link"] = json }
+        if let link = shape.link, var json = Self.link(link) {
+            // A zoom flies out of where it sits, and back into it.
+            if case .zoom = link { json["frame"] = [n(frame.minX), n(frame.minY), n(frame.width), n(frame.height)] }
+            node["link"] = json
+        }
 
         switch shape.kind {
         case .group(let group):
@@ -847,8 +851,22 @@ struct WebRenderer {
         case .firstSlide: ["action": "first"]
         case .lastSlide: ["action": "last"]
         case .endShow: ["action": "end"]
+        case .zoom(let zoom): zoomLink(zoom)
         case .slidePart, .other: nil
         }
+    }
+
+    /// Where a zoom leads, for the slideshow page to follow: the slide or
+    /// section, whether it comes back, and how long it flies.
+    private static func zoomLink(_ zoom: SlideZoom) -> [String: Any]? {
+        var json: [String: Any] = ["returns": zoom.returnsToParent]
+        switch zoom.target {
+        case .slide(let id): json["slide"] = id.uuidString
+        case .section(let id): json["section"] = id
+        case .slideNumber: return nil
+        }
+        if let duration = zoom.transitionDuration { json["dur"] = duration }
+        return ["zoom": json]
     }
 
     // MARK: - Numbers

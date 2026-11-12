@@ -67,7 +67,7 @@ extension InspectorViewController {
             case .firstSlide?: 5
             case .lastSlide?: 6
             case .endShow?: 7
-            case .other?: nil
+            case .zoom?, .other?: nil
             }
         }
         form.row(String(localized: "Link.Kind"), form.popup(kinds.map { String(localized: $0.0) }, get: {

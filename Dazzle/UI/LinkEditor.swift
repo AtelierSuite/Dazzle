@@ -30,7 +30,7 @@ struct LinkEditor: View {
         case .firstSlide?: .first
         case .lastSlide?: .last
         case .endShow?: .end
-        case .other?: .other
+        case .zoom?, .other?: .other
         }
     }
 

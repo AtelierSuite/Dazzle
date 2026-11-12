@@ -13,6 +13,9 @@ public enum Hyperlink: Equatable, Hashable, Sendable {
     case firstSlide
     case lastSlide
     case endShow
+    /// A slide, section or summary zoom: into its slides and, as it says,
+    /// back. Kept in the file as it was.
+    case zoom(SlideZoom)
     /// A link Dazzle does not follow, such as one that runs a macro. It is
     /// kept in the file as it was.
     case other
@@ -56,7 +59,7 @@ public enum Hyperlink: Equatable, Hashable, Sendable {
         case .firstSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)firstslide\"/>"
         case .lastSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)lastslide\"/>"
         case .endShow: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)endshow\"/>"
-        case .slidePart, .other: return nil
+        case .slidePart, .zoom, .other: return nil
         }
     }
 }

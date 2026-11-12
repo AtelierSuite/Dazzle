@@ -49,6 +49,7 @@ public final class ShapeParser {
             shape.isHidden = ["1", "true"].contains(Self.commonProperties(of: element)?.attribute("hidden") ?? "")
             shape.altText = Self.description(of: element)
             shape.link = link(in: Self.commonProperties(of: element))
+            if element.name == "AlternateContent" { Self.applyZooms(SlideZoom.zooms(in: element), to: &shape) }
             if capturesSource {
                 if let source = XMLLite.serialize(element, inheritedNamespaces: namespaces) {
                     shape.source = source
@@ -83,6 +84,18 @@ public final class ShapeParser {
             )
         default:
             return nil
+        }
+    }
+
+    /// A slide or section zoom's picture leads where the zoom does; each
+    /// picture of a summary zoom, in order, to its section.
+    private static func applyZooms(_ zooms: [SlideZoom], to shape: inout SlideShape) {
+        guard !zooms.isEmpty else { return }
+        if case .group(var group) = shape.kind, zooms.count > 1 || group.children.count > 1 {
+            for (index, zoom) in zip(group.children.indices, zooms) { group.children[index].link = .zoom(zoom) }
+            shape.kind = .group(group)
+        } else {
+            shape.link = .zoom(zooms[0])
         }
     }
 

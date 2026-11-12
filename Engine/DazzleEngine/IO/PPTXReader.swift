@@ -118,6 +118,7 @@ public enum PPTXReader {
         presentation.sections = readSections(in: main, slides: slidesByNumber)
         presentation.settleSections()
         presentation.resolveSlideLinks()
+        presentation.resolveZoomTargets(numbers: slidesByNumber)
         return presentation
     }
 
