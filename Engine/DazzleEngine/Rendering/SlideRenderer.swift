@@ -88,9 +88,19 @@ public struct SlideRenderer {
     /// topmost first. A shape's link covers it; a link in its text covers
     /// that text, and is found before the shape's.
     public func linkAreas() -> [(CGRect, Hyperlink)] {
+        linkAreasWithTooltips().map { ($0.0, $0.1) }
+    }
+
+    /// Where pointing at a link on the slide shows its ScreenTip, in slide
+    /// points, topmost first, as `linkAreas` finds them.
+    public func linkTooltips() -> [(CGRect, String)] {
+        linkAreasWithTooltips().compactMap { area in area.2.map { (area.0, $0) } }
+    }
+
+    private func linkAreasWithTooltips() -> [(CGRect, Hyperlink, String?)] {
         let style = style
         let renderer = TextRenderer(style: style, slideNumber: slideNumber)
-        var areas: [(CGRect, Hyperlink)] = []
+        var areas: [(CGRect, Hyperlink, String?)] = []
         for shape in slide.shapes.reversed() where !shape.isHidden && shape.rotation == 0 {
             let sources = style.sources(for: shape)
             if let text = shape.text, case .shape = shape.kind {
@@ -99,7 +109,7 @@ public struct SlideRenderer {
                 } ?? shape.frame.points
                 areas += renderer.linkAreas(text, shape: shape, sources: sources, in: textFrame)
             }
-            if let link = shape.link { areas.append((shape.frame.points, link)) }
+            if let link = shape.link { areas.append((shape.frame.points, link, shape.linkTooltip)) }
         }
         return areas
     }

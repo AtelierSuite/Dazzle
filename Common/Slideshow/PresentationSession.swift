@@ -336,6 +336,13 @@ final class PresentationSession {
             .first { $0.0.insetBy(dx: -6, dy: -6).contains(point) }?.1
     }
 
+    /// Where pointing at a link on the current slide shows its ScreenTip,
+    /// in slide points, topmost first.
+    func linkTooltips() -> [(CGRect, String)] {
+        guard let presentation, let slide = currentSlide, !isBlanked else { return [] }
+        return SlideRenderer(presentation: presentation, slide: slide).linkTooltips()
+    }
+
     /// Follows a link within the show. A web address is handed back for the
     /// caller to open.
     func follow(_ link: Hyperlink) -> URL? {

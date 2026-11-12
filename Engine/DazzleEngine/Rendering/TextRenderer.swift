@@ -524,12 +524,12 @@ public struct TextRenderer {
         }
     }
 
-    /// Where each linked run of `body` lies, in slide points, and where it
-    /// goes. Text running vertically has none.
-    public func linkAreas(_ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect) -> [(CGRect, Hyperlink)] {
+    /// Where each linked run of `body` lies, in slide points, where it
+    /// goes, and its ScreenTip. Text running vertically has none.
+    public func linkAreas(_ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect) -> [(CGRect, Hyperlink, String?)] {
         guard let layout = layout(body, shape: shape, sources: sources, in: rect, colorOverride: nil, hidesText: false),
               layout.turn == nil else { return [] }
-        var areas: [(CGRect, Hyperlink)] = []
+        var areas: [(CGRect, Hyperlink, String?)] = []
         for (line, origin, column) in lines(of: layout) {
             for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
                 let attributes = CTRunGetAttributes(run) as NSDictionary
@@ -541,7 +541,7 @@ public struct TextRenderer {
                 areas.append((CGRect(
                     x: column.origin.x + origin.x + start, y: column.origin.y + column.height - origin.y - ascent,
                     width: width, height: ascent + descent
-                ), box.link))
+                ), box.link, box.tooltip))
             }
         }
         return areas
@@ -677,7 +677,11 @@ public struct TextRenderer {
     /// A link riding on the text it belongs to.
     private final class LinkBox: NSObject {
         let link: Hyperlink
-        init(_ link: Hyperlink) { self.link = link }
+        let tooltip: String?
+        init(_ link: Hyperlink, tooltip: String?) {
+            self.link = link
+            self.tooltip = tooltip
+        }
     }
 
     /// A shadow riding on the text that casts it, its colour worked out.
@@ -757,7 +761,7 @@ public struct TextRenderer {
                 if runProperties.capitalization == "all" { text = text.uppercased() }
                 text = Self.symbolsMapped(text)
                 var runAttributes = attributes(for: runProperties, scale: scale, colorOverride: textColor)
-                if let link = run.properties.link { runAttributes[Self.linkKey] = LinkBox(link) }
+                if let link = run.properties.link { runAttributes[Self.linkKey] = LinkBox(link, tooltip: run.properties.linkTooltip) }
                 result.append(NSAttributedString(string: text, attributes: runAttributes))
             }
 

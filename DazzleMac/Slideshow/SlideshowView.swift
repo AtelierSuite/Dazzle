@@ -22,6 +22,8 @@ final class SlideshowView: NSView {
     private var playerViews: [SlideShape.ID: PlayerView] = [:]
     /// Pictures of the two slides of the transition playing, at the size shown.
     private var transitionPictures: (id: UUID, width: Int, outgoing: CGImage?, incoming: CGImage?)?
+    /// The ScreenTip of each link on the slide, by the tooltip rectangle over it.
+    private var linkTooltips: [NSView.ToolTipTag: String] = [:]
 
     init(session: PresentationSession, role: Role) {
         self.session = session
@@ -72,6 +74,7 @@ final class SlideshowView: NSView {
             displayLink = nil
         }
         updatePlayers()
+        updateLinkTooltips()
         setAccessibilityLabel(session.currentSlide?.title ?? String(localized: "Slide.Untitled"))
         needsDisplay = true
     }
@@ -83,6 +86,21 @@ final class SlideshowView: NSView {
     override func layout() {
         super.layout()
         updatePlayers()
+        updateLinkTooltips()
+    }
+
+    /// Pointing at a link with a ScreenTip shows it, the topmost link's
+    /// where they overlap.
+    private func updateLinkTooltips() {
+        removeAllToolTips()
+        linkTooltips = [:]
+        let rect = slideRect
+        let scale = rect.width / max(slideSize.width, 1)
+        for (area, tooltip) in session.linkTooltips().reversed() {
+            let frame = CGRect(x: rect.minX + area.minX * scale, y: rect.minY + area.minY * scale,
+                               width: area.width * scale, height: area.height * scale)
+            linkTooltips[addToolTip(frame, owner: self, userData: nil)] = tooltip
+        }
     }
 
     /// A view for each video on the slide, over its picture once it has played.
@@ -218,6 +236,12 @@ final class SlideshowView: NSView {
     override func rightMouseUp(with event: NSEvent) {
         guard role == .audience else { return super.rightMouseUp(with: event) }
         session.previous()
+    }
+}
+
+extension SlideshowView: NSViewToolTipOwner {
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        linkTooltips[tag] ?? ""
     }
 }
 
