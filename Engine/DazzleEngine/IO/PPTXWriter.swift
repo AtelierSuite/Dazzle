@@ -451,7 +451,7 @@ private struct PackageBuilder {
         }() {
             var listIDs: [String: Int] = [:]
             for entry in list.children(named: "sldId") {
-                if let relationship = entry.relationshipID, let id = entry.attribute("id").flatMap(Int.init) {
+                if let relationship = entry.relationshipID, let id = entry.unprefixedID.flatMap(Int.init) {
                     listIDs[relationship] = id
                 }
             }
