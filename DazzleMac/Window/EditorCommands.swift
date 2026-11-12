@@ -101,6 +101,13 @@ extension DocumentWindowController: NSMenuItemValidation {
         sheet.present(over: window)
     }
 
+    @objc func showTheme(_ sender: Any?) {
+        guard let window else { return }
+        let sheet = ThemeSheet(deck: deck)
+        themeSheet = sheet
+        sheet.present(over: window)
+    }
+
     @objc func previousSlide(_ sender: Any?) { step(by: -1) }
 
     @objc func nextSlide(_ sender: Any?) { step(by: 1) }
@@ -320,6 +327,8 @@ extension DocumentWindowController: NSMenuItemValidation {
             return presentation.slides.count > 1
         case #selector(duplicateSlide(_:)), #selector(showHeaderFooter(_:)):
             return deck.selectedSlide != nil
+        case #selector(showTheme(_:)):
+            return state.canEditTheme(in: presentation)
         case #selector(toggleSlideHidden(_:)):
             menuItem.title = String(localized: deck.selectedSlide?.isHidden == true ? "Slide.Menu.Show" : "Slide.Menu.Hide")
             return deck.selectedSlide != nil
