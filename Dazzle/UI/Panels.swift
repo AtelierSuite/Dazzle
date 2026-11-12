@@ -496,11 +496,12 @@ struct FormatPanel: View {
                     }
                 }
                 .accessibilityIdentifier("slideSize")
-                Toggle("Format.LoopSlideshow", isOn: Binding(
-                    get: { presentation.loopsSlideshow },
-                    set: { state.setLoopsSlideshow($0, in: &presentation) }
-                ))
-                .accessibilityIdentifier("loopSlideshow")
+                NavigationLink {
+                    SlideshowSettingsView(presentation: $presentation, state: state)
+                } label: {
+                    Text("Show.Title")
+                }
+                .accessibilityIdentifier("slideshowSettings")
                 NavigationLink {
                     CustomShowsView(presentation: $presentation, state: state)
                 } label: {
