@@ -499,7 +499,16 @@ final class Bridge {
             // The slide's transition as keyframes for each layer, for the
             // browser to animate: Reduce Motion asks for a cross-fade.
             guard let slide = slide(r["slide"]) else { throw Failure(message: "No such slide.") }
-            guard let transition = slide.transition?.played(
+            // A zoom flies into its picture, or back out into it, in place of the slide's own.
+            var replacement: SlideTransition?
+            if let zoom = r["zoom"] as? [String: Any], let duration = zoom["dur"] as? Double,
+               let frame = zoom["frame"] as? [Double], frame.count == 4 {
+                let size = presentation.slideSize.points
+                replacement = SlideTransition(effect: .zoomObject(SlideTransition.ZoomFrame(
+                    CGRect(x: frame[0], y: frame[1], width: frame[2], height: frame[3]), in: size
+                ), returning: zoom["returning"] as? Bool ?? false), duration: duration)
+            }
+            guard let transition = (replacement ?? slide.transition)?.played(
                 reduceMotion: r["reduceMotion"] as? Bool ?? false, seed: r["seed"] as? Int ?? 0
             ), transition.isAnimated else { return nil }
             return transitionJSON(transition, size: presentation.slideSize.points)

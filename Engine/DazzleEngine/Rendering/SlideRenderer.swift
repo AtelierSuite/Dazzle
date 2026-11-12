@@ -103,6 +103,14 @@ public struct SlideRenderer {
                 areas += renderer.linkAreas(text, shape: shape, sources: sources, in: textFrame)
             }
             if let link = shape.link { areas.append((shape.frame.points, link)) }
+            // Each picture of a summary zoom leads to its own section.
+            if case .group(let group) = shape.kind {
+                for member in group.children.reversed() where !member.isHidden {
+                    if case .zoom? = member.link, let link = member.link {
+                        areas.insert((Self.placed(member, from: group.childFrame, into: shape.frame).frame.points, link), at: 0)
+                    }
+                }
+            }
         }
         return areas
     }

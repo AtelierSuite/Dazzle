@@ -27,6 +27,8 @@ enum TransitionXML {
         case .newsflash: return ("<p:newsflash/>", nil)
         case .comb(let vertical): return ("<p:comb\(orientation(vertical))/>", nil)
         case .random: return ("<p:random/>", nil)
+        // Only ever played, for a zoom; its slide keeps its own transition.
+        case .zoomObject: return ("<p:fade/>", nil)
         case .pattern(let filter):
             let vertical = ["vertical", "down"].contains(filter.subtype)
             switch filter.kind {

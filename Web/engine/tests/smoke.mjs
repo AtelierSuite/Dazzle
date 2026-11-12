@@ -1450,6 +1450,49 @@ test("organises slides into sections, and keeps them on save", () => {
   assert.equal(call("removeAllSections").state.sections.length, 0);
 });
 
+test("follows slide and section zooms, drawing each from the slide it leads to", () => {
+  call("new", { name: "Zooms.pptx" });
+  call("addSlide");
+  call("addSlide");
+  const { state } = call("info");
+  const section = call("addSection", { slide: state.slides[2].id }).result;
+  const entries = unzip(call("save", { format: "pptx" }).payload);
+  const zoom = (prefix, uri, element, object, x) => `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">`
+    + `<mc:Choice xmlns:${prefix}="${uri}" Requires="${prefix}"><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${x}" name="Zoom ${x}"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>`
+    + `<p:xfrm><a:off x="${x * 100000}" y="0"/><a:ext cx="3657600" cy="2057400"/></p:xfrm><a:graphic><a:graphicData uri="${uri}">`
+    + `<${prefix}:${element}>${object}</${prefix}:${element}></a:graphicData></a:graphic></p:graphicFrame></mc:Choice>`
+    + `<mc:Fallback><p:pic><p:nvPicPr><p:cNvPr id="${x}" name="Zoom ${x}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rId99"/></p:blipFill>`
+    + `<p:spPr><a:xfrm><a:off x="${x * 100000}" y="0"/><a:ext cx="3657600" cy="2057400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic></mc:Fallback></mc:AlternateContent>`;
+  const slideZoom = zoom("pslz", "http://schemas.microsoft.com/office/powerpoint/2016/slidezoom", "sldZm",
+    '<pslz:sldZmObj sldId="257"><pslz:zmPr id="{1}" transitionDur="1000"/></pslz:sldZmObj>', 10);
+  const sectionZoom = zoom("psez", "http://schemas.microsoft.com/office/powerpoint/2016/sectionzoom", "sectionZm",
+    `<psez:sectionZmObj sectionId="${section}"><psez:zmPr id="{2}" returnToParent="0"/></psez:sectionZmObj>`, 60);
+  const name = "ppt/slides/slide1.xml";
+  const slide = new TextDecoder().decode(entries.get(name)).replace("</p:spTree>", slideZoom + sectionZoom + "</p:spTree>");
+  entries.set(name, new TextEncoder().encode(slide));
+
+  const opened = call("open", { name: "Zooms.pptx" }, zip(entries)).state;
+  const shapes = call("scene", { slide: opened.slides[0].id }).result.shapes;
+  const zooms = shapes.filter((node) => node.link?.zoom);
+  assert.equal(zooms.length, 2);
+  assert.deepEqual(zooms[0].link.zoom, { slide: opened.slides[1].id, returns: true, dur: 1 });
+  assert.deepEqual(zooms[0].link.frame, [zooms[0].x, zooms[0].y, zooms[0].w, zooms[0].h]);
+  assert.deepEqual(zooms[1].link.zoom, { section, returns: false });
+  assert.ok(zooms.every((node) => node.locked), "kept as they were");
+  const target = call("scene", { slide: opened.slides[1].id }).result;
+  assert.deepEqual(zooms[0].zoomScene?.shapes.map((node) => node.id), target.shapes.map((node) => node.id), "drawn from the slide it leads to");
+  assert.ok(zooms[0].zoomScene.shapes.every((node) => !node.zoomScene), "a zoom's picture holds no further zooms");
+
+  const flight = call("transition", { slide: opened.slides[1].id, zoom: { frame: zooms[0].link.frame, dur: 1 } }).result;
+  assert.equal(flight.duration, 1);
+  assert.equal(flight.layers.length, 2, "the zoom's slide and the slide it grows out of");
+  const calm = call("transition", { slide: opened.slides[1].id, zoom: { frame: zooms[0].link.frame, dur: 1 }, reduceMotion: true }).result;
+  assert.ok(calm.layers.length === 2 && calm.duration === 1);
+
+  const saved = unzip(call("save", { format: "pptx", keep: true }).payload);
+  assert.match(new TextDecoder().decode(saved.get(name)), /<pslz:sldZmObj sldId="257">/, "saved as it was");
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));

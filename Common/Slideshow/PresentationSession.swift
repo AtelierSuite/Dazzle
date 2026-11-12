@@ -49,6 +49,8 @@ final class PresentationSession {
     /// The transition onto the current slide, while it plays.
     private(set) var transition: ShowingTransition?
     @ObservationIgnored private var transitionTask: Task<Void, Never>?
+    /// Zooms followed that come back to their slide, the latest last.
+    private(set) var zoomReturns: [ZoomReturn] = []
     /// Moving on by itself, after the current slide's time.
     @ObservationIgnored private var advanceTask: Task<Void, Never>?
     /// What the running wait is for, so publishing again does not restart it.
@@ -78,6 +80,7 @@ final class PresentationSession {
         startedAt = Date()
         ownerID = owner
         loops = presentation.loopsSlideshow
+        zoomReturns = []
         isPresenting = true
         beginSlide()
         publish()
@@ -93,6 +96,7 @@ final class PresentationSession {
         presentation = nil
         order = []
         position = 0
+        zoomReturns = []
         builds = 0
         isAnimating = false
         animatingTask?.cancel()
@@ -118,6 +122,10 @@ final class PresentationSession {
             buildStartedAt = Date()
             trackAnimation()
             playMedia(inStep: builds - 1)
+        } else if let back = zoomReturns.last, order.indices.contains(position), order[position] == back.lastSlide {
+            // The zoom's slides are done: back out to the slide it is on.
+            zoomReturns.removeLast()
+            returnFromZoom(back)
         } else if position < order.count - 1 {
             move(to: position + 1)
         } else if loops {
@@ -212,13 +220,14 @@ final class PresentationSession {
         }
     }
 
-    /// Moves on to another slide, playing its transition.
-    private func move(to index: Int) {
+    /// Moves on to another slide, playing its transition, or `transition`
+    /// in its place. `fullyBuilt`, it shows with every animation played.
+    private func move(to index: Int, transition replacement: SlideTransition? = nil, fullyBuilt: Bool = false) {
         let outgoing = currentSlide
         let outgoingFrame = animationFrame(at: Date())
         finishTransition()
         position = index
-        if let outgoing, let incoming = currentSlide, let transition = incoming.transition?.played(
+        if let outgoing, let incoming = currentSlide, let transition = (replacement ?? incoming.transition)?.played(
             reduceMotion: Self.prefersReducedMotion, seed: position
         ), transition.isAnimated {
             let showing = ShowingTransition(
@@ -232,8 +241,8 @@ final class PresentationSession {
                 self.transition = nil
             }
         }
-        beginSlide()
-        if let presentation, let slide = currentSlide, var showing = transition {
+        beginSlide(fullyBuilt: fullyBuilt)
+        if !fullyBuilt, let presentation, let slide = currentSlide, var showing = transition {
             // The slide's first animations wait for it to arrive.
             showing.incomingFrame = slide.animations.isEmpty ? nil : slide.animationTimeline.frame(
                 begun: builds, elapsed: 0, shapes: slide.shapes, slideSize: presentation.slideSize.points
@@ -357,9 +366,76 @@ final class PresentationSession {
         case .firstSlide: go(toPosition: 0)
         case .lastSlide: go(toPosition: order.count - 1)
         case .endShow: end()
+        case .zoom(let zoom): follow(zoom)
         case .slidePart, .other: break
         }
         return nil
+    }
+
+    // MARK: - Zooms
+
+    /// A zoom followed that comes back: to which slide, after which, and
+    /// how to fly back into its picture. Slides are indices into the presentation.
+    struct ZoomReturn: Equatable {
+        var parentSlide: Int
+        var lastSlide: Int
+        var frame: SlideTransition.ZoomFrame
+        var duration: Double?
+        /// Hidden slides put into the show for the zoom, taken out again on the way back.
+        var added: [Int] = []
+    }
+
+    /// Flies into a zoom's slide or section, showing slides that are hidden
+    /// as a link to them does, and remembers to come back if it says to.
+    private func follow(_ zoom: SlideZoom) {
+        guard let presentation, let slide = currentSlide, order.indices.contains(position) else { return }
+        let targets = zoom.slideIndices(in: presentation)
+        guard let first = targets.first, let last = targets.last else { return }
+        var insertion = position + 1
+        var added: [Int] = []
+        for index in targets {
+            if let existing = order.firstIndex(of: index) {
+                insertion = existing + 1
+            } else {
+                order.insert(index, at: insertion)
+                added.append(index)
+                insertion += 1
+            }
+        }
+        let area = SlideRenderer(presentation: presentation, slide: slide).linkAreas().first { $0.1 == .zoom(zoom) }?.0
+        let frame = area.map { SlideTransition.ZoomFrame($0, in: presentation.slideSize.points) }
+            ?? SlideTransition.ZoomFrame(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+        if zoom.returnsToParent {
+            zoomReturns.append(ZoomReturn(
+                parentSlide: order[position], lastSlide: last, frame: frame, duration: zoom.transitionDuration, added: added
+            ))
+        }
+        guard let target = order.firstIndex(of: first) else { return }
+        isBlanked = false
+        move(to: target, transition: zoom.transitionDuration.map {
+            SlideTransition(effect: .zoomObject(frame, returning: false), duration: $0)
+        })
+        publish()
+    }
+
+    /// Back to the slide a zoom is on, as it was left, flying out of the
+    /// zoom's slides into its picture.
+    private func returnFromZoom(_ back: ZoomReturn) {
+        let target: Int
+        if let existing = order.firstIndex(of: back.parentSlide) {
+            target = existing
+        } else {
+            order.insert(back.parentSlide, at: position + 1)
+            target = position + 1
+        }
+        move(to: target, transition: back.duration.map {
+            SlideTransition(effect: .zoomObject(back.frame, returning: true), duration: $0)
+        }, fullyBuilt: true)
+        for index in back.added where index != back.parentSlide {
+            guard let at = order.firstIndex(of: index) else { continue }
+            order.remove(at: at)
+            if at < position { position -= 1 }
+        }
     }
 
     func toggleBlank() {
