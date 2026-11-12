@@ -9,7 +9,7 @@ import * as storage from "./storage.js";
 import { attachMenuBar, attachToolbarOverflow, openMenu } from "../design/menus.js";
 import { dismissSheet } from "../design/sheets.js";
 import { MediaStore, SlideDrawer, applyFrame, substituteFor } from "./slide.js";
-import { isInstalled } from "./fonts.js";
+import { installedFamilies, isInstalled } from "./fonts.js";
 import { SlideCanvas } from "./canvas.js";
 import { SlideNavigator } from "./navigator.js";
 import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js";
@@ -417,6 +417,7 @@ export class PresentationWindow {
       previousSlide: { label: t("Menu.Slide.Previous"), enabled: has, run: () => this.stepSlide(-1) },
       nextSlide: { label: t("Menu.Slide.Next"), enabled: has, run: () => this.stepSlide(1) },
       headerFooter: { label: t("Mac.Menu.Slide.HeaderFooter"), enabled: has, run: () => this.showHeaderFooter() },
+      theme: { label: t("Mac.Menu.Format.Theme"), enabled: has && this.engine.info?.canEditTheme !== false, run: () => this.showTheme() },
       insertTextBox: { label: t("Menu.Insert.TextBox"), enabled: has, run: () => this.insert("insertTextBox") },
       insertTable: { label: t("Menu.Insert.Table"), enabled: has, run: () => this.insertTable() },
       insertPicture: { label: t("Menu.Insert.Choose"), shortcut: shortcut("I", { shift: true }), enabled: has, run: () => this.insertPicture() },
@@ -538,6 +539,8 @@ export class PresentationWindow {
           { label: t("Format.Section.Font"), submenu: self.items("bold", "italic", "underline", "strike", "-", "bigger", "smaller", "-", "superscript", "subscript") },
           { label: t("Format.Alignment"), submenu: self.items("alignLeft", "alignCenter", "alignRight", "alignJustify") },
           { label: t("Format.List"), submenu: self.items("bullets", "numbers", "-", "indent", "outdent") },
+          { separator: true },
+          ...self.items("theme"),
         ];
       } },
       { label: t("ActionBar.Arrange"), get items() {
@@ -1437,6 +1440,51 @@ export class PresentationWindow {
         fixedDate: values.get("fixedDate") ?? "", number: values.get("number") === "on", footer: values.get("footer") === "on",
         footerText: values.get("footerText") ?? "", hideOnTitle: values.get("hideOnTitle") === "on", toAll: event.submitter?.value === "all",
       });
+    });
+  }
+
+  /** Theme Colors & Fonts: the theme's twelve colours and its heading and body fonts, which every slide follows. */
+  async showTheme() {
+    const data = await this.engine.call("inspect");
+    const theme = data?.themeSettings;
+    if (!theme?.canEdit) return;
+    const families = [...new Set([...(this.engine.info?.fonts ?? []), ...installedFamilies()])].sort((a, b) => a.localeCompare(b, language));
+    const fontPopup = (name, label, selected) => {
+      const choices = families.includes(selected) ? families : [selected, ...families];
+      return `<span class="ds-popup ds-popup--xs"><select class="ds-popup__select" name="${name}" aria-label="${escapeHTML(label)}">${
+        choices.map((family) => `<option value="${escapeHTML(family)}"${family === selected ? " selected" : ""}>${escapeHTML(family)}</option>`).join("")
+      }</select>${icon("chevronDown", "ds-popup__chevron")}</span>`;
+    };
+    const backdrop = this.sheet(`
+      <form class="ds-sheet" role="dialog" aria-labelledby="theme-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="theme-title">${escapeHTML(t("Panel.Theme.Title"))}</h2>
+          <div class="ds-form app__theme">
+            <span class="ds-form__label"><strong>${escapeHTML(t("Theme.Colors"))}</strong></span><span class="ds-form__control"></span>
+            ${theme.colors.map((color) => `<span class="ds-form__label">${escapeHTML(color.label)}</span><span class="ds-form__control"><input type="color" class="ds-color-well" name="color.${color.slot}" value="${color.color}" aria-label="${escapeHTML(color.label)}"></span>`).join("")}
+            <span class="ds-form__label"><strong>${escapeHTML(t("Theme.Fonts"))}</strong></span><span class="ds-form__control"></span>
+            <span class="ds-form__label">${escapeHTML(t("Theme.HeadingFont"))}</span><span class="ds-form__control">${fontPopup("heading", t("Theme.HeadingFont"), theme.heading)}</span>
+            <span class="ds-form__label">${escapeHTML(t("Theme.BodyFont"))}</span><span class="ds-form__control">${fontPopup("body", t("Theme.BodyFont"), theme.body)}</span>
+          </div>
+          <p class="ds-sheet__message">${escapeHTML(t("Theme.Footer"))}</p>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Common.OK"))}</button>
+        </div>
+      </form>`);
+    const form = backdrop.querySelector("form");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = new FormData(form);
+      dismissSheet(backdrop);
+      // Only what was changed, so a colour left alone keeps its exact value.
+      const colors = {};
+      for (const color of theme.colors) {
+        const value = values.get(`color.${color.slot}`);
+        if (value && value.toLowerCase() !== color.color.toLowerCase()) colors[color.slot] = value;
+      }
+      await this.engine.call("setTheme", { colors, heading: values.get("heading"), body: values.get("body") });
     });
   }
 

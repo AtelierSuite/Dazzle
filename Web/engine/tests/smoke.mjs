@@ -1420,6 +1420,40 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
+test("changes the theme's colours and fonts, every slide follows, and saves them", () => {
+  call("new", { name: "Theme.pptx" });
+  const { result: info } = call("info");
+  assert.equal(info.canEditTheme, true);
+  call("addSlide", { layout: info.layouts[1].path });
+  call("insertShape", { preset: "rect" });
+  const before = call("inspect").result.themeSettings;
+  assert.equal(before.colors.length, 12);
+  assert.deepEqual(before.colors.map((color) => color.slot).slice(0, 5), ["dk1", "lt1", "dk2", "lt2", "accent1"]);
+  assert.ok(before.colors.every((color) => color.label && /^#[0-9a-f]{6}$/.test(color.color)));
+  assert.ok(JSON.stringify(call("scene").result).includes(before.colors[4].color), "the shape is filled with accent 1");
+
+  call("setTheme", { colors: { accent1: "#8e44ad" }, heading: "Georgia", body: "" });
+  const after = call("inspect").result.themeSettings;
+  assert.equal(after.colors[4].color, "#8e44ad");
+  assert.equal(after.colors[5].color, before.colors[5].color, "other colours stay");
+  assert.equal(after.heading, "Georgia");
+  assert.equal(after.body, before.body, "an empty font leaves the body font alone");
+  assert.ok(call("info").result.fonts.includes("Georgia"));
+  for (const slide of call("info").state.slides) {
+    assert.ok(!JSON.stringify(call("scene", { slide: slide.id }).result).includes(before.colors[4].color), "no slide keeps the old accent");
+  }
+  assert.ok(JSON.stringify(call("scene").result).includes("#8e44ad"), "the shape follows the new accent");
+
+  call("undo");
+  assert.equal(call("inspect").result.themeSettings.colors[4].color, before.colors[4].color);
+  call("redo");
+  const { payload } = call("save", { format: "pptx" });
+  call("open", { name: "Theme.pptx" }, payload);
+  const reopened = call("inspect").result.themeSettings;
+  assert.equal(reopened.colors[4].color, "#8e44ad");
+  assert.equal(reopened.heading, "Georgia");
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
