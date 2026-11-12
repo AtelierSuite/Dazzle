@@ -164,7 +164,7 @@ export class Inspector extends EventTarget {
     let html = this.section(t("Format.Section.Background"),
       this.row(t("Fill.Kind"), this.popup("bgKind", t("Fill.Kind"), [
         ["auto", t("Fill.Automatic")], ["solid", t("Fill.Solid")], ["gradient", t("Fill.Gradient")], ["picture", t("Fill.Picture")],
-        ...(background.own && background.kind === "pattern" ? [["pattern", t("Fill.Pattern")]] : []),
+        ["pattern", t("Fill.Pattern")],
       ], background.own ? background.kind : "auto"))
       + (background.kind === "solid" || !background.own ? this.row(t("Mac.Inspector.Colour"), this.color("bgColor", t("Mac.Inspector.Colour"), background.color)) : "")
       + (background.own && background.kind === "gradient" ? this.gradientRows("bg", background) : "")
@@ -204,9 +204,13 @@ export class Inspector extends EventTarget {
         : "");
   }
 
-  /** A pattern fill's two colours. Patterns come from files; they're kept and recoloured, not made here. */
+  /** A pattern fill's cells and two colours. */
   patternRows(prefix, fill) {
-    return this.row(t("Fill.Pattern.Foreground"), this.color(`${prefix}PatternFg`, t("Fill.Pattern.Foreground"), fill.color ?? "#000000"))
+    const t = this.t;
+    const patterns = (this.engine.info?.choices?.patterns ?? []).map((pattern) => [pattern.id, pattern.label]);
+    if (fill.preset && !patterns.some(([id]) => id === fill.preset)) patterns.push([fill.preset, fill.preset]);
+    return this.row(t("Fill.Pattern"), this.popup(`${prefix}Pattern`, t("Fill.Pattern"), patterns, fill.preset))
+      + this.row(t("Fill.Pattern.Foreground"), this.color(`${prefix}PatternFg`, t("Fill.Pattern.Foreground"), fill.color ?? "#000000"))
       + this.row(t("Fill.Pattern.Background"), this.color(`${prefix}PatternBg`, t("Fill.Pattern.Background"), fill.background ?? "#ffffff"));
   }
 
@@ -224,7 +228,7 @@ export class Inspector extends EventTarget {
       html += this.section(t("Format.Section.Fill"),
         this.row(t("Fill.Kind"), this.popup("fillKind", t("Fill.Kind"), [
           ["none", t("Fill.None")], ["solid", t("Fill.Solid")], ["gradient", t("Fill.Gradient")], ["picture", t("Fill.Picture")],
-          ...(fill.kind === "pattern" ? [["pattern", t("Fill.Pattern")]] : []),
+          ["pattern", t("Fill.Pattern")],
         ], fill.kind))
         + (fill.kind === "solid" ? this.row(t("Mac.Inspector.Colour"), this.color("fillColor", t("Mac.Inspector.Colour"), fill.color)) : "")
         + (fill.kind === "gradient" ? this.gradientRows("fill", fill) : "")
@@ -299,9 +303,33 @@ export class Inspector extends EventTarget {
     if (shape.shadow === "custom") shadows.push(["custom", t("Shadow.Custom")]);
     const reflections = (choices.reflections ?? []).map((reflection) => [reflection.id, reflection.label]);
     if (shape.reflection === "custom") reflections.push(["custom", t("Reflection.Custom")]);
-    return this.section(t("Mac.Inspector.Effects"),
-      this.row(t("Format.Shadow"), this.popup("shadow", t("Format.Shadow"), shadows, shape.shadow))
-      + this.row(t("Format.Reflection"), this.popup("reflection", t("Format.Reflection"), reflections, shape.reflection)), { open: shape.shadow !== "none" || shape.reflection !== "none" });
+    const sizes = (list, current) => {
+      const options = [["0", t("Effect.None")], ...(list ?? []).map((points) => [String(points), `${points} pt`])];
+      if (current && !options.some(([id]) => Number(id) === current)) options.push([String(current), `${Math.round(current * 10) / 10} pt`]);
+      return options;
+    };
+    const named = (list, current, none) => {
+      const options = [...(none ? [none] : []), ...(list ?? []).map((choice) => [choice.id, choice.label])];
+      if (current && !options.some(([id]) => id === current)) options.push([current, t("Shadow.Custom")]);
+      return options;
+    };
+    let body = this.row(t("Format.Shadow"), this.popup("shadow", t("Format.Shadow"), shadows, shape.shadow))
+      + this.row(t("Format.Reflection"), this.popup("reflection", t("Format.Reflection"), reflections, shape.reflection))
+      + this.row(t("Format.Glow"), this.popup("glow", t("Format.Glow"), sizes(choices.glowSizes, shape.glow), String(shape.glow ?? 0)))
+      + (shape.glow ? this.row(t("Format.Glow.Color"), this.color("glowColor", t("Format.Glow.Color"), shape.glowColor)) : "")
+      + this.row(t("Format.SoftEdges"), this.popup("softEdge", t("Format.SoftEdges"), sizes(choices.softEdgeSizes, shape.softEdge), String(shape.softEdge ?? 0)))
+      + this.row(t("Format.InnerShadow"), this.popup("innerShadow", t("Format.InnerShadow"), named(choices.innerShadows, shape.innerShadow), shape.innerShadow));
+    if (shape.bevel !== undefined) {
+      body += this.row(t("Format.Bevel"), this.popup("bevel", t("Format.Bevel"), named(choices.bevels, shape.bevel, ["none", t("Effect.None")]), shape.bevel))
+        + this.row(t("Format.Depth"), this.stepper("depth", t("Format.Depth"), shape.depth, { step: 6, min: 0, max: 200, unit: "pt" }))
+        + this.row(t("Format.Camera"), this.popup("camera", t("Format.Camera"), named(choices.cameras, shape.camera), shape.camera));
+    }
+    if (shape.warp !== undefined) {
+      body += this.row(t("Format.TextWarp"), this.popup("warp", t("Format.TextWarp"), named(choices.textWarps, shape.warp, ["textNoShape", t("Effect.None")]), shape.warp));
+    }
+    const isPlain = shape.shadow === "none" && shape.reflection === "none" && !shape.glow && !shape.softEdge && shape.innerShadow === "none"
+      && (shape.bevel ?? "none") === "none" && !shape.depth && (shape.warp ?? "textNoShape") === "textNoShape";
+    return this.section(t("Mac.Inspector.Effects"), body, { open: !isPlain });
   }
 
   tableSection(table) {
@@ -575,7 +603,7 @@ export class Inspector extends EventTarget {
       case "lineSpacing": return format({ lineSpacing: Number(value) });
       // Fill
       case "fillKind":
-        if (value === "pattern") return;
+        if (value === "pattern") return engine.call("setFill", { fill: { kind: "pattern", preset: "pct50", color: shape?.fill?.color ?? "scheme:accent1", background: "scheme:bg1" } });
         if (value === "picture") return this.run("fillPicture");
         if (value === "none") return engine.call("setFill", { fill: { kind: "none" } });
         if (value === "solid") return engine.call("setFill", { fill: { kind: "solid", color: shape?.fill?.color ?? "scheme:accent1" } });
@@ -591,6 +619,10 @@ export class Inspector extends EventTarget {
         // Where it starts, the box it spans and whether it is scaled carry over as they were.
         return engine.call("setFill", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, path: fill.path, focus: fill.focus, tile: fill.tile, scaled: fill.scaled } });
       }
+      case "fillPattern":
+        return engine.call("setFill", { fill: { kind: "pattern", preset: value, color: shape.fill.color, background: shape.fill.background } });
+      case "bgPattern":
+        return engine.call("setBackground", { fill: { kind: "pattern", preset: value, color: data.slide.background.color, background: data.slide.background.background } });
       case "fillPatternFg": case "fillPatternBg": {
         const color = colorValue();
         if (!color) return;
@@ -600,7 +632,7 @@ export class Inspector extends EventTarget {
       case "fillTile": return engine.call("setTiled", { tiled: value });
       // Background
       case "bgKind":
-        if (value === "pattern") return;
+        if (value === "pattern") return engine.call("setBackground", { fill: { kind: "pattern", preset: "pct50", color: "scheme:accent1", background: data.slide.background.color ?? "scheme:bg1" } });
         if (value === "auto") return engine.call("setBackground", {});
         if (value === "picture") return this.run("backgroundPicture");
         if (value === "solid") return engine.call("setBackground", { fill: { kind: "solid", color: data.slide.background.color ?? "#ffffff" } });
@@ -634,6 +666,14 @@ export class Inspector extends EventTarget {
       case "lineTail": return engine.call("setLine", { set: { tail: value } });
       case "shadow": return value !== "custom" && engine.call("setShadow", { id: value });
       case "reflection": return value !== "custom" && engine.call("setReflection", { id: value });
+      case "glow": return engine.call("setEffect", { glow: Number(value) });
+      case "glowColor": { const color = colorValue(); return color && engine.call("setEffect", { glowColor: color }); }
+      case "softEdge": return engine.call("setEffect", { softEdge: Number(value) });
+      case "innerShadow": return value !== "custom" && engine.call("setEffect", { innerShadow: value });
+      case "bevel": return engine.call("setEffect", { bevel: value });
+      case "depth": return engine.call("setEffect", { depth: Math.max(0, Number(value)) });
+      case "camera": return engine.call("setEffect", { camera: value });
+      case "warp": return engine.call("setEffect", { warp: value });
       // Table
       case "tableHeader": return engine.call("table", { header: value });
       case "tableBanded": return engine.call("table", { banded: value });
