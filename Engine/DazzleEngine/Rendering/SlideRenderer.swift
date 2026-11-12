@@ -1080,13 +1080,16 @@ public struct SlideRenderer {
                             : (layout.isBanded(rowIndex) ? tableStyle.bandedRow : TableStyle.Part())
                         return part.borders[name] ?? tableStyle.whole.borders[name]
                     }
-                    return layout.usesBuiltInLook ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
+                    return layout.usesBuiltInLook && !["tl2br", "tr2bl"].contains(name)
+                        ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
                 }
                 let edges: [(LineStyle?, String, CGPoint, CGPoint)] = [
                     (cell.borderTop, edgeNames[0], CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY)),
                     (cell.borderBottom, edgeNames[1], CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)),
                     (cell.borderLeft, edgeNames[2], CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.minX, y: rect.maxY)),
                     (cell.borderRight, edgeNames[3], CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)),
+                    (cell.borderDiagonalDown, "tl2br", CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)),
+                    (cell.borderDiagonalUp, "tr2bl", CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.minY)),
                 ]
                 for (border, name, start, end) in edges {
                     let fallback = styleBorder(name)

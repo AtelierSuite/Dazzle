@@ -361,6 +361,7 @@ public final class ShapeParser {
                         marginTop: margin("marT"), marginBottom: margin("marB"),
                         borderLeft: border("lnL"), borderRight: border("lnR"),
                         borderTop: border("lnT"), borderBottom: border("lnB"),
+                        borderDiagonalDown: border("lnTlToBr"), borderDiagonalUp: border("lnBlToTr"),
                         sourceProperties: cellProperties.flatMap(capture),
                         sourceBody: cell.firstChild(named: "txBody").flatMap(capture)
                     )
