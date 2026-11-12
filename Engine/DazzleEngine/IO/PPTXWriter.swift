@@ -55,6 +55,9 @@ private struct PackageBuilder {
                 contentTypes.ensureDefault(for: path)
             }
         }
+        if presentation.isThemeModified {
+            try writeThemes()
+        }
         assignPartNames()
         removeDeletedSlides()
         for index in slides.indices {
@@ -248,6 +251,17 @@ private struct PackageBuilder {
         // After the slide's colour mapping; before its timing and extensions.
         let after = root.children.lastIndex { ["cSld", "clrMapOvr"].contains($0.name) }
         root.insertChild(created, at: min(index ?? .max, (after ?? 0) + 1))
+    }
+
+    // MARK: - Themes
+
+    /// Each master's theme colours and fonts, into the theme part it uses.
+    private mutating func writeThemes() throws {
+        for master in presentation.resources.masters.values.sorted(by: { $0.path < $1.path }) {
+            guard let path = presentation.themePath(ofMaster: master.path), let data = parts[path] else { continue }
+            guard let patched = ThemeXML.patched(data, with: master.theme) else { throw PresentationWriteError.unwritablePart(path) }
+            parts[path] = patched
+        }
     }
 
     // MARK: - Show settings

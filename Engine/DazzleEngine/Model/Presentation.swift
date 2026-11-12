@@ -8,8 +8,9 @@ import Foundation
 public struct Presentation: Equatable, Sendable {
     public var slideSize: EMUSize
     public var slides: [Slide]
-    /// Theme, masters and layouts: read once, never edited.
-    public let resources: DeckResources
+    /// Theme, masters and layouts. Only the theme is edited, which gives
+    /// the presentation new resources: see `setTheme(_:ofMaster:)`.
+    public internal(set) var resources: DeckResources
     /// Every part of the file as it was read.
     public let package: Package
     /// Parts Dazzle has added since, such as pictures.
@@ -27,6 +28,9 @@ public struct Presentation: Equatable, Sendable {
     /// last, until stopped.
     public var loopsSlideshow = false
     public var isShowSettingsModified = false
+    /// Whether a theme's colours or fonts were changed, which means the
+    /// theme parts have to be written again.
+    public var isThemeModified = false
     /// The Keynote document the presentation was converted from, if it was.
     public var keynoteSource: KeynoteSource?
 

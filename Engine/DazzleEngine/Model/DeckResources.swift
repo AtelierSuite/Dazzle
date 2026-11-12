@@ -1,7 +1,8 @@
 import Foundation
 
 /// The theme, masters and layouts a presentation's slides are built on.
-/// Read once with the file; Dazzle does not edit them.
+/// Read once with the file. Dazzle edits only the themes, by making new
+/// resources with the theme replaced.
 public final class DeckResources: Equatable, Sendable {
     public let masters: [String: SlideMaster]
     public let layouts: [String: SlideLayout]
