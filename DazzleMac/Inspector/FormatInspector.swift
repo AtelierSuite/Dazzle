@@ -51,12 +51,15 @@ extension InspectorViewController {
     /// Where a link goes: a web address, a slide, or a step through the show.
     private func buildLink(footer: String, get: @escaping () -> Hyperlink?, set: @escaping (Hyperlink?) -> Void) {
         form.section(String(localized: "Format.Section.Link"))
-        let kinds: [(String.LocalizationValue, (Presentation) -> Hyperlink?)] = [
+        var kinds: [(String.LocalizationValue, (Presentation) -> Hyperlink?)] = [
             ("Link.None", { _ in nil }), ("Link.URL", { _ in .url("https://") }),
             ("Link.Slide", { $0.slides.first.map { .slide($0.id) } }), ("Link.Next", { _ in .nextSlide }),
             ("Link.Previous", { _ in .previousSlide }), ("Link.First", { _ in .firstSlide }),
             ("Link.Last", { _ in .lastSlide }), ("Link.End", { _ in .endShow }),
         ]
+        if !deck.presentation.customShows.isEmpty || get()?.isCustomShow == true {
+            kinds.append(("Link.CustomShow", { $0.customShows.first.map { .customShow($0.id, returns: true) } }))
+        }
         func index(of link: Hyperlink?) -> Int? {
             switch link {
             case nil: 0
@@ -67,6 +70,7 @@ extension InspectorViewController {
             case .firstSlide?: 5
             case .lastSlide?: 6
             case .endShow?: 7
+            case .customShow?: 8
             case .other?: nil
             }
         }
@@ -93,11 +97,47 @@ extension InspectorViewController {
         slides.target = slideTarget
         slides.action = #selector(ActionTarget.run(_:))
         form.row(nil, slides)
+
+        let shows = NSPopUpButton()
+        shows.setAccessibilityIdentifier("linkCustomShow")
+        let showTarget = ActionTarget { [unowned self] in
+            guard case .customShow(_, let returns)? = get(), let id = shows.selectedItem?.tag else { return }
+            set(.customShow(id, returns: returns))
+        }
+        shows.target = showTarget
+        shows.action = #selector(ActionTarget.run(_:))
+        form.row(nil, shows)
+        let returns = form.checkbox(String(localized: "Link.CustomShow.Return"), get: {
+            if case .customShow(_, true)? = get() { return true }
+            return false
+        }, set: { isOn in
+            guard case .customShow(let id, _)? = get() else { return }
+            set(.customShow(id, returns: isOn))
+        })
+        form.row(nil, returns)
         form.note(footer)
         form.onUpdate { [unowned self] in
             _ = slideTarget
+            _ = showTarget
             let link = get()
             if case .url? = link { address.isHidden = false } else { address.isHidden = true }
+            if case .customShow(let id, _)? = link {
+                shows.isHidden = false
+                returns.isHidden = false
+                shows.removeAllItems()
+                for show in deck.presentation.customShows {
+                    shows.addItem(withTitle: show.name)
+                    shows.lastItem?.tag = show.id
+                }
+                if deck.presentation.customShow(withID: id) == nil {
+                    shows.addItem(withTitle: String(localized: "Link.CustomShow.Missing"))
+                    shows.lastItem?.tag = id
+                }
+                shows.selectItem(withTag: id)
+            } else {
+                shows.isHidden = true
+                returns.isHidden = true
+            }
             guard case .slide(let id)? = link else {
                 slides.isHidden = true
                 return
