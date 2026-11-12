@@ -164,6 +164,8 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
     public var altText: String?
     /// Where clicking the shape goes, in a slideshow.
     public var link: Hyperlink?
+    /// The ScreenTip shown when pointing at the shape's link.
+    public var linkTooltip: String?
     /// Read from XML Dazzle can show but not safely rewrite, such as a shape
     /// offered in two forms for different versions of PowerPoint. It can be
     /// deleted, but not changed.

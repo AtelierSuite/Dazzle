@@ -48,7 +48,9 @@ public final class ShapeParser {
             guard var shape = shape(from: element) else { return nil }
             shape.isHidden = ["1", "true"].contains(Self.commonProperties(of: element)?.attribute("hidden") ?? "")
             shape.altText = Self.description(of: element)
-            shape.link = link(in: Self.commonProperties(of: element))
+            let common = Self.commonProperties(of: element)
+            shape.link = link(in: common)
+            shape.linkTooltip = Hyperlink.tooltip(of: common?.firstChild(named: "hlinkClick"))
             if capturesSource {
                 if let source = XMLLite.serialize(element, inheritedNamespaces: namespaces) {
                     shape.source = source
@@ -499,6 +501,7 @@ public final class ShapeParser {
                     run.fieldID = child.attribute("id")
                 }
                 run.properties.link = link(in: properties)
+                run.properties.linkTooltip = Hyperlink.tooltip(of: properties?.firstChild(named: "hlinkClick"))
                 run.sourceProperties = properties.flatMap(capture)
                 paragraph.runs.append(run)
             case "endParaRPr":

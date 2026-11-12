@@ -44,7 +44,7 @@ public struct ShapeWriter {
         }
         if edits.contains(.link), shape.link != .other {
             let common = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "cNvPr")
-            if let common { writeLink(shape.link, into: common, before: ["hlinkHover", "extLst"], atStart: true) }
+            if let common { writeLink(shape.link, tooltip: shape.linkTooltip, into: common, before: ["hlinkHover", "extLst"], atStart: true) }
         }
         if edits.contains(.altText) {
             let common = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "cNvPr")
@@ -400,16 +400,17 @@ public struct ShapeWriter {
 
     // MARK: - Links
 
-    /// Replaces an element's `a:hlinkClick` with `link`, or with none.
-    private mutating func writeLink(_ link: Hyperlink?, into element: XMLElement, before names: Set<String>, atStart: Bool = false) {
+    /// Replaces an element's `a:hlinkClick` with `link` and its ScreenTip,
+    /// or with none.
+    private mutating func writeLink(_ link: Hyperlink?, tooltip: String?, into element: XMLElement, before names: Set<String>, atStart: Bool = false) {
         for child in element.children(named: "hlinkClick") { element.removeChild(child) }
-        guard let link, let xml = linkXML(link), let new = fragment(xml) else { return }
+        guard let link, let xml = linkXML(link, tooltip: tooltip), let new = fragment(xml) else { return }
         let before = element.children.firstIndex { names.contains($0.name) }
         element.insertChild(new, at: before ?? (atStart ? 0 : element.children.count))
     }
 
     /// A link's `a:hlinkClick`, with the relationship it needs added.
-    private mutating func linkXML(_ link: Hyperlink) -> String? {
+    private mutating func linkXML(_ link: Hyperlink, tooltip: String?) -> String? {
         switch link {
         case .url(let address):
             let id: String
@@ -421,12 +422,12 @@ public struct ShapeWriter {
                 id = Relationship.unusedID(in: relationships)
                 relationships.append(Relationship(id: id, type: OOXML.RelationshipType.hyperlink, target: address, isExternal: true))
             }
-            return link.xml(relationshipID: id)
+            return link.xml(relationshipID: id, tooltip: tooltip)
         case .slide(let slideID):
             guard let path = slidePath(slideID) else { return nil }
-            return link.xml(relationshipID: relationshipID(for: path, type: OOXML.RelationshipType.slide))
+            return link.xml(relationshipID: relationshipID(for: path, type: OOXML.RelationshipType.slide), tooltip: tooltip)
         default:
-            return link.xml(relationshipID: nil)
+            return link.xml(relationshipID: nil, tooltip: tooltip)
         }
     }
 
@@ -675,7 +676,7 @@ public struct ShapeWriter {
         }
         // A link Dazzle does not follow is left as the file had it.
         if properties.link != .other, name == "rPr" {
-            writeLink(properties.link, into: element, before: ["hlinkMouseOver", "rtl", "extLst"])
+            writeLink(properties.link, tooltip: properties.linkTooltip, into: element, before: ["hlinkMouseOver", "rtl", "extLst"])
         }
         return XMLLite.serialize(element, inheritedNamespaces: fragmentNamespaces) ?? ""
     }

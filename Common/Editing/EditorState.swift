@@ -719,13 +719,30 @@ final class EditorState {
         }
     }
 
+    /// Links the selected shape; taking its link away takes its ScreenTip too.
     func setShapeLink(_ link: Hyperlink?, in presentation: inout Presentation) {
-        updateShape(selectedShapeID, edits: [.link], in: &presentation) { $0.link = link }
+        updateShape(selectedShapeID, edits: [.link], in: &presentation) { shape in
+            shape.link = link
+            if link == nil { shape.linkTooltip = nil }
+        }
+    }
+
+    /// The ScreenTip shown when pointing at the selected shape's link.
+    func setShapeLinkTooltip(_ tooltip: String, in presentation: inout Presentation) {
+        updateShape(selectedShapeID, edits: [.link], in: &presentation) { $0.linkTooltip = tooltip.nilIfEmpty }
     }
 
     /// Links the selected text, or with none selected, all of the shape's.
     func setTextLink(_ link: Hyperlink?, in presentation: inout Presentation) {
-        updateRuns(in: &presentation) { $0.link = link }
+        updateRuns(in: &presentation) { properties in
+            properties.link = link
+            if link == nil { properties.linkTooltip = nil }
+        }
+    }
+
+    /// The ScreenTip shown when pointing at the selected text's link.
+    func setTextLinkTooltip(_ tooltip: String, in presentation: inout Presentation) {
+        updateRuns(in: &presentation) { $0.linkTooltip = tooltip.nilIfEmpty }
     }
 
     func setAltText(_ text: String, in presentation: inout Presentation) {
