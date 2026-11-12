@@ -1099,7 +1099,7 @@ final class EditorState {
             measured.text = body
             let frame = measured.frame.points
             #if canImport(CoreText)
-            let renderer = TextRenderer(style: style, slideNumber: 1)
+            let renderer = TextRenderer(style: style, slideNumber: 1, presentation: presentation)
             extent = properties.runsVertically
                 ? renderer.width(of: body, shape: measured, height: frame.height)
                 : renderer.height(of: body, shape: measured, width: frame.width)
@@ -1238,7 +1238,7 @@ final class EditorState {
 
     func listStyle(in presentation: Presentation) -> ListStyleChoice {
         switch effectiveParagraphProperties(in: presentation).bullet {
-        case .character?: .bullets
+        case .character?, .picture?: .bullets
         case .autoNumber?: .numbers
         default: .none
         }

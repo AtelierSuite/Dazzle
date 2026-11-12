@@ -941,7 +941,7 @@ final class SlideCanvasView: NSView {
         let slideNumber = (presentation.index(of: slide.id) ?? 0) + 1
         if let id = state.editingTextShapeID, let shape = slide.shapes.first(where: { $0.id == id }), shape.canHoldText {
             let sources = style.sources(for: shape)
-            let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+            let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
             let (area, properties) = renderer.textArea(of: shape, sources: sources)
             // Shrunk to fit as the slide draws it.
             let shrink = renderer.drawnShrink(of: shape, sources: sources)

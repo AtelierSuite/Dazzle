@@ -89,7 +89,7 @@ public struct SlideRenderer {
     /// that text, and is found before the shape's.
     public func linkAreas() -> [(CGRect, Hyperlink)] {
         let style = style
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         var areas: [(CGRect, Hyperlink)] = []
         for shape in slide.shapes.reversed() where !shape.isHidden && shape.rotation == 0 {
             let sources = style.sources(for: shape)
@@ -579,7 +579,7 @@ public struct SlideRenderer {
         let textFrame = shape.textFrame?.points ?? shape.geometry.presetName.map {
             PresetGeometry.textRect($0, adjustments: shape.geometry.adjustments, in: frame)
         } ?? frame
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         let bulletsOnly = shape.id == options.bulletsOnlyShapeID
         if let text = shape.text, !text.isEmpty {
             renderer.draw(
@@ -1035,7 +1035,7 @@ public struct SlideRenderer {
     // MARK: - Tables
 
     private func drawTable(_ table: SlideTable, shape: SlideShape, frame: CGRect, style: SlideStyleContext, context: CGContext) {
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         let layout = TableLayout(table: table, frame: frame, style: style, presentation: presentation, slideNumber: slideNumber)
         let accent = style.color(.scheme("accent1"))
 
@@ -1189,7 +1189,7 @@ public struct TableLayout {
         for width in table.columnWidths { columns.append((columns.last ?? frame.minX) + CGFloat(EMU.points(width))) }
         columnStarts = columns
 
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         var heights = table.rows.map { CGFloat(EMU.points($0.height)) }
         for (rowIndex, row) in table.rows.enumerated() {
             for (columnIndex, cell) in row.cells.enumerated()
