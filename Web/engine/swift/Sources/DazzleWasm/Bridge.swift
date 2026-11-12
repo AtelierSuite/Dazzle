@@ -171,6 +171,24 @@ final class Bridge {
                     if from >= target { target += 1 }
                 }
             }
+        case "masterView":
+            let isOn = r["on"] as? Bool ?? !presentation.isInMasterView
+            edit { state, presentation in
+                if isOn {
+                    state.enterMasterView(in: &presentation)
+                } else {
+                    state.leaveMasterView(in: &presentation)
+                }
+            }
+            if let message = editor.errorMessage {
+                editor.errorMessage = nil
+                throw Failure(message: message)
+            }
+        case "addLayout":
+            edit { state, presentation in state.addLayout(in: &presentation) }
+        case "renameLayout":
+            guard let id = uuids(r["ids"]).first, let name = r["name"] as? String else { throw Failure(message: "No layout was given.") }
+            edit { state, presentation in state.renameLayout(id, to: name, in: &presentation) }
         case "toggleHidden":
             let ids = uuids(r["ids"])
             edit { state, presentation in for id in ids { state.toggleHidden(id, in: &presentation) } }
@@ -541,6 +559,8 @@ final class Bridge {
             guard let slide = editor.selectedSlide(in: presentation) else { return nil }
             let shapes = editor.selectedShapes(in: presentation)
             if shapes.isEmpty || r["slides"] != nil {
+                // Masters and layouts are not slides to paste among slides.
+                guard !presentation.isInMasterView else { return nil }
                 let ids = Set(uuids(r["slides"]).isEmpty ? [slide.id] : uuids(r["slides"]))
                 clipboard = .slides(presentation.slides.filter { ids.contains($0.id) }, presentation: presentation)
                 return ["kind": "slides", "text": presentation.slides.filter { ids.contains($0.id) }.compactMap(\.title).joined(separator: "\n")]
@@ -915,9 +935,19 @@ final class Bridge {
             "edited": session.isEdited,
             "canUndo": session.canUndo,
             "canRedo": session.canRedo,
+            "masterView": presentation.isInMasterView,
             "slides": presentation.slides.map { slide -> [String: Any] in
                 var json: [String: Any] = ["id": slide.id.uuidString, "rev": session.revisions[slide.id] ?? 0]
                 if slide.isHidden { json["hidden"] = true }
+                // In master view: which it is, what it is called, and whether it can go.
+                switch slide.role {
+                case .slide: break
+                case .master: json["role"] = "master"
+                case .layout:
+                    json["role"] = "layout"
+                    json["name"] = slide.layoutName ?? ""
+                    json["canDelete"] = editor.canDeleteLayout(slide.id, in: presentation)
+                }
                 return json
             },
             "sel": selection,
@@ -965,6 +995,7 @@ final class Bridge {
             "unsupported": UnsupportedFeatureReport.Feature.allCases.filter(report.features.contains).map(\.message),
             "omissions": UnsupportedFeatureReport.Omission.allCases.filter(report.omissions.contains).map(\.message),
             "keynote": presentation.keynoteSource != nil,
+            "canEditMasters": presentation.canEditMasters,
             "outline": presentation.slides.enumerated().map { index, slide -> [String: Any] in
                 [
                     "id": slide.id.uuidString, "title": slide.title ?? "", "notes": slide.notes, "number": index + 1,

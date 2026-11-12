@@ -1420,6 +1420,69 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
+test("edits masters and layouts in master view, and has slides follow them", () => {
+  const made = call("new", { name: "Untitled.pptx" });
+  assert.equal(made.result.canEditMasters, true);
+  call("addSlide", { layout: made.result.layouts.find((layout) => layout.name === "Title and Content").path });
+  const slides = call("info").state.slides.map((slide) => slide.id);
+
+  // The masters and layouts take the slides' place, opening on the slide's layout.
+  let state = call("masterView", { on: true }).state;
+  assert.equal(state.masterView, true);
+  assert.deepEqual(state.slides.map((slide) => slide.role), ["master", "layout", "layout", "layout", "layout", "layout"]);
+  const content = state.slides.find((slide) => slide.name === "Title and Content");
+  assert.equal(state.sel.slide, content.id);
+  assert.equal(content.canDelete, false, "a layout a slide is built on stays");
+
+  // Its title is moved and made bold; the layout's own scene shows both.
+  const title = call("scene", { slide: content.id }).result.shapes.find((node) => node.ph === "title");
+  call("select", { slide: content.id, shapes: [title.id] });
+  call("setFrames", { frames: { [title.id]: { x: 60, y: 300, w: 500, h: 80 } } });
+  call("format", { set: { bold: true } });
+  const moved = call("scene", { slide: content.id }).result.shapes.find((node) => node.ph === "title");
+  assert.deepEqual([moved.x, moved.y, moved.w, moved.h], [60, 300, 500, 80]);
+
+  // A layout is added, renamed and copied; one no slide uses is deleted.
+  call("select", { slide: content.id, shapes: [] });
+  state = call("addLayout").state;
+  const added = state.slides.find((slide) => slide.id === state.sel.slide);
+  assert.equal(added.name, "Custom Layout");
+  assert.equal(added.canDelete, true);
+  call("renameLayout", { ids: [added.id], name: "Quote" });
+  call("duplicateSlides", { ids: [added.id] });
+  state = call("deleteSlides", { ids: [state.slides.find((slide) => slide.name === "Blank").id] }).state;
+  assert.deepEqual(state.slides.slice(1).map((slide) => slide.name), ["Title Slide", "Title and Content", "Quote", "Quote Copy", "Section Header", "Title Only"]);
+  // The master's background is every layout's that has none of its own.
+  call("select", { slide: state.slides[0].id, shapes: [] });
+  call("setBackground", { fill: { kind: "solid", color: "#203864" } });
+  assert.equal(call("scene", { slide: content.id }).result.bg.c, call("scene", { slide: state.slides[0].id }).result.bg.c);
+
+  // Back among the slides, the one built on the layout has followed it.
+  const left = call("masterView", { on: false });
+  assert.equal(left.state.masterView, false);
+  assert.deepEqual(left.state.slides.map((slide) => slide.id), slides);
+  assert.equal(left.state.sel.slide, slides[1]);
+  assert.deepEqual(call("info").result.layouts.map((layout) => layout.name), ["Title Slide", "Title and Content", "Quote", "Quote Copy", "Section Header", "Title Only"]);
+  const followed = call("scene", { slide: slides[1], editing: true }).result;
+  const followedTitle = followed.shapes.find((node) => node.ph === "title");
+  assert.deepEqual([followedTitle.x, followedTitle.y, followedTitle.w, followedTitle.h], [60, 300, 500, 80]);
+
+  // Saved, the layouts are parts of the file, and it opens the same way.
+  const saved = call("save", { format: "pptx" }).payload;
+  const parts = unzip(saved);
+  const layout = new TextDecoder().decode(parts.get("ppt/slideLayouts/slideLayout2.xml"));
+  assert.match(layout, /<a:off x="762000" y="3810000"\/><a:ext cx="6350000" cy="1016000"\/>/);
+  assert.match(layout, /<a:lvl1pPr><a:defRPr b="1"\/><\/a:lvl1pPr>/);
+  assert.ok(!parts.has("ppt/slideLayouts/slideLayout5.xml"), "the deleted layout is gone");
+  const master = new TextDecoder().decode(parts.get("ppt/slideMasters/slideMaster1.xml"));
+  assert.equal(master.match(/<p:sldLayoutId /g).length, 6);
+  assert.match(master, /<p:bg><p:bgPr><a:solidFill><a:srgbClr val="203864"\/><\/a:solidFill>/);
+  const reopened = call("open", { name: "Masters.pptx" }, saved);
+  assert.deepEqual(reopened.result.layouts.map((entry) => entry.name), ["Title Slide", "Title and Content", "Quote", "Quote Copy", "Section Header", "Title Only"]);
+  const again = call("scene", { slide: reopened.state.slides[1].id, editing: true }).result.shapes.find((node) => node.ph === "title");
+  assert.deepEqual([again.x, again.y], [60, 300]);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
