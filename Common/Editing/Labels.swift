@@ -185,7 +185,7 @@ struct ShapeChoice: Identifiable {
     ]
 }
 
-/// The shadows, reflections and lines the format controls offer.
+/// The shadows, reflections, effects, warps, patterns and lines the format controls offer.
 enum FormatChoices {
     struct ReflectionChoice {
         let id: String
@@ -229,6 +229,175 @@ enum FormatChoices {
             blur: 76_200, distance: 76_200, direction: 90, color: Shadow.black(opacity: 0.3)
         )),
     ]
+
+    /// Glows of PowerPoint's sizes, in points, in the accent colour until another is picked.
+    static let glowSizes: [Double] = [5, 8, 11, 18]
+
+    /// A glow's colour: the one picked, 60% see-through as PowerPoint's are.
+    static func glowColor(_ color: DrawingColor) -> DrawingColor {
+        var color = color
+        color.transforms.removeAll { $0.name == "alpha" }
+        color.transforms.append(.init(name: "alpha", value: 40_000))
+        return color
+    }
+
+    /// PowerPoint's soft edges, in points.
+    static let softEdgeSizes: [Double] = [1, 2.5, 5, 10, 25, 50]
+
+    struct InnerShadowChoice {
+        let id: String
+        let label: String
+        let shadow: InnerShadow?
+    }
+
+    /// PowerPoint's inner shadows, each falling from the edge it names.
+    static let innerShadows: [InnerShadowChoice] = {
+        func inside(_ id: String, _ key: String.LocalizationValue, blur: Int = 63_500, distance: Int = 50_800, direction: Double)
+            -> InnerShadowChoice {
+            InnerShadowChoice(id: id, label: String(localized: key), shadow: InnerShadow(
+                blur: blur, distance: distance, direction: direction, color: Shadow.black(opacity: 0.5)
+            ))
+        }
+        return [
+            InnerShadowChoice(id: "none", label: String(localized: "Effect.None"), shadow: nil),
+            inside("topLeft", "InnerShadow.TopLeft", direction: 225),
+            inside("top", "InnerShadow.Top", direction: 270),
+            inside("topRight", "InnerShadow.TopRight", direction: 315),
+            inside("left", "InnerShadow.Left", direction: 180),
+            inside("center", "InnerShadow.Center", blur: 114_300, distance: 0, direction: 0),
+            inside("right", "InnerShadow.Right", direction: 0),
+            inside("bottomLeft", "InnerShadow.BottomLeft", direction: 135),
+            inside("bottom", "InnerShadow.Bottom", direction: 90),
+            inside("bottomRight", "InnerShadow.BottomRight", direction: 45),
+        ]
+    }()
+
+    /// The bevel profiles, as PowerPoint lists them; each is made 6 points wide and deep.
+    static let bevels: [(String, String)] = [
+        ("circle", String(localized: "Bevel.Circle")),
+        ("relaxedInset", String(localized: "Bevel.RelaxedInset")),
+        ("cross", String(localized: "Bevel.Cross")),
+        ("coolSlant", String(localized: "Bevel.CoolSlant")),
+        ("angle", String(localized: "Bevel.Angle")),
+        ("softRound", String(localized: "Bevel.SoftRound")),
+        ("convex", String(localized: "Bevel.Convex")),
+        ("slope", String(localized: "Bevel.Slope")),
+        ("divot", String(localized: "Bevel.Divot")),
+        ("riblet", String(localized: "Bevel.Riblet")),
+        ("hardEdge", String(localized: "Bevel.HardEdge")),
+        ("artDeco", String(localized: "Bevel.ArtDeco")),
+    ]
+
+    /// How far a shape can stand out, in points.
+    static let depthRange: ClosedRange<Double> = 0...200
+
+    /// Cameras that show a shape's depth: the plain front view, then some
+    /// of PowerPoint's oblique, perspective and isometric ones.
+    static let cameras: [(String, String)] = [
+        ("orthographicFront", String(localized: "Camera.OrthographicFront")),
+        ("obliqueTopLeft", String(localized: "Camera.ObliqueTopLeft")),
+        ("obliqueTopRight", String(localized: "Camera.ObliqueTopRight")),
+        ("obliqueBottomLeft", String(localized: "Camera.ObliqueBottomLeft")),
+        ("obliqueBottomRight", String(localized: "Camera.ObliqueBottomRight")),
+        ("perspectiveRelaxed", String(localized: "Camera.PerspectiveRelaxed")),
+        ("isometricOffAxis1Right", String(localized: "Camera.IsometricOffAxis1Right")),
+        ("isometricOffAxis2Left", String(localized: "Camera.IsometricOffAxis2Left")),
+    ]
+
+    /// PowerPoint's WordArt warps, in the order it lists them.
+    static let textWarps: [(String, String)] = [
+        ("textPlain", String(localized: "TextWarp.Plain")),
+        ("textStop", String(localized: "TextWarp.Stop")),
+        ("textTriangle", String(localized: "TextWarp.Triangle")),
+        ("textTriangleInverted", String(localized: "TextWarp.TriangleInverted")),
+        ("textChevron", String(localized: "TextWarp.Chevron")),
+        ("textChevronInverted", String(localized: "TextWarp.ChevronInverted")),
+        ("textRingInside", String(localized: "TextWarp.RingInside")),
+        ("textRingOutside", String(localized: "TextWarp.RingOutside")),
+        ("textArchUp", String(localized: "TextWarp.ArchUp")),
+        ("textArchDown", String(localized: "TextWarp.ArchDown")),
+        ("textCircle", String(localized: "TextWarp.Circle")),
+        ("textButton", String(localized: "TextWarp.Button")),
+        ("textArchUpPour", String(localized: "TextWarp.ArchUpPour")),
+        ("textArchDownPour", String(localized: "TextWarp.ArchDownPour")),
+        ("textCirclePour", String(localized: "TextWarp.CirclePour")),
+        ("textButtonPour", String(localized: "TextWarp.ButtonPour")),
+        ("textCurveUp", String(localized: "TextWarp.CurveUp")),
+        ("textCurveDown", String(localized: "TextWarp.CurveDown")),
+        ("textCanUp", String(localized: "TextWarp.CanUp")),
+        ("textCanDown", String(localized: "TextWarp.CanDown")),
+        ("textWave1", String(localized: "TextWarp.Wave1")),
+        ("textWave2", String(localized: "TextWarp.Wave2")),
+        ("textDoubleWave1", String(localized: "TextWarp.DoubleWave1")),
+        ("textWave4", String(localized: "TextWarp.Wave4")),
+        ("textInflate", String(localized: "TextWarp.Inflate")),
+        ("textDeflate", String(localized: "TextWarp.Deflate")),
+        ("textInflateBottom", String(localized: "TextWarp.InflateBottom")),
+        ("textDeflateBottom", String(localized: "TextWarp.DeflateBottom")),
+        ("textInflateTop", String(localized: "TextWarp.InflateTop")),
+        ("textDeflateTop", String(localized: "TextWarp.DeflateTop")),
+        ("textDeflateInflate", String(localized: "TextWarp.DeflateInflate")),
+        ("textDeflateInflateDeflate", String(localized: "TextWarp.DeflateInflateDeflate")),
+        ("textFadeRight", String(localized: "TextWarp.FadeRight")),
+        ("textFadeLeft", String(localized: "TextWarp.FadeLeft")),
+        ("textFadeUp", String(localized: "TextWarp.FadeUp")),
+        ("textFadeDown", String(localized: "TextWarp.FadeDown")),
+        ("textSlantUp", String(localized: "TextWarp.SlantUp")),
+        ("textSlantDown", String(localized: "TextWarp.SlantDown")),
+        ("textCascadeUp", String(localized: "TextWarp.CascadeUp")),
+        ("textCascadeDown", String(localized: "TextWarp.CascadeDown")),
+    ]
+
+    /// The patterns PowerPoint offers, in its order. The six older names
+    /// at the end of the list duplicate others; a pattern using one keeps it.
+    static var patterns: [(String, String)] {
+        Fill.Pattern.presetNames.dropLast(6).map { ($0, patternLabel($0)) }
+    }
+
+    static func patternLabel(_ preset: String) -> String {
+        switch preset {
+        case let name where name.hasPrefix("pct"):
+            // 5%, 10% and so on.
+            "\(name.dropFirst(3))%"
+        case "ltDnDiag": String(localized: "Pattern.LtDnDiag")
+        case "ltUpDiag": String(localized: "Pattern.LtUpDiag")
+        case "dkDnDiag": String(localized: "Pattern.DkDnDiag")
+        case "dkUpDiag": String(localized: "Pattern.DkUpDiag")
+        case "wdDnDiag": String(localized: "Pattern.WdDnDiag")
+        case "wdUpDiag": String(localized: "Pattern.WdUpDiag")
+        case "ltVert": String(localized: "Pattern.LtVert")
+        case "ltHorz": String(localized: "Pattern.LtHorz")
+        case "narVert": String(localized: "Pattern.NarVert")
+        case "narHorz": String(localized: "Pattern.NarHorz")
+        case "dkVert": String(localized: "Pattern.DkVert")
+        case "dkHorz": String(localized: "Pattern.DkHorz")
+        case "dashDnDiag": String(localized: "Pattern.DashDnDiag")
+        case "dashUpDiag": String(localized: "Pattern.DashUpDiag")
+        case "dashHorz": String(localized: "Pattern.DashHorz")
+        case "dashVert": String(localized: "Pattern.DashVert")
+        case "smConfetti": String(localized: "Pattern.SmConfetti")
+        case "lgConfetti": String(localized: "Pattern.LgConfetti")
+        case "zigZag": String(localized: "Pattern.ZigZag")
+        case "wave": String(localized: "Pattern.Wave")
+        case "diagBrick": String(localized: "Pattern.DiagBrick")
+        case "horzBrick": String(localized: "Pattern.HorzBrick")
+        case "weave": String(localized: "Pattern.Weave")
+        case "plaid": String(localized: "Pattern.Plaid")
+        case "divot": String(localized: "Pattern.Divot")
+        case "dotGrid": String(localized: "Pattern.DotGrid")
+        case "dotDmnd": String(localized: "Pattern.DotDmnd")
+        case "shingle": String(localized: "Pattern.Shingle")
+        case "trellis": String(localized: "Pattern.Trellis")
+        case "sphere": String(localized: "Pattern.Sphere")
+        case "smGrid": String(localized: "Pattern.SmGrid")
+        case "lgGrid": String(localized: "Pattern.LgGrid")
+        case "smCheck": String(localized: "Pattern.SmCheck")
+        case "lgCheck": String(localized: "Pattern.LgCheck")
+        case "openDmnd": String(localized: "Pattern.OpenDmnd")
+        case "solidDmnd": String(localized: "Pattern.SolidDmnd")
+        default: preset
+        }
+    }
 
     static let dashes: [(String, String)] = [
         ("solid", String(localized: "Line.Solid")), ("sysDash", String(localized: "Line.Dash")), ("sysDot", String(localized: "Line.Dot")),
