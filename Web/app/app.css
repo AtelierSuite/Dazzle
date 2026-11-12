@@ -783,6 +783,13 @@ body {
   text-decoration: none;
 }
 
+/* A picture bullet, as tall as the text and centred on its capitals. */
+.text__bullet-picture {
+  height: 1em;
+  width: auto;
+  vertical-align: -0.15em;
+}
+
 .text--prompt {
   pointer-events: none;
 }
