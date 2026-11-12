@@ -2,10 +2,12 @@ import DazzleEngine
 import SwiftUI
 
 /// Choosing where a link goes: a web address, a slide, or a step through
-/// the show.
+/// the show, and the ScreenTip pointing at it shows.
 struct LinkEditor: View {
     let link: Hyperlink?
+    let tooltip: String?
     let presentation: Presentation
+    let onTooltipChange: (String) -> Void
     let onChange: (Hyperlink?) -> Void
 
     private enum Kind: Hashable {
@@ -62,6 +64,10 @@ struct LinkEditor: View {
                     Text(verbatim: "\(index + 1). \(slide.title ?? String(localized: "Slide.Untitled"))").tag(slide.id)
                 }
             }
+        }
+        if kind != .none, kind != .other {
+            CommitTextField("Link.Tooltip.Placeholder", text: tooltip ?? "", commit: onTooltipChange)
+                .accessibilityIdentifier("linkTooltip")
         }
     }
 
