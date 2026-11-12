@@ -23,6 +23,9 @@ final class PresentationSession {
     private(set) var order: [Int] = []
     /// Where in `order` the slideshow is.
     private(set) var position = 0
+    /// Where to come back to as each custom show a link started ends, the
+    /// latest last.
+    private var returnPoints: [(order: [Int], position: Int)] = []
     private(set) var isPresenting = false
     private(set) var startedAt: Date?
     /// The audience sees black, while the presenter keeps their place.
@@ -68,12 +71,14 @@ final class PresentationSession {
 
     // MARK: - Starting and stopping
 
-    func start(_ presentation: Presentation, title: String, fromSlide slideIndex: Int, owner: UUID) {
+    /// Starts the slideshow from a slide, or a custom show from its start.
+    func start(_ presentation: Presentation, title: String, fromSlide slideIndex: Int, customShow: CustomShow.ID? = nil, owner: UUID) {
         self.presentation = presentation
         self.title = title
-        order = presentation.visibleSlideIndices
+        order = presentation.slideshowOrder(customShow: customShow)
+        returnPoints = []
         // Starting on a hidden slide starts on the next one that shows.
-        position = order.firstIndex { $0 >= slideIndex } ?? 0
+        position = customShow != nil ? 0 : order.firstIndex { $0 >= slideIndex } ?? 0
         isBlanked = false
         startedAt = Date()
         ownerID = owner
@@ -92,6 +97,7 @@ final class PresentationSession {
         ownerID = nil
         presentation = nil
         order = []
+        returnPoints = []
         position = 0
         builds = 0
         isAnimating = false
@@ -120,6 +126,9 @@ final class PresentationSession {
             playMedia(inStep: builds - 1)
         } else if position < order.count - 1 {
             move(to: position + 1)
+        } else if let back = returnPoints.popLast() {
+            // A custom show played from a link comes back to the link's slide, as it was left.
+            move(to: back.position, in: back.order, fullyBuilt: true)
         } else if loops {
             move(to: 0)
         } else {
@@ -212,11 +221,13 @@ final class PresentationSession {
         }
     }
 
-    /// Moves on to another slide, playing its transition.
-    private func move(to index: Int) {
+    /// Moves on to another slide, playing its transition: one in the order
+    /// given, when the show changes to a custom show and back.
+    private func move(to index: Int, in newOrder: [Int]? = nil, fullyBuilt: Bool = false) {
         let outgoing = currentSlide
         let outgoingFrame = animationFrame(at: Date())
         finishTransition()
+        if let newOrder { order = newOrder }
         position = index
         if let outgoing, let incoming = currentSlide, let transition = incoming.transition?.played(
             reduceMotion: Self.prefersReducedMotion, seed: position
@@ -232,7 +243,7 @@ final class PresentationSession {
                 self.transition = nil
             }
         }
-        beginSlide()
+        beginSlide(fullyBuilt: fullyBuilt)
         if let presentation, let slide = currentSlide, var showing = transition {
             // The slide's first animations wait for it to arrive.
             showing.incomingFrame = slide.animations.isEmpty ? nil : slide.animationTimeline.frame(
@@ -357,6 +368,13 @@ final class PresentationSession {
         case .firstSlide: go(toPosition: 0)
         case .lastSlide: go(toPosition: order.count - 1)
         case .endShow: end()
+        case .customShow(let id, let returns):
+            guard let presentation, let show = presentation.customShow(withID: id),
+                  case let showOrder = presentation.slideIndices(of: show), !showOrder.isEmpty else { return nil }
+            if returns { returnPoints.append((order, position)) }
+            isBlanked = false
+            move(to: 0, in: showOrder)
+            publish()
         case .slidePart, .other: break
         }
         return nil
