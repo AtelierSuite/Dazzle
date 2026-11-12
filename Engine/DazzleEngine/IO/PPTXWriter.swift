@@ -268,7 +268,7 @@ private struct PackageBuilder {
             if let created { root.insertChild(created, at: (after ?? -1) + 1) }
             return created
         }()
-        settings?.setAttribute("loop", presentation.loopsSlideshow ? "1" : nil)
+        if let settings { Self.write(presentation.showSettings, into: settings) }
         guard let xml = XMLLite.serialize(root) else { throw PresentationWriteError.unwritablePart(path) }
         parts[path] = Data((PackagePath.declaration + xml).utf8)
         if existing == nil {
@@ -277,6 +277,42 @@ private struct PackageBuilder {
                 id: Relationship.unusedID(in: mainRelationships), type: OOXML.RelationshipType.presProps,
                 target: PackagePath.relativeTarget(to: path, from: mainPart)
             ))
+        }
+    }
+
+    /// The settings into a `p:showPr`, keeping its pen colour and extensions.
+    static func write(_ show: SlideshowSettings, into settings: XMLElement) {
+        settings.setAttribute("loop", show.loops ? "1" : nil)
+        settings.setAttribute("useTimings", show.usesTimings ? nil : "0")
+        settings.setAttribute("showAnimation", show.showsAnimations ? nil : "0")
+        settings.setAttribute("showNarration", show.playsNarration ? "1" : nil)
+        // How it is shown: by a speaker, browsed in a window, or at a kiosk.
+        let kinds = ["present", "browse", "kiosk"]
+        let current = settings.children.first { kinds.contains($0.name) }
+        if show.isKiosk {
+            let restart = Int((show.kioskRestartAfter * 1_000).rounded())
+            if let current, current.name == "kiosk" {
+                current.setAttribute("restart", restart == 300_000 ? nil : String(restart))
+            } else if let kiosk = XMLLite.fragment("<p:kiosk/>", namespaces: OOXML.namespaces) {
+                kiosk.setAttribute("restart", restart == 300_000 ? nil : String(restart))
+                if let current { settings.removeChild(current) }
+                settings.insertChild(kiosk, at: 0)
+            }
+        } else if current?.name == "kiosk", let current {
+            settings.removeChild(current)
+            if let present = XMLLite.fragment("<p:present/>", namespaces: OOXML.namespaces) { settings.insertChild(present, at: 0) }
+        }
+        // Which slides: after how it is shown.
+        let ranges = ["sldAll", "sldRg", "custShow"]
+        let xml: String? = switch show.range {
+        case .all: settings.children.contains { ranges.contains($0.name) } ? "<p:sldAll/>" : nil
+        case .slides(let from, let to): "<p:sldRg st=\"\(min(from, to))\" end=\"\(max(from, to))\"/>"
+        case .customShow(let id): "<p:custShow id=\"\(id)\"/>"
+        }
+        for element in settings.children where ranges.contains(element.name) { settings.removeChild(element) }
+        if let xml, let range = XMLLite.fragment(xml, namespaces: OOXML.namespaces) {
+            let after = settings.children.lastIndex { kinds.contains($0.name) }
+            settings.insertChild(range, at: (after ?? -1) + 1)
         }
     }
 

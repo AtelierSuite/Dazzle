@@ -101,6 +101,9 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
         public var url: String?
         /// Whether it starts as its slide does, rather than when tapped.
         public var playsAutomatically = false
+        /// Whether it is a narration recorded onto the slide, which the
+        /// slideshow can be set not to play.
+        public var isNarration = false
 
         public init(kind: Kind, path: String? = nil, url: String? = nil, playsAutomatically: Bool = false) {
             self.kind = kind

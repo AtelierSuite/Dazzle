@@ -45,6 +45,10 @@ extension EditorState {
     func deleteCustomShow(_ id: CustomShow.ID, in presentation: inout Presentation) {
         presentation.customShows.removeAll { $0.id == id }
         presentation.areCustomShowsModified = true
+        // A slideshow set to play the show plays every slide again.
+        if presentation.showSettings.range == .customShow(id) {
+            updateShowSettings(in: &presentation) { $0.range = .all }
+        }
     }
 
     private func updateCustomShow(_ id: CustomShow.ID, in presentation: inout Presentation, _ change: (inout CustomShow) -> Void) {

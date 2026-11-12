@@ -29,10 +29,22 @@ extension Presentation {
         return visible.isEmpty ? indices : visible
     }
 
-    /// The slides a slideshow plays: a custom show's when one is asked for.
+    /// The slides a slideshow plays: a custom show's when one is asked for,
+    /// otherwise those the show settings choose, leaving out hidden ones.
     public func slideshowOrder(customShow: CustomShow.ID? = nil) -> [Int] {
         if let show = customShow.flatMap(self.customShow(withID:)), let order = slideIndices(of: show).nilIfEmpty {
             return order
+        }
+        switch showSettings.range {
+        case .all:
+            break
+        case .slides(let from, let to):
+            let range = (min(from, to) - 1)...(max(from, to) - 1)
+            let chosen = slides.indices.filter { range.contains($0) }
+            let visible = chosen.filter { !slides[$0].isHidden }
+            if let order = (visible.isEmpty ? chosen : visible).nilIfEmpty { return order }
+        case .customShow(let id):
+            if let show = self.customShow(withID: id), let order = slideIndices(of: show).nilIfEmpty { return order }
         }
         return visibleSlideIndices
     }

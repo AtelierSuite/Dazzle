@@ -23,9 +23,14 @@ public struct Presentation: Equatable, Sendable {
     /// Everyone who has commented, in each of PowerPoint's two formats.
     public var commentAuthors: [CommentAuthor] = []
     public var modernCommentAuthors: [ModernCommentAuthor] = []
+    /// How every slideshow of the presentation plays.
+    public var showSettings = SlideshowSettings()
     /// Whether the slideshow starts again from the first slide after the
     /// last, until stopped.
-    public var loopsSlideshow = false
+    public var loopsSlideshow: Bool {
+        get { showSettings.loops }
+        set { showSettings.loops = newValue }
+    }
     public var isShowSettingsModified = false
     /// Named selections of the slides, each played in its own order.
     public var customShows: [CustomShow] = []

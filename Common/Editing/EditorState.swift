@@ -421,6 +421,12 @@ final class EditorState {
         presentation.isShowSettingsModified = true
     }
 
+    /// Changes how every slideshow of the presentation plays.
+    func updateShowSettings(in presentation: inout Presentation, _ change: (inout SlideshowSettings) -> Void) {
+        change(&presentation.showSettings)
+        presentation.isShowSettingsModified = true
+    }
+
     func setBackground(_ fill: Fill?, in presentation: inout Presentation) {
         let index = selectedIndex(in: presentation)
         guard presentation.slides.indices.contains(index) else { return }

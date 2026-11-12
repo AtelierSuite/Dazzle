@@ -111,11 +111,36 @@ public enum PPTXReader {
         presentation.commentAuthors = authors
         presentation.modernCommentAuthors = modernAuthors
         if let properties = part(of: OOXML.RelationshipType.presProps), let root = try? XMLLite.parse(properties) {
-            presentation.loopsSlideshow = root.firstChild(named: "showPr")?.attribute("loop") == "1"
+            if let settings = root.firstChild(named: "showPr") {
+                presentation.showSettings = readShowSettings(settings)
+            }
         }
         presentation.customShows = readCustomShows(main.firstChild(named: "custShowLst"), slides: slides, target: target)
         presentation.resolveSlideLinks()
         return presentation
+    }
+
+    /// `p:showPr`: which slides play, and how.
+    static func readShowSettings(_ element: XMLElement) -> SlideshowSettings {
+        var settings = SlideshowSettings()
+        func flag(_ name: String, default value: Bool) -> Bool {
+            element.attribute(name).map { ["1", "true"].contains($0) } ?? value
+        }
+        settings.loops = flag("loop", default: false)
+        settings.usesTimings = flag("useTimings", default: true)
+        settings.showsAnimations = flag("showAnimation", default: true)
+        settings.playsNarration = flag("showNarration", default: false)
+        if let kiosk = element.firstChild(named: "kiosk") {
+            settings.isKiosk = true
+            if let restart = kiosk.attribute("restart").flatMap(Double.init) { settings.kioskRestartAfter = max(restart / 1_000, 1) }
+        }
+        if let range = element.firstChild(named: "sldRg") {
+            let from = range.attribute("st").flatMap(Int.init) ?? 1
+            settings.range = .slides(from: max(from, 1), to: max(range.attribute("end").flatMap(Int.init) ?? from, 1))
+        } else if let show = element.firstChild(named: "custShow")?.attribute("id").flatMap(Int.init) {
+            settings.range = .customShow(show)
+        }
+        return settings
     }
 
     /// `p:custShowLst`: each show's name, and its slides by relationship.
@@ -310,7 +335,12 @@ public enum PPTXReader {
     /// that runs with or after the slide's start rather than on a click.
     private static func markAutoplay(in timing: XMLElement, shapes: inout [SlideShape]) {
         var automatic: Set<Int> = []
+        var narrations: Set<Int> = []
         func visit(_ element: XMLElement) {
+            if element.name == "audio", ["1", "true"].contains(element.attribute("isNarration") ?? ""),
+               let target = element.firstDescendant(atPath: "cMediaNode/tgtEl/spTgt")?.attribute("spid").flatMap(Int.init) {
+                narrations.insert(target)
+            }
             if element.name == "cmd", element.attribute("cmd")?.hasPrefix("playFrom") == true,
                let target = element.firstDescendant(atPath: "cBhvr/tgtEl/spTgt")?.attribute("spid").flatMap(Int.init) {
                 var node = element.parent
@@ -324,9 +354,11 @@ public enum PPTXReader {
             element.children.forEach(visit)
         }
         visit(timing)
-        for index in shapes.indices where automatic.contains(shapes[index].shapeID) {
+        for index in shapes.indices where automatic.union(narrations).contains(shapes[index].shapeID) {
             if case .picture(var picture) = shapes[index].kind, picture.media != nil {
+                // A narration plays as its slide starts.
                 picture.media?.playsAutomatically = true
+                if narrations.contains(shapes[index].shapeID) { picture.media?.isNarration = true }
                 shapes[index].kind = .picture(picture)
             }
         }
