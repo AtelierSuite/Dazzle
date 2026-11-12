@@ -141,7 +141,7 @@ export class PresentationWindow {
     this.build();
     this.canvas = new SlideCanvas(this.root.querySelector(".app__canvas"), engine, this.media);
     this.navigator = new SlideNavigator(this.root.querySelector(".app__navigator"), engine, this.media, {
-      t, menu: (ids) => this.slideMenu(ids),
+      t, menu: (ids) => this.slideMenu(ids), sectionMenu: (id) => this.sectionMenu(id),
     });
     this.inspector = new Inspector(this.root.querySelector(".app__inspector"), engine, {
       t, language, run: (command) => this.run(command), ask: { scaling: () => this.askScaling() },
@@ -636,9 +636,40 @@ export class PresentationWindow {
   }
 
   /** The context menu over slides in the navigator. */
+  /** What can be done to a section, from its header's context menu. */
+  sectionMenu(id) {
+    if (!this.hasDocument) return null;
+    const sections = this.engine.state.sections ?? [];
+    const index = sections.findIndex((section) => section.id === id);
+    if (index < 0) return null;
+    return [
+      { label: t("Section.Rename"), action: () => this.renameSection(id) },
+      { separator: true },
+      { label: t("Section.MoveUp"), disabled: index === 0, action: () => this.engine.call("moveSection", { id, to: index - 1 }) },
+      { label: t("Section.MoveDown"), disabled: index === sections.length - 1, action: () => this.engine.call("moveSection", { id, to: index + 1 }) },
+      { separator: true },
+      { label: t("Section.Remove"), action: () => this.engine.call("removeSection", { id }) },
+      { label: t("Section.RemoveAll"), action: () => this.engine.call("removeAllSections") },
+    ];
+  }
+
+  /** Starts a section at a slide, then asks for its name. */
+  async addSection(slide) {
+    const response = await this.engine.call("addSection", { slide });
+    if (response) await this.renameSection(response);
+  }
+
+  async renameSection(id) {
+    const section = (this.engine.state.sections ?? []).find((each) => each.id === id);
+    if (!section) return;
+    const name = await this.askText(t("Section.Rename"), section.name, t("Section.Rename.Confirm"));
+    if (name != null) await this.engine.call("renameSection", { id, name });
+  }
+
   slideMenu(ids) {
     if (!this.hasDocument) return null;
     const hidden = ids.length && ids.every((id) => this.engine.state.slides.find((slide) => slide.id === id)?.hidden);
+    const sections = this.engine.state.sections ?? [];
     return [
       this.item("newSlide"),
       { label: t("Menu.Slide.NewWithLayout"), submenu: this.layoutItems() },
@@ -650,6 +681,16 @@ export class PresentationWindow {
       { label: t("Slide.Menu.Duplicate"), action: () => this.engine.call("duplicateSlides", { ids }) },
       { label: hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), action: () => this.engine.call("toggleHidden", { ids }) },
       { label: t("Slide.Menu.Delete"), disabled: this.engine.state.slides.length <= ids.length, action: () => this.engine.call("deleteSlides", { ids }) },
+      { separator: true },
+      { label: t("Section.Add"), disabled: ids.length !== 1, action: () => this.addSection(ids[0]) },
+      ...(sections.length > 1 ? [{
+        label: t("Section.MoveSlideTo"),
+        submenu: sections.map((section) => ({
+          label: section.name || t("Section.Untitled"),
+          disabled: ids.every((id) => section.slides.includes(id)),
+          action: () => this.engine.call("moveSlidesToSection", { ids, section: section.id }),
+        })),
+      }] : []),
       { separator: true },
       { label: t("Slide.Menu.Play"), action: () => this.play(ids[0]) },
     ];
@@ -1181,6 +1222,9 @@ export class PresentationWindow {
     }));
     this.navigator.addEventListener("pick", (event) => this.pickSlide(event.detail));
     this.navigator.addEventListener("move", (event) => this.engine.call("moveSlides", event.detail));
+    this.navigator.addEventListener("moveSection", (event) => this.engine.call("moveSection", event.detail));
+    this.navigator.addEventListener("moveToSection", (event) => this.engine.call("moveSlidesToSection", event.detail));
+    this.navigator.addEventListener("renameSection", (event) => this.renameSection(event.detail));
     this.navigator.addEventListener("command", (event) => this.run(event.detail));
     this.canvas.addEventListener("command", (event) => this.run(event.detail));
     this.canvas.addEventListener("selection", () => this.refreshInspector());

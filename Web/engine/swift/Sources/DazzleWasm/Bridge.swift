@@ -171,6 +171,28 @@ final class Bridge {
                     if from >= target { target += 1 }
                 }
             }
+        case "addSection":
+            // Starts a section at a slide; the result is its id, so the page can ask for its name.
+            if let id = uuid(r["slide"]) { session.select { $0.selectSlide(id) } }
+            var added: SlideSection.ID?
+            edit { state, presentation in added = state.addSection(in: &presentation) }
+            return added
+        case "renameSection":
+            guard let id = r["id"] as? String else { throw Failure(message: "No section.") }
+            edit { state, presentation in state.renameSection(id, to: r["name"] as? String ?? "", in: &presentation) }
+        case "removeSection":
+            guard let id = r["id"] as? String else { throw Failure(message: "No section.") }
+            edit { state, presentation in state.removeSection(id, in: &presentation) }
+        case "removeAllSections":
+            edit { state, presentation in state.removeAllSections(in: &presentation) }
+        case "moveSection":
+            guard let id = r["id"] as? String else { throw Failure(message: "No section.") }
+            let destination = r["to"] as? Int ?? 0
+            edit { state, presentation in state.moveSection(id, to: destination, in: &presentation) }
+        case "moveSlidesToSection":
+            guard let section = r["section"] as? String else { throw Failure(message: "No section.") }
+            let ids = uuids(r["ids"])
+            edit { state, presentation in state.moveSlides(ids, toSection: section, in: &presentation) }
         case "toggleHidden":
             let ids = uuids(r["ids"])
             edit { state, presentation in for id in ids { state.toggleHidden(id, in: &presentation) } }
@@ -919,6 +941,9 @@ final class Bridge {
                 var json: [String: Any] = ["id": slide.id.uuidString, "rev": session.revisions[slide.id] ?? 0]
                 if slide.isHidden { json["hidden"] = true }
                 return json
+            },
+            "sections": presentation.sections.map { section -> [String: Any] in
+                ["id": section.id, "name": section.name, "slides": section.slideIDs.map(\.uuidString)]
             },
             "sel": selection,
         ]

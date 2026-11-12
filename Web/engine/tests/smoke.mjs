@@ -1420,6 +1420,36 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
+// MARK: - Sections and zooms
+
+test("organises slides into sections, and keeps them on save", () => {
+  call("new", { name: "Sections.pptx" });
+  for (let index = 0; index < 4; index++) call("addSlide");
+  let { state } = call("info");
+  const slides = state.slides.map((slide) => slide.id);
+  const added = call("addSection", { slide: slides[2] });
+  assert.equal(typeof added.result, "string", "the new section's id, to name it");
+  assert.deepEqual(added.state.sections.map((section) => section.slides.length), [2, 3]);
+  call("renameSection", { id: added.result, name: "Results" });
+  const later = call("addSection", { slide: slides[4] }).result;
+  call("renameSection", { id: later, name: "Wrap-up" });
+  state = call("moveSection", { id: later, to: 0 }).state;
+  assert.deepEqual(state.sections.map((section) => section.name), ["Wrap-up", strings["Section.Default"], "Results"]);
+  assert.equal(state.slides[0].id, slides[4], "the section's slides move with it");
+  state = call("moveSlidesToSection", { ids: [slides[0]], section: later }).state;
+  assert.deepEqual(state.sections[0].slides, [slides[4], slides[0]]);
+
+  const saved = unzip(call("save", { format: "pptx", keep: true }).payload);
+  const main = new TextDecoder().decode(saved.get("ppt/presentation.xml"));
+  assert.match(main, /<p14:section [^>]*name="Results"/);
+  const reopened = call("open", { name: "Again.pptx" }, zip(saved)).state;
+  assert.deepEqual(reopened.sections.map((section) => section.name), ["Wrap-up", strings["Section.Default"], "Results"]);
+  assert.deepEqual(reopened.sections.map((section) => section.slides.length), [2, 1, 2]);
+  const removed = call("removeSection", { id: reopened.sections[1].id }).state;
+  assert.deepEqual(removed.sections.map((section) => section.slides.length), [3, 2], "its slides join the section before");
+  assert.equal(call("removeAllSections").state.sections.length, 0);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
