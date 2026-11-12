@@ -965,7 +965,7 @@ final class SlideCanvasView: NSView {
             )
             return InPlaceTextEditor.Target(
                 id: .cell(shape.id, position), body: body, shape: TableLayout.cellShape(body, rect),
-                sources: [layout.styleSource(forRow: position.row)], style: layout.style, slideNumber: slideNumber,
+                sources: [layout.styleSource(for: position)], style: layout.style, slideNumber: slideNumber,
                 fontScale: 1, anchor: cell.anchor ?? .top, frame: area, area: area, rotation: 0
             )
         }
