@@ -113,8 +113,19 @@ public enum PPTXReader {
         if let properties = part(of: OOXML.RelationshipType.presProps), let root = try? XMLLite.parse(properties) {
             presentation.loopsSlideshow = root.firstChild(named: "showPr")?.attribute("loop") == "1"
         }
+        presentation.customShows = readCustomShows(main.firstChild(named: "custShowLst"), slides: slides, target: target)
         presentation.resolveSlideLinks()
         return presentation
+    }
+
+    /// `p:custShowLst`: each show's name, and its slides by relationship.
+    private static func readCustomShows(_ list: XMLElement?, slides: [Slide], target: (String?) -> String?) -> [CustomShow] {
+        let ids = Dictionary(slides.compactMap { slide in slide.partName.map { ($0, slide.id) } }) { first, _ in first }
+        return list?.children(named: "custShow").compactMap { show in
+            guard let id = show.attribute("id").flatMap(Int.init) else { return nil }
+            let slideIDs = show.firstChild(named: "sldLst")?.children(named: "sld").compactMap { target($0.relationshipID).flatMap { ids[$0] } }
+            return CustomShow(id: id, name: show.attribute("name") ?? "", slideIDs: slideIDs ?? [])
+        } ?? []
     }
 
     // MARK: - Embedded fonts

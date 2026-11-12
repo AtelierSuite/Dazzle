@@ -27,6 +27,10 @@ public struct Presentation: Equatable, Sendable {
     /// last, until stopped.
     public var loopsSlideshow = false
     public var isShowSettingsModified = false
+    /// Named selections of the slides, each played in its own order.
+    public var customShows: [CustomShow] = []
+    /// Whether the custom shows must be written again.
+    public var areCustomShowsModified = false
     /// The Keynote document the presentation was converted from, if it was.
     public var keynoteSource: KeynoteSource?
 
