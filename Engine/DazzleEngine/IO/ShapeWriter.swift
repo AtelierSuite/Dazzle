@@ -607,7 +607,8 @@ public struct ShapeWriter {
         case .autoNumber(let scheme, let start)?:
             let startAt = start == 1 ? "" : " startAt=\"\(start)\""
             place("<a:buAutoNum type=\"\(XMLLite.escape(scheme))\"\(startAt)/>", replacing: bullets)
-        case nil: break
+        // Only ever read from the file, whose `a:buBlip` and its relationship are kept as they were.
+        case .picture?, nil: break
         }
         guard !element.attributes.isEmpty || !element.children.isEmpty else { return nil }
         return XMLLite.serialize(element, inheritedNamespaces: fragmentNamespaces)
