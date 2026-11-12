@@ -733,8 +733,8 @@ public struct TextRenderer {
                 }
                 if let color = properties.bulletColor { bulletRun.color = color }
                 let bulletScale = scale * (properties.bulletSize ?? 1)
-                result.append(NSAttributedString(
-                    string: Self.displayable(bulletText) + "\t",
+                result.append(string(
+                    Self.displayable(bulletText) + "\t", run: bulletRun,
                     attributes: attributes(for: bulletRun, scale: bulletScale, colorOverride: colorOverride)
                 ))
             }
@@ -758,7 +758,7 @@ public struct TextRenderer {
                 text = Self.symbolsMapped(text)
                 var runAttributes = attributes(for: runProperties, scale: scale, colorOverride: textColor)
                 if let link = run.properties.link { runAttributes[Self.linkKey] = LinkBox(link) }
-                result.append(NSAttributedString(string: text, attributes: runAttributes))
+                result.append(string(text, run: runProperties, attributes: runAttributes))
             }
 
             // A paragraph break, or for the last paragraph a zero-width space
@@ -800,6 +800,25 @@ public struct TextRenderer {
                     range: range
                 )
             }
+        }
+        return result
+    }
+
+    /// `text` in `attributes`, with what is in Arabic, Hebrew or another
+    /// complex script set in `run`'s complex-script typeface, at the same
+    /// size and weight.
+    private func string(_ text: String, run: RunProperties, attributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
+        let stretches = ComplexScript.stretches(in: text)
+        guard !stretches.isEmpty, let latin = attributes[Self.fontKey] else { return NSAttributedString(string: text, attributes: attributes) }
+        let result = NSMutableAttributedString(string: text, attributes: attributes)
+        let size = CTFontGetSize(latin as! CTFont) // swiftlint:disable:this force_cast
+        for stretch in stretches {
+            guard let family = style.complexScriptTypeface(for: run, script: stretch.script) else { continue }
+            let font = FontResolver.shared.font(
+                family: family, size: size, bold: run.isBold ?? false, italic: run.isItalic ?? false,
+                embedded: style.resources.embeddedFonts
+            )
+            result.addAttribute(Self.fontKey, value: font, range: NSRange(location: stretch.range.lowerBound, length: stretch.range.count))
         }
         return result
     }
