@@ -835,6 +835,7 @@ struct WebRenderer {
             json["outline"] = ["w": EMU.points(width), "c": css(style.color(color))]
         }
         if case .shadow(let shadow) = run.shadow { json["shadow"] = self.shadow(shadow, style: style) }
+        if let highlight = run.highlight?.color { json["hl"] = css(style.color(highlight)) }
         return json
     }
 

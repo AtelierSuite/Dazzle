@@ -1095,6 +1095,7 @@ export function runStyle(element, run, scale = 1) {
     element.style.webkitTextStroke = `${run.outline.w}px ${run.outline.c}`;
     element.style.paintOrder = "stroke fill";
   }
+  if (run.hl) element.style.backgroundColor = run.hl;
   if (run.shadow) element.style.textShadow = `${run.shadow.dx}px ${run.shadow.dy}px ${run.shadow.blur / 2}px ${run.shadow.c}`;
 }
 

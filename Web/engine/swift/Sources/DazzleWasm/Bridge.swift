@@ -827,6 +827,13 @@ final class Bridge {
                 if let family = value as? String { state.setFontFamily(family, in: &presentation) }
             case "color":
                 if let color = (value as? String).flatMap(Self.color) { state.setTextColor(color, in: &presentation) }
+            case "highlight":
+                // "none" takes the highlight away.
+                if let color = (value as? String).flatMap(Self.color) {
+                    state.setTextHighlight(color, in: &presentation)
+                } else if value as? String == "none" {
+                    state.setTextHighlight(nil, in: &presentation)
+                }
             case "align":
                 if let alignment = (value as? String).flatMap(ParagraphAlignment.init(rawValue:)) { state.setAlignment(alignment, in: &presentation) }
             case "list":
@@ -1057,6 +1064,10 @@ final class Bridge {
             json["font"] = style.typeface(run.latinFont) ?? style.theme.minorFont
             json["color"] = css(run.color.map { style.color($0) } ?? style.color(.scheme("tx1")))
             if case .scheme(let name)? = run.color?.base, run.color?.transforms.isEmpty == true { json["scheme"] = name }
+            if let highlight = run.highlight?.color {
+                json["highlight"] = css(style.color(highlight))
+                if case .scheme(let name) = highlight.base, highlight.transforms.isEmpty { json["highlightScheme"] = name }
+            }
         }
         if case .percent(let value)? = paragraph.lineSpacing { json["lineSpacing"] = value }
         if let shape = editor.selectedShape(in: presentation), let slide = editor.selectedSlide(in: presentation) {
