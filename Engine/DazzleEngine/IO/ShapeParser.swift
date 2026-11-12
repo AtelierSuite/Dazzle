@@ -367,13 +367,15 @@ public final class ShapeParser {
                 }
             )
         }
-        return SlideTable(
-            columnWidths: widths, rows: rows,
-            hasHeaderRow: properties?.attribute("firstRow") == "1",
-            hasBandedRows: properties?.attribute("bandRow") == "1",
+        var table = SlideTable(
+            columnWidths: widths, rows: rows, hasHeaderRow: false, hasBandedRows: false,
             styleID: properties?.firstChild(named: "tableStyleId")?.text.trimmed.nilIfEmpty,
             sourceProperties: properties.flatMap(capture)
         )
+        for option in SlideTable.StyleOption.allCases {
+            table[option] = ["1", "true"].contains(properties?.attribute(option.attribute))
+        }
+        return table
     }
 
     // MARK: - Transforms and geometry
