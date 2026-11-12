@@ -24,6 +24,8 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
         case effects
         /// Where clicking it goes.
         case link
+        /// The text styles a layout's or master's placeholder hands down.
+        case listStyle
     }
 
     public enum Kind: Equatable, Hashable, Sendable {
