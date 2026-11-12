@@ -80,6 +80,8 @@ extension EditorState {
 
     /// Puts copies of `slides`, from `source`, after the slide being edited.
     func pasteSlides(_ slides: [Slide], from source: Presentation, into presentation: inout Presentation) {
+        // Slides go among slides, never among the masters and layouts, nor those among slides.
+        guard !presentation.isInMasterView, !source.isInMasterView else { return }
         var importer = PartImporter(from: source, into: presentation)
         var position = min(selectedIndex(in: presentation) + 1, presentation.slides.count)
         var lastID: Slide.ID?
