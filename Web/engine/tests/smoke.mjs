@@ -342,6 +342,15 @@ function deckWithShapes() {
       <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
       <p:txBody><a:bodyPr vert="eaVert"><a:spAutoFit/></a:bodyPr><a:p><a:r><a:rPr lang="ja-JP"/><a:t>縦書きText</a:t></a:r></a:p></p:txBody>
     </p:sp>
+    <p:sp><p:nvSpPr><p:cNvPr id="933" name="RightToLeft"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
+      <p:txBody><a:bodyPr/><a:lstStyle/>
+        <a:p><a:pPr marL="342900" indent="-342900" algn="r" rtl="1"><a:buChar char="•"/></a:pPr>
+          <a:r><a:rPr lang="ar-SA"><a:latin typeface="Georgia"/><a:cs typeface="Damascus"/></a:rPr><a:t>مرحبا Dazzle</a:t></a:r>
+          <a:r><a:rPr lang="en-US"><a:latin typeface="Georgia"/><a:cs typeface="Damascus"/></a:rPr><a:t> 2024</a:t></a:r></a:p>
+        <a:p><a:pPr rtl="0"/><a:r><a:rPr lang="en-US"/><a:t>Left to right</a:t></a:r></a:p>
+      </p:txBody>
+    </p:sp>
     ${wordArtShapes(frame)}`;
   const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
@@ -399,7 +408,7 @@ const drawn = (() => {
       lined: named("Lined"), tiled: named("Tiled"), patterned: named("Patterned"), grid: named("Grid"),
       cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
       recoloured: named("Recoloured"), stylised: named("Stylised"),
-      columned: named("Columned"), tabbed: named("Tabbed"), vertical: named("Vertical"),
+      columned: named("Columned"), tabbed: named("Tabbed"), vertical: named("Vertical"), rightToLeft: named("RightToLeft"),
       arched: named("Arched"), waved: named("Waved"), unwarped: named("Unwarped"),
     };
   } catch (error) {
@@ -566,6 +575,31 @@ test("draws path gradients from fillToRect to their tile, and scaled linear ones
   assert.deepEqual([circle.focus, circle.tile], [[0, 0, 1, 1], [-1, -1, 0, 0]], "from the top-left corner");
   const scaled = fill("Scaled gradient");
   assert.deepEqual([scaled?.t, scaled?.angle, scaled?.scaled], ["linear", 45, true]);
+});
+
+test("reads right-to-left paragraphs from the right, their complex scripts in their own typeface, and saves both", () => {
+  if (drawn.error) throw drawn.error;
+  const [arabic, latin] = drawn.rightToLeft.text.paras;
+  assert.equal(arabic.rtl, true);
+  assert.equal(arabic.align, "r", "left and right stay as the file names them");
+  assert.equal(arabic.ml, 27, "the margin, measured from the right");
+  assert.equal(arabic.bullet.t, "•");
+  assert.deepEqual([arabic.runs[0].f, arabic.runs[0].cs], ["Georgia", "Damascus"], "Arabic takes the run's complex-script typeface");
+  assert.equal(arabic.runs[1].cs, undefined, "a run with no complex script says nothing");
+  assert.equal(latin.rtl, undefined);
+  assert.equal(latin.align, "l");
+
+  call("select", { slide: drawn.slide, shapes: [drawn.rightToLeft.id] });
+  call("beginText", { shape: drawn.rightToLeft.id });
+  call("setText", { paras: [
+    { src: 0, runs: [{ src: [0, 0], t: "أهلا Dazzle" }, { src: [0, 1], t: " 2024" }] },
+    { src: 1, runs: [{ src: [1, 0], t: "Left to right" }] },
+  ] });
+  call("endText");
+  const slide = new TextDecoder().decode(unzip(call("save", { format: "pptx", keep: true }).payload).get("ppt/slides/slide1.xml"));
+  assert.match(slide, /أهلا Dazzle/, "the typed text is saved");
+  assert.match(slide, /<a:pPr[^>]*rtl="1"/);
+  assert.match(slide, /<a:cs typeface="Damascus"\/>/);
 });
 
 test("sets tabbed text on its stops and the default tab size, and saves them", () => {

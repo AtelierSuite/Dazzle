@@ -716,7 +716,9 @@ struct WebRenderer {
             let baseSize = Double(firstRun.size ?? 1_800) / 100
 
             var json: [String: Any] = ["i": index, "lvl": level]
-            json["align"] = (properties.alignment ?? .left).rawValue
+            json["align"] = properties.effectiveAlignment.rawValue
+            // A right-to-left paragraph: its margin, indent, bullet and tabs are measured from the right.
+            if properties.isRightToLeft == true { json["rtl"] = true }
             json["ml"] = n(CGFloat(EMU.points(properties.marginLeft ?? 0)))
             json["ind"] = n(CGFloat(EMU.points(properties.indent ?? 0)))
             switch properties.lineSpacing {
@@ -788,6 +790,11 @@ struct WebRenderer {
                 }
                 var json = run(runProperties, style: style)
                 json["r"] = runIndex
+                // The typeface for the run's Arabic, Hebrew or other complex-script text, when it has any.
+                if textRun.kind == .text, let script = ComplexScript.stretches(in: textRun.text).first?.script,
+                   let complex = style.complexScriptTypeface(for: runProperties, script: script) {
+                    json["cs"] = complex
+                }
                 switch textRun.kind {
                 case .lineBreak:
                     json["br"] = true
