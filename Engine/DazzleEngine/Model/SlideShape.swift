@@ -24,6 +24,8 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
         case effects
         /// Where clicking it goes.
         case link
+        /// How its video or sound plays.
+        case media
     }
 
     public enum Kind: Equatable, Hashable, Sendable {
@@ -101,12 +103,60 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
         public var url: String?
         /// Whether it starts as its slide does, rather than when tapped.
         public var playsAutomatically = false
+        /// `p14:trim st`: seconds left out at the start.
+        public var trimStart = 0.0
+        /// `p14:trim end`: seconds left out at the end.
+        public var trimEnd = 0.0
+        /// `p14:fade in`: seconds it takes to fade in as it starts.
+        public var fadeIn = 0.0
+        /// `p14:fade out`: seconds it takes to fade out before it ends.
+        public var fadeOut = 0.0
+        /// `p:cMediaNode vol`: how loud it plays, from 0 to 1.
+        public var volume = 1.0
+        /// `p:cMediaNode mute`.
+        public var isMuted = false
+        /// `p:cTn repeatCount="indefinite"`: plays again from the start until stopped.
+        public var loops = false
+        /// `p:cTn fill="remove"`: goes back to its first frame once it has played.
+        public var rewinds = false
+        /// `p:video fullScrn`: fills the screen while it plays.
+        public var playsFullScreen = false
+        /// `p:cMediaNode showWhenStopped="0"`: shown only while it plays.
+        public var hidesWhenNotPlaying = false
+        /// `p:cMediaNode numSld` above one: a sound that keeps playing as the
+        /// slideshow moves on.
+        public var playsAcrossSlides = false
 
         public init(kind: Kind, path: String? = nil, url: String? = nil, playsAutomatically: Bool = false) {
             self.kind = kind
             self.path = path
             self.url = url
             self.playsAutomatically = playsAutomatically
+        }
+
+        /// The settings the slide's timing holds, as opposed to the picture's own XML.
+        public var hasTimingSettings: Bool {
+            volume != 1 || isMuted || loops || rewinds || playsFullScreen || hidesWhenNotPlaying || playsAcrossSlides
+        }
+
+        /// How loud it plays once muting is taken into account.
+        public var effectiveVolume: Double { isMuted ? 0 : min(max(volume, 0), 1) }
+
+        /// The stretch of a file `duration` seconds long that plays, after trimming.
+        public func playedRange(duration: Double) -> ClosedRange<Double> {
+            let start = min(max(trimStart, 0), max(duration, 0))
+            let end = max(duration - max(trimEnd, 0), start)
+            return start...end
+        }
+
+        /// How far through its fades it is, from 0 (silent and unseen) to 1,
+        /// at `time` seconds into the file.
+        public func fadeLevel(at time: Double, duration: Double) -> Double {
+            let range = playedRange(duration: duration)
+            var level = 1.0
+            if fadeIn > 0 { level = min(level, (time - range.lowerBound) / fadeIn) }
+            if fadeOut > 0, duration > 0 { level = min(level, (range.upperBound - time) / fadeOut) }
+            return min(max(level, 0), 1)
         }
     }
 

@@ -20,7 +20,7 @@ public struct ShapeWriter {
         if shape.edits.isEmpty, let source = shape.source { return source }
         guard let element = element(for: shape) else { return shape.source }
         let edits: Set<SlideShape.Edit> = shape.source == nil
-            ? [.transform, .fill, .line, .text, .table, .picture, .altText, .effects, .link] : shape.edits
+            ? [.transform, .fill, .line, .text, .table, .picture, .altText, .effects, .link, .media] : shape.edits
         if edits.contains(.transform), shape.hasOwnFrame || shape.source != nil {
             writeTransform(of: shape, into: element)
         }
@@ -41,6 +41,9 @@ public struct ShapeWriter {
         }
         if edits.contains(.picture), case .picture(let picture) = shape.kind {
             writePicture(picture, into: element)
+        }
+        if edits.contains(.media), case .picture(let picture) = shape.kind, let media = picture.media {
+            writeMediaTiming(media, into: element)
         }
         if edits.contains(.link), shape.link != .other {
             let common = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "cNvPr")
@@ -461,6 +464,37 @@ public struct ShapeWriter {
         let after = fill.children.firstIndex { $0.name == "blip" }
         fill.insertChild(crop, at: (after ?? -1) + 1)
     }
+
+    /// Writes a video or sound's trim and fades into its `p14:media`, which
+    /// PowerPoint 2010 and later read; the rest of how it plays is in the
+    /// slide's timing.
+    private func writeMediaTiming(_ media: SlideShape.Media, into element: XMLElement) {
+        let details = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "nvPr")
+        guard let embedded = details?.firstChild(named: "extLst")?.children
+            .compactMap({ $0.firstChild(named: "media") }).first else { return }
+        let prefix = embedded.qualifiedName.split(separator: ":").dropLast().last.map(String.init) ?? "p14"
+        let uri = embedded.sourceNamespaceBinding(forPrefix: prefix) ?? Self.powerPoint2010
+        let namespaces = fragmentNamespaces.merging([prefix: uri]) { _, new in new }
+        for name in ["trim", "fade"] { embedded.firstChild(named: name).map(embedded.removeChild) }
+        func ms(_ seconds: Double) -> String { String(Int((max(seconds, 0) * 1_000).rounded())) }
+        var added: [String] = []
+        if media.trimStart > 0 || media.trimEnd > 0 {
+            let start = media.trimStart > 0 ? " st=\"\(ms(media.trimStart))\"" : ""
+            let end = media.trimEnd > 0 ? " end=\"\(ms(media.trimEnd))\"" : ""
+            added.append("<\(prefix):trim\(start)\(end)/>")
+        }
+        if media.fadeIn > 0 || media.fadeOut > 0 {
+            let fadeIn = media.fadeIn > 0 ? " in=\"\(ms(media.fadeIn))\"" : ""
+            let fadeOut = media.fadeOut > 0 ? " out=\"\(ms(media.fadeOut))\"" : ""
+            added.append("<\(prefix):fade\(fadeIn)\(fadeOut)/>")
+        }
+        // Trim, then fade, before any bookmarks and extensions.
+        for (offset, xml) in added.enumerated() {
+            if let child = XMLLite.fragment(xml, namespaces: namespaces) { embedded.insertChild(child, at: offset) }
+        }
+    }
+
+    private static let powerPoint2010 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
 
     // MARK: - Tables
 
