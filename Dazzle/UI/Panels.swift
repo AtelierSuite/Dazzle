@@ -145,9 +145,10 @@ struct TextPanel: View {
     }
 }
 
-/// Every typeface the device has, led by the theme's own two.
+/// Every typeface the device has, led by the theme's own two when there
+/// is a theme to refer to.
 struct FontPicker: View {
-    let theme: Theme
+    let theme: Theme?
     let selected: String?
     let onSelect: (String) -> Void
 
@@ -158,7 +159,7 @@ struct FontPicker: View {
 
     var body: some View {
         List {
-            if search.isEmpty {
+            if search.isEmpty, let theme {
                 Section("Format.Font.Theme") {
                     row(value: "+mj-lt", display: theme.majorFont,
                         label: String(format: String(localized: "Format.Font.Headings"), theme.majorFont))

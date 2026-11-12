@@ -95,7 +95,7 @@ struct DeckView: View {
             .navigationTransition(.zoom(sourceID: panel, in: panelTransition))
             // Formatting panels stay at half height, so the slide they change
             // is always in view; export needs the room for its slide picker.
-            .presentationDetents(panel == .export ? [.large] : ([.find, .chart, .comments, .headerFooter, .animations].contains(panel) ? [.medium, .large] : [.medium]))
+            .presentationDetents(panel == .export ? [.large] : ([.find, .chart, .comments, .headerFooter, .theme, .animations].contains(panel) ? [.medium, .large] : [.medium]))
             .presentationDragIndicator(.visible)
             // Swiping inside a panel scrolls its content rather than growing it.
             .presentationContentInteraction(.scrolls)
@@ -196,6 +196,7 @@ struct DeckView: View {
         case .animations: AnimationPanel(presentation: presentation, state: state)
         case .comments: CommentsPanel(presentation: presentation, state: state)
         case .headerFooter: HeaderFooterPanel(presentation: presentation, state: state)
+        case .theme: ThemePanel(presentation: presentation, state: state)
         }
     }
 
@@ -465,6 +466,12 @@ struct DeckView: View {
                 state.presentedPanel = .headerFooter
             }
             .accessibilityIdentifier("headerFooter")
+            Button("Toolbar.Theme", systemImage: "paintpalette") {
+                state.endEditingText()
+                state.presentedPanel = .theme
+            }
+            .disabled(!state.canEditTheme(in: document.presentation))
+            .accessibilityIdentifier("theme")
             Section {
                 Link(destination: URL(string: "https://github.com/AtelierSuite/Dazzle")!) {
                     Label("Toolbar.SourceCode", systemImage: "chevron.left.forwardslash.chevron.right")
