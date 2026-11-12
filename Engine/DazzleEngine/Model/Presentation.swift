@@ -27,6 +27,10 @@ public struct Presentation: Equatable, Sendable {
     /// last, until stopped.
     public var loopsSlideshow = false
     public var isShowSettingsModified = false
+    /// Title, author, dates and the rest of `docProps`.
+    public var properties = DocumentProperties()
+    /// Whether `properties` must be written over the file's own.
+    public var arePropertiesModified = false
     /// The Keynote document the presentation was converted from, if it was.
     public var keynoteSource: KeynoteSource?
 
