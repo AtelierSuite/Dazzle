@@ -374,6 +374,7 @@ export class Inspector extends EventTarget {
       ], kind))
       + (kind === "url" ? this.row("", this.text("linkURL", t("Link.URL"), link.url, { placeholder: t("Link.URL.Placeholder") })) : "")
       + (kind === "slide" ? this.row("", this.popup("linkSlide", t("Link.Slide"), slides, link.slide)) : "")
+      + (link ? this.row(t("Link.Tooltip.Placeholder"), this.text("linkTooltip", t("Link.Tooltip.Placeholder"), link.tooltip ?? "", { placeholder: t("Link.Tooltip.Placeholder") })) : "")
       + this.note(t("Format.Link.Footer")), { open: Boolean(link) });
   }
 
@@ -666,6 +667,7 @@ export class Inspector extends EventTarget {
         return engine.call("setLink", { link: { action: value } });
       case "linkURL": return engine.call("setLink", { link: { url: value } });
       case "linkSlide": return engine.call("setLink", { link: { slide: value } });
+      case "linkTooltip": return engine.call("setLinkTooltip", { tooltip: value });
       // Slide
       case "layout": return engine.call("setLayout", { layout: value });
       case "hidden": return engine.call("toggleHidden", { ids: [data.slide.id] });

@@ -344,6 +344,15 @@ final class Bridge {
             edit { state, presentation in
                 if r["text"] as? Bool == true { state.setTextLink(link, in: &presentation) } else { state.setShapeLink(link, in: &presentation) }
             }
+        case "setLinkTooltip":
+            edit(coalesce: "tip:\(editor.selectedShapeID?.uuidString ?? "")") { state, presentation in
+                let tooltip = r["tooltip"] as? String ?? ""
+                if r["text"] as? Bool == true {
+                    state.setTextLinkTooltip(tooltip, in: &presentation)
+                } else {
+                    state.setShapeLinkTooltip(tooltip, in: &presentation)
+                }
+            }
         case "setAltText":
             edit(coalesce: "alt:\(editor.selectedShapeID?.uuidString ?? "")") { state, presentation in
                 state.setAltText(r["text"] as? String ?? "", in: &presentation)
@@ -1153,7 +1162,7 @@ final class Bridge {
             shapeJSON["shadow"] = FormatChoices.shadows.first { $0.shadow == shape.shadow }?.id ?? (shape.shadow == nil ? "none" : "custom")
             shapeJSON["reflection"] = FormatChoices.reflections.first { $0.reflection == shape.reflection }?.id ?? (shape.reflection == nil ? "none" : "custom")
         }
-        if let link = shape.link { shapeJSON["link"] = WebRenderer.link(link) as Any }
+        if let link = shape.link { shapeJSON["link"] = WebRenderer.link(link, tooltip: shape.linkTooltip) as Any }
         if case .picture(let picture) = shape.kind {
             shapeJSON["crop"] = [picture.cropLeft, picture.cropTop, picture.cropRight, picture.cropBottom]
             let image = SlideShape.Picture.imageRect(frame: frame, picture: picture)
