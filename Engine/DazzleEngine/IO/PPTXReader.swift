@@ -77,6 +77,7 @@ public enum PPTXReader {
 
         // Slides, in the order the presentation lists them.
         var slides: [Slide] = []
+        var slidesByNumber: [String: Slide.ID] = [:]
         for entry in main.firstChild(named: "sldIdLst")?.children(named: "sldId") ?? [] {
             guard let path = target(entry.relationshipID), parts[path] != nil else { continue }
             guard var slide = readSlide(path, resources: resources, parts: parts, features: &features) else { continue }
@@ -92,6 +93,7 @@ public enum PPTXReader {
             }
             slide.partName = path
             slide.sourcePart = path
+            if let number = entry.unprefixedID { slidesByNumber[number] = slide.id }
             slides.append(slide)
         }
 
@@ -113,8 +115,27 @@ public enum PPTXReader {
         if let properties = part(of: OOXML.RelationshipType.presProps), let root = try? XMLLite.parse(properties) {
             presentation.loopsSlideshow = root.firstChild(named: "showPr")?.attribute("loop") == "1"
         }
+        presentation.sections = readSections(in: main, slides: slidesByNumber)
+        presentation.settleSections()
         presentation.resolveSlideLinks()
         return presentation
+    }
+
+    // MARK: - Sections
+
+    /// `p14:sectionLst`, in the presentation's extensions. Its entries name
+    /// slides by their `p:sldId` number.
+    private static func readSections(in main: XMLElement, slides: [String: Slide.ID]) -> [SlideSection] {
+        let list = main.firstChild(named: "extLst")?.children(named: "ext")
+            .lazy.compactMap { $0.firstChild(named: "sectionLst") }.first
+        return list?.children(named: "section").map { element in
+            SlideSection(
+                id: element.attribute("id")?.nilIfEmpty ?? SlideSection.newID(),
+                name: element.attribute("name") ?? "",
+                slideIDs: element.firstChild(named: "sldIdLst")?.children(named: "sldId")
+                    .compactMap { $0.unprefixedID.flatMap { slides[$0] } } ?? []
+            )
+        } ?? []
     }
 
     // MARK: - Embedded fonts
