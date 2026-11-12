@@ -19,7 +19,10 @@ extension InspectorViewController {
         }
         if case .table(let table) = shape.kind { buildTable(table) }
         if case .chart(let chart?) = shape.kind, !state.hasMultipleSelection { buildChart(chart) }
-        if case .picture = shape.kind, !state.hasMultipleSelection { buildPicture() }
+        if case .picture(let picture) = shape.kind, !state.hasMultipleSelection {
+            buildPicture()
+            if let media = picture.media { buildPlayback(kind: media.kind) }
+        }
         switch shape.kind {
         case .shape, .connector, .picture:
             buildOutline(of: shape)
@@ -438,6 +441,50 @@ extension InspectorViewController {
         buttons.spacing = 6
         form.row(nil, replace)
         form.row(nil, buttons)
+    }
+
+    /// How a video or sound plays in the slideshow.
+    private func buildPlayback(kind: SlideShape.Media.Kind) {
+        form.section(String(localized: "Format.Section.Playback"))
+        let seconds = String(format: String(localized: "Media.Seconds"), "").trimmingCharacters(in: .whitespaces)
+        var media: SlideShape.Media? {
+            guard case .picture(let picture)? = deck.selectedShape?.kind else { return nil }
+            return picture.media
+        }
+        func change(_ apply: @escaping (inout SlideShape.Media) -> Void) {
+            edit { state.setMedia(in: &$0, apply) }
+        }
+        let times: [(String.LocalizationValue, KeyPath<SlideShape.Media, Double>, WritableKeyPath<SlideShape.Media, Double>)] = [
+            ("Media.TrimStart", \.trimStart, \.trimStart), ("Media.TrimEnd", \.trimEnd, \.trimEnd),
+            ("Media.FadeIn", \.fadeIn, \.fadeIn), ("Media.FadeOut", \.fadeOut, \.fadeOut),
+        ]
+        for (title, read, write) in times {
+            form.row(String(localized: title), form.number(
+                get: { media?[keyPath: read] ?? 0 },
+                set: { value in change { $0[keyPath: write] = value } },
+                range: 0...3_600, step: 0.5, unit: seconds
+            ))
+        }
+        form.row(String(localized: "Media.Volume"), form.number(
+            get: { ((media?.volume ?? 1) * 100).rounded() },
+            set: { value in change { $0.volume = value / 100 } },
+            range: 0...100, step: 10, unit: "%"
+        ))
+        var toggles: [(String.LocalizationValue, WritableKeyPath<SlideShape.Media, Bool>)] = [
+            ("Media.Mute", \.isMuted), ("Media.Loop", \.loops), ("Media.Rewind", \.rewinds),
+        ]
+        if kind == .video {
+            toggles += [("Media.FullScreen", \.playsFullScreen)]
+        } else {
+            toggles += [("Media.AcrossSlides", \.playsAcrossSlides)]
+        }
+        toggles += [("Media.HideWhenStopped", \.hidesWhenNotPlaying)]
+        for (title, path) in toggles {
+            form.row(nil, form.checkbox(String(localized: title), get: { media?[keyPath: path] ?? false }, set: { isOn in
+                change { $0[keyPath: path] = isOn }
+            }))
+        }
+        form.note(String(localized: "Format.Playback.Footer"))
     }
 
     // MARK: - Arranging
