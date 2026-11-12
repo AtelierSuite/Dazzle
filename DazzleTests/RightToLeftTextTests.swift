@@ -170,8 +170,8 @@ struct RightToLeftTextTests {
 
         // The same text in a left-to-right paragraph starts with its Arabic at the left.
         let leftToRight = try shape(paragraph("ابجد Dazzle هوز", properties: "<a:pPr algn=\"l\" rtl=\"0\"/>"))
-        let others = try offsets(leftToRight, of: ["د", "D", "z", "ز"])
-        #expect(abs(others[0]) < 0.5)
+        let others = try offsets(leftToRight, of: ["ا", "D", "z", "ه"])
+        #expect(abs(try ends(leftToRight).left) < 0.5)
         #expect(others[0] < others[1] && others[1] < others[2] && others[2] < others[3])
     }
 
@@ -201,7 +201,8 @@ struct RightToLeftTextTests {
         let numbered = try shape(paragraph("مرحبا", properties: """
             <a:pPr marL="457200" indent="-457200" algn="r" rtl="1"><a:buAutoNum type="arabicPeriod"/></a:pPr>
             """))
-        let number = try offsets(numbered, of: ["1", ".", "م"])
+        // (The tab after it starts where the full stop ends, at its left.)
+        let number = try offsets(numbered, of: ["1", "\t", "م"])
         #expect(number[1] < number[0])
         #expect(abs(number[2] - (width - 36)) < 0.5)
 
