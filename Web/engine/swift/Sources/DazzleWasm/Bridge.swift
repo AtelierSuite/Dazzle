@@ -417,8 +417,9 @@ final class Bridge {
             default: nil
             }
             if let change { edit { state, presentation in state.changeTable(change, in: &presentation) } }
-            if let header = r["header"] as? Bool { edit { state, presentation in state.setTableHeaderRow(header, in: &presentation) } }
-            if let banded = r["banded"] as? Bool { edit { state, presentation in state.setTableBandedRows(banded, in: &presentation) } }
+            for option in SlideTable.StyleOption.allCases {
+                if let isOn = r[option.rawValue] as? Bool { edit { state, presentation in state.setTableOption(option, isOn, in: &presentation) } }
+            }
         case "setCellFill":
             let fill = try fill(r["fill"])
             edit { state, presentation in state.setCellFill(fill, in: &presentation) }
@@ -1175,7 +1176,7 @@ final class Bridge {
         }
         if case .table(let table) = shape.kind {
             var tableJSON: [String: Any] = [
-                "rows": table.rows.count, "columns": table.columnCount, "header": table.hasHeaderRow, "banded": table.hasBandedRows,
+                "rows": table.rows.count, "columns": table.columnCount, "options": Dictionary(uniqueKeysWithValues: SlideTable.StyleOption.allCases.map { ($0.rawValue, table[$0]) }),
             ]
             if let position = editor.selectedCell, let cell = table.cell(at: position) {
                 tableJSON["cell"] = ["r": position.row, "c": position.column, "fill": fillJSON(cell.fill, resolved: cell.fill, style: style, placeholder: nil)]

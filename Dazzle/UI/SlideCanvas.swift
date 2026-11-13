@@ -436,7 +436,7 @@ struct SlideCanvas: View {
                 height: rect.height - EMU.points((cell.marginTop ?? 45_720) + (cell.marginBottom ?? 45_720))
             )
             InPlaceTextEditor(
-                body: body, shape: TableLayout.cellShape(body, rect), sources: [layout.styleSource(forRow: position.row)],
+                body: body, shape: TableLayout.cellShape(body, rect), sources: [layout.styleSource(for: position)],
                 style: layout.style, slideNumber: (presentation.index(of: slide.id) ?? 0) + 1, scale: scale, fontScale: 1,
                 anchor: cell.anchor ?? .top, selection: state.textSelection,
                 onChange: { state.setCellText($0, in: &presentation) },

@@ -516,8 +516,9 @@ public struct ShapeWriter {
               let grid = data.firstChild(named: "tbl") else { return }
         let properties = table.sourceProperties.flatMap(fragment) ?? grid.firstChild(named: "tblPr") ?? fragment("<a:tblPr/>")
         guard let properties else { return }
-        properties.setAttribute("firstRow", table.hasHeaderRow ? "1" : nil)
-        properties.setAttribute("bandRow", table.hasBandedRows ? "1" : nil)
+        for option in SlideTable.StyleOption.allCases {
+            properties.setAttribute(option.attribute, table[option] ? "1" : nil)
+        }
         if let styleID = table.styleID, properties.firstChild(named: "tableStyleId") == nil,
            let style = fragment("<a:tableStyleId>\(XMLLite.escape(styleID))</a:tableStyleId>") {
             properties.insertChild(style, at: properties.children.count)
