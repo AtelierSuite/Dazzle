@@ -1059,7 +1059,7 @@ final class Bridge {
             "bold": run.isBold ?? false, "italic": run.isItalic ?? false,
             "underline": run.isUnderlined ?? false, "strike": run.isStruckThrough ?? false,
             "baseline": run.baseline ?? 0,
-            "align": (paragraph.alignment ?? .left).rawValue,
+            "align": paragraph.effectiveAlignment.rawValue,
         ]
         json["list"] = switch editor.listStyle(in: presentation) {
         case .bullets: "bullets"

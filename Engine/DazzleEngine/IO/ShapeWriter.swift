@@ -625,6 +625,7 @@ public struct ShapeWriter {
         if let margin = properties.marginLeft { element.setAttribute("marL", String(margin)) }
         if let indent = properties.indent { element.setAttribute("indent", String(indent)) }
         if let size = properties.defaultTabSize { element.setAttribute("defTabSz", String(size)) }
+        if let rightToLeft = properties.isRightToLeft { element.setAttribute("rtl", rightToLeft ? "1" : "0") }
 
         // Children, each in its place in the schema's order.
         func place(_ xml: String, replacing names: Set<String>) {
@@ -717,6 +718,18 @@ public struct ShapeWriter {
                     ["ea", "cs", "sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"].contains($0.name)
                 }
                 element.insertChild(latin, at: before ?? element.children.count)
+            }
+        }
+        if let font = properties.complexScriptFont, let complex = fragment("<a:cs typeface=\"\(XMLLite.escape(font))\"/>") {
+            if let existing = element.firstChild(named: "cs") {
+                // Its other attributes, such as `pitchFamily`, describe the typeface it named.
+                if existing.attribute("typeface") != font { element.replaceChild(existing, with: complex) }
+            } else {
+                // After the Latin and East Asian typefaces, before symbols and links.
+                let before = element.children.firstIndex {
+                    ["sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"].contains($0.name)
+                }
+                element.insertChild(complex, at: before ?? element.children.count)
             }
         }
         // A link Dazzle does not follow is left as the file had it.

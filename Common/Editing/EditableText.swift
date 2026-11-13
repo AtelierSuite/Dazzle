@@ -57,7 +57,19 @@ enum EditableText {
                     for: run.properties.merged(over: properties.defaultRun), style: style, scale: scale * fontScale
                 )
                 attributes[runKey] = RunBox(run)
-                result.append(NSAttributedString(string: text, attributes: attributes))
+                let piece = NSMutableAttributedString(string: text, attributes: attributes)
+                // Arabic, Hebrew and other complex scripts are set in the run's complex-script typeface.
+                let merged = run.properties.merged(over: properties.defaultRun)
+                for stretch in ComplexScript.stretches(in: text) {
+                    guard let family = style.complexScriptTypeface(for: merged, script: stretch.script),
+                          let latin = attributes[.font] as? PlatformFont else { continue }
+                    let font = FontResolver.shared.font(
+                        family: family, size: latin.pointSize, bold: merged.isBold ?? false, italic: merged.isItalic ?? false,
+                        embedded: style.resources.embeddedFonts
+                    )
+                    piece.addAttribute(.font, value: font as PlatformFont, range: NSRange(location: stretch.range.lowerBound, length: stretch.range.count))
+                }
+                result.append(piece)
             }
             if index < paragraphs.count - 1 {
                 var attributes = Self.attributes(for: endRun, style: style, scale: scale * fontScale)
@@ -154,7 +166,11 @@ enum EditableText {
         _ properties: ParagraphProperties, fontSize: CGFloat, scale: CGFloat, lineSpacingReduction: Double = 0
     ) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
-        style.alignment = switch properties.alignment ?? .left {
+        // A right-to-left paragraph is typed from the right, its margin and
+        // indent measured from there, as the slide draws it.
+        let rightToLeft = properties.isRightToLeft ?? false
+        style.baseWritingDirection = rightToLeft ? .rightToLeft : .leftToRight
+        style.alignment = switch properties.effectiveAlignment {
         case .left: .left
         case .center: .center
         case .right: .right
