@@ -32,12 +32,21 @@ extension Presentation {
     /// Gives a master new theme colours and fonts. Every master drawn with
     /// the same theme part changes with it, and so does every slide that
     /// refers to the theme, as they look its colours and fonts up when drawn.
-    public mutating func setTheme(_ theme: Theme, ofMaster masterPath: String) {
+    ///
+    /// The theme part is written at once, so whatever reads the masters
+    /// again, such as leaving master view, reads the theme as edited.
+    public mutating func setTheme(_ theme: Theme, ofMaster masterPath: String) throws {
         guard let current = resources.masters[masterPath]?.theme, current != theme else { return }
         let part = themePath(ofMaster: masterPath)
+        if let part {
+            guard let data = data(at: part), let patched = ThemeXML.patched(data, with: theme) else {
+                throw PresentationWriteError.unwritablePart(part)
+            }
+            addedParts[part] = patched
+            addedContentTypes[part] = OOXML.ContentType.theme
+        }
         let sharing = Set(resources.masters.keys.filter { $0 == masterPath || (part != nil && themePath(ofMaster: $0) == part) })
         resources = resources.replacingTheme(theme, onMasters: sharing)
-        isThemeModified = true
     }
 }
 

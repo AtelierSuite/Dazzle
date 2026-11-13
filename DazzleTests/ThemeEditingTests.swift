@@ -28,9 +28,9 @@ struct ThemeEditingTests {
         var (presentation, state) = blankDeck()
         let layout = try #require(presentation.resources.orderedLayouts.dropFirst().first)
         state.addSlide(using: layout, in: &presentation)
-        #expect(!presentation.isThemeModified)
+        #expect(presentation.addedParts.isEmpty)
         state.setThemeColor(0x8E44AD, for: "accent1", in: &presentation)
-        #expect(presentation.isThemeModified)
+        #expect(presentation.addedParts.keys.contains { $0.hasPrefix("ppt/theme/") })
         for slide in presentation.slides {
             let style = SlideStyleContext(presentation: presentation, slide: slide)
             #expect(style.color(.scheme("accent1")).hexValue == 0x8E44AD)
@@ -52,13 +52,13 @@ struct ThemeEditingTests {
         #expect(style.theme.minorFont == "Arial")
     }
 
-    @Test("An unchanged theme is not marked as edited, and a blank font is ignored")
+    @Test("An unchanged theme writes nothing, and a blank font is ignored")
     func noChange() {
         var (presentation, state) = blankDeck()
         let theme = state.theme(in: presentation)
         state.setTheme(theme, in: &presentation)
         state.setThemeFont("  ", heading: false, in: &presentation)
-        #expect(!presentation.isThemeModified)
+        #expect(presentation.addedParts.isEmpty)
     }
 
     @Test("The theme part is written with the new colours and fonts and reads back")
@@ -115,5 +115,29 @@ struct ThemeEditingTests {
         #expect(patched.contains("</a:dk1><a:lt1>"))
         #expect(patched.contains("<a:accent1><a:srgbClr val=\"123456\"/></a:accent1><a:accent2><a:srgbClr val=\"FF0000\"/></a:accent2>"))
         #expect(patched.contains("<a:majorFont><a:latin typeface=\"Georgia\"/><a:ea typeface=\"\"/></a:majorFont>"))
+    }
+
+    @Test("A theme edit outlasts a master changed after it, and master view can't edit the theme")
+    func masterView() throws {
+        var (presentation, state) = blankDeck()
+        state.setThemeColor(0x8E44AD, for: "accent1", in: &presentation)
+        state.setThemeFont("Georgia", heading: true, in: &presentation)
+
+        state.enterMasterView(in: &presentation)
+        #expect(!state.canEditTheme(in: presentation))
+        state.setThemeColor(0x000000, for: "accent1", in: &presentation)
+        // Masters are read again from their parts on the way out once one has changed.
+        let master = try #require(presentation.slides.first)
+        state.selectSlide(master.id)
+        state.setBackground(.solid(.rgb(0x203864)), in: &presentation)
+        state.leaveMasterView(in: &presentation)
+
+        #expect(state.canEditTheme(in: presentation))
+        let saved = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        for presentation in [presentation, saved] {
+            let theme = try #require(presentation.resources.masters.values.first?.theme)
+            #expect(theme.colors["accent1"] == 0x8E44AD)
+            #expect(theme.majorFont == "Georgia")
+        }
     }
 }

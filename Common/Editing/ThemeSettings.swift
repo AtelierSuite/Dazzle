@@ -51,6 +51,10 @@ extension EditorState {
 
     func setTheme(_ theme: Theme, in presentation: inout Presentation) {
         guard canEditTheme(in: presentation), let path = themeMasterPath(in: presentation) else { return }
-        presentation.setTheme(theme, ofMaster: path)
+        do {
+            try presentation.setTheme(theme, ofMaster: path)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }

@@ -33,9 +33,6 @@ public struct Presentation: Equatable, Sendable {
     /// last, until stopped.
     public var loopsSlideshow = false
     public var isShowSettingsModified = false
-    /// Whether a theme's colours or fonts were changed, which means the
-    /// theme parts have to be written again.
-    public var isThemeModified = false
     /// The Keynote document the presentation was converted from, if it was.
     public var keynoteSource: KeynoteSource?
 
