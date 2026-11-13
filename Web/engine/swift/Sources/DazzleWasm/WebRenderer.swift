@@ -120,6 +120,14 @@ struct WebRenderer {
         case .shape, .connector:
             node["kind"] = "shape"
             autoShape(shape, sources: sources, frame: frame, style: style, groupFill: groupFill, into: &node)
+            if shape.kind == .connector {
+                // Where its two ends are, which are its handles, and whether each is attached to a shape.
+                let ends = shape.connectorEnds
+                node["ends"] = [
+                    "start": ["x": Double(ends.start.x), "y": Double(ends.start.y), "attached": shape.startConnection != nil],
+                    "end": ["x": Double(ends.end.x), "y": Double(ends.end.y), "attached": shape.endConnection != nil],
+                ]
+            }
         }
         return node
     }

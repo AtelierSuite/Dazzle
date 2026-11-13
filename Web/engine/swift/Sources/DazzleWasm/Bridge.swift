@@ -288,6 +288,19 @@ final class Bridge {
                 }
                 if !plain.isEmpty { state.setFrames(plain, in: &presentation) }
             }
+        case "connectionSites":
+            // Where connectors can be attached on the slide being edited, for an end being dragged.
+            return editor.selectedSlide(in: presentation)?.connectableShapes.flatMap(\.connectionSites).map { site in
+                ["shape": site.connection.shapeID, "site": site.connection.site, "x": Double(site.point.x), "y": Double(site.point.y)]
+            } ?? []
+        case "setConnectorEnd":
+            // One end of a connector moved, and attached to a shape's site or to nothing.
+            guard let id = (r["id"] as? String).flatMap(UUID.init(uuidString:)) else { break }
+            let connection = (r["shape"] as? Int).map { SlideShape.Connection(shapeID: $0, site: r["site"] as? Int ?? 0) }
+            let point = CGPoint(x: r["x"] as? Double ?? 0, y: r["y"] as? Double ?? 0)
+            edit { state, presentation in
+                state.setConnectorEnd(r["end"] as? String == "start" ? .start : .end, of: id, to: point, connection: connection, in: &presentation)
+            }
         case "rotate":
             edit { state, presentation in state.rotateSelectedShape(clockwise: r["clockwise"] as? Bool ?? true, in: &presentation) }
         case "flip":

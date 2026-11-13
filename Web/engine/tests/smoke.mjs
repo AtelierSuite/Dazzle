@@ -146,6 +146,25 @@ test("adds slides, shapes, tables, charts and moves them", () => {
   assert.ok(chart.chart.some((item) => item.k === "path"), "a pie draws slices");
 });
 
+test("attaches a connector to a shape, which then takes it along", () => {
+  call("insertShape", { preset: "rect" });
+  const box = call("scene").result.shapes.at(-1);
+  call("setFrames", { frames: { [box.id]: { x: 300, y: 200, w: 100, h: 60 } } });
+  call("insertShape", { preset: "bentConnector3" });
+  const connector = call("scene").result.shapes.at(-1);
+  assert.ok(connector.ends, "a connector says where its ends are");
+  const left = call("connectionSites").result.find((site) => site.x === 300 && site.y === 230);
+  assert.ok(left, "the box has a site in the middle of its left side");
+  call("setConnectorEnd", { id: connector.id, end: "end", x: 0, y: 0, shape: left.shape, site: left.site });
+  let ends = call("scene").result.shapes.find((node) => node.id === connector.id).ends;
+  assert.ok(ends.end.attached && !ends.start.attached);
+  assert.equal(ends.end.x, 300);
+  call("setFrames", { frames: { [box.id]: { x: 340, y: 260, w: 100, h: 60 } } });
+  ends = call("scene").result.shapes.find((node) => node.id === connector.id).ends;
+  assert.equal(ends.end.x, 340);
+  assert.equal(ends.end.y, 290);
+});
+
 test("animates a shape and steps through it", () => {
   const scene = call("scene").result;
   const shape = scene.shapes.find((node) => node.kind === "shape");
