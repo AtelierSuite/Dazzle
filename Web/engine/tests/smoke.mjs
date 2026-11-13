@@ -1322,6 +1322,38 @@ test("plays a slide's transition as keyframes the browser animates, a cross-fade
   assert.equal(calm.layers[1].keyframes.at(-1).opacity, 1);
 });
 
+test("plays PowerPoint 2010's and 2013's own transitions as themselves", () => {
+  const vortex = call("open", { name: "Vortex.pptx" }, deckWithTransition(alternate('<p14:vortex dir="r"/>')));
+  assert.equal(vortex.result.unsupported.length, 0, "a vortex plays, so nothing is said about it");
+  const { w } = call("scene", { slide: vortex.state.slides[0].id }).result;
+  const played = call("transition", { slide: vortex.state.slides[0].id }).result;
+  assert.deepEqual(played.layers.slice(0, 2).map((layer) => layer.content), ["black", "incoming"]);
+  const tiles = played.layers.slice(2);
+  assert.equal(tiles.length, 24, "the old slide in tiles");
+  assert.ok(tiles.every((layer) => layer.content === "outgoing"));
+  assert.ok(tiles.every((layer) => layer.keyframes[0].transform === "matrix(1, 0, 0, 1, 0, 0)"), "all in place to start with");
+  assert.ok(tiles.every((layer) => layer.keyframes.at(-1).opacity === 0), "all gone by the end");
+  const flown = tiles.map((layer) => Number(layer.keyframes.at(-1).transform.match(/, (-?[\d.]+), -?[\d.]+\)$/)[1]));
+  assert.ok(flown.every((x) => x > w / 2), "each flown off to the right");
+  assert.match(tiles[0].keyframes[0].clipPath, /^path\(evenodd, "M/, "each tile cut out of the slide");
+  assert.equal(played.layers[1].keyframes.at(-1).opacity, 1);
+  const calm = call("transition", { slide: vortex.state.slides[0].id, reduceMotion: true }).result;
+  assert.deepEqual(calm.layers.map((layer) => layer.content), ["outgoing", "incoming"], "a cross-fade when motion is reduced");
+
+  const p15 = 'xmlns:p15="http://schemas.microsoft.com/office/powerpoint/2012/main"';
+  const curl = `<mc:AlternateContent ${p15}><mc:Choice Requires="p15"><p:transition spd="slow" p14:dur="1250"><p15:prstTrans prst="peelOff"/></p:transition></mc:Choice>`
+    + '<mc:Fallback><p:transition spd="slow"><p:fade/></p:transition></mc:Fallback></mc:AlternateContent>';
+  const peel = call("open", { name: "Peel.pptx" }, deckWithTransition(curl));
+  assert.equal(peel.result.unsupported.length, 0);
+  const peeled = call("transition", { slide: peel.state.slides[0].id }).result;
+  assert.equal(peeled.duration, 1.25);
+  assert.deepEqual(peeled.layers.map((layer) => layer.content), ["incoming", "black", "outgoing", "white", "outgoing"]);
+  const back = peeled.layers[4].keyframes[Math.floor(peeled.layers[4].keyframes.length / 2)];
+  const [a, b, c, d] = back.transform.match(/-?[\d.]+/g).map(Number);
+  assert.ok(a * d - b * c < 0, "the back of the page, mirrored in the fold");
+  assert.equal(peeled.layers[2].keyframes.at(-1).clipPath, "polygon(0 0, 0 0, 0 0)", "nothing of the old slide left lying");
+});
+
 test("clips patterned transitions, plays unknown ones as a fade, and saves them as they were", () => {
   const blinds = call("open", { name: "Blinds.pptx" }, deckWithTransition('<p:transition spd="med"><p:blinds dir="vert"/></p:transition>'));
   const slide = blinds.state.slides[0].id;
@@ -1331,13 +1363,13 @@ test("clips patterned transitions, plays unknown ones as a fade, and saves them 
   assert.match(middle.clipPath, /^path\(evenodd, "M/);
   assert.equal(played.layers[1].keyframes[0].clipPath, "polygon(0 0, 0 0, 0 0)", "nothing of the new slide to start with");
 
-  const vortex = call("open", { name: "Vortex.pptx" }, deckWithTransition(alternate('<p14:vortex dir="r"/>')));
-  assert.equal(vortex.result.unsupported.length, 1, "says the vortex plays as something simpler");
-  const fallback = call("transition", { slide: vortex.state.slides[0].id }).result;
+  const unknown = call("open", { name: "Unknown.pptx" }, deckWithTransition(alternate('<p14:somethingNew dir="r"/>')));
+  assert.equal(unknown.result.unsupported.length, 1, "says the effect plays as something simpler");
+  const fallback = call("transition", { slide: unknown.state.slides[0].id }).result;
   assert.deepEqual(fallback.layers.map((layer) => layer.content), ["outgoing", "incoming"]);
   assert.equal(fallback.layers[1].keyframes.at(-1).opacity, 1);
   const saved = new TextDecoder().decode(unzip(call("save", { format: "pptx", keep: true }).payload).get("ppt/slides/slide1.xml"));
-  assert.match(saved, /<p14:vortex dir="r"\/>/);
+  assert.match(saved, /<p14:somethingNew dir="r"\/>/);
   assert.match(saved, /p14:dur="1500"/);
 
   const none = call("open", { name: "None.pptx" }, deckWithTransition(""));
