@@ -233,6 +233,15 @@ public enum PPTXReader {
         func fills(_ name: String) -> [Fill] {
             format?.firstChild(named: name)?.children.compactMap { Fill.parse(element: $0, image: image) } ?? []
         }
+        func scriptFonts(_ name: String) -> [String: String] {
+            var result: [String: String] = [:]
+            for font in fonts?.firstChild(named: name)?.children(named: "font") ?? [] {
+                if let script = font.attribute("script"), let typeface = font.attribute("typeface")?.nilIfEmpty {
+                    result[script] = typeface
+                }
+            }
+            return result
+        }
         return Theme(
             colors: colors,
             majorFont: fonts?.firstChild(named: "majorFont")?.firstChild(named: "latin")?.attribute("typeface")
@@ -241,6 +250,10 @@ public enum PPTXReader {
                 ?? Theme.office.minorFont,
             majorEastAsianFont: fonts?.firstChild(named: "majorFont")?.firstChild(named: "ea")?.attribute("typeface")?.nilIfEmpty,
             minorEastAsianFont: fonts?.firstChild(named: "minorFont")?.firstChild(named: "ea")?.attribute("typeface")?.nilIfEmpty,
+            majorComplexScriptFont: fonts?.firstChild(named: "majorFont")?.firstChild(named: "cs")?.attribute("typeface")?.nilIfEmpty,
+            minorComplexScriptFont: fonts?.firstChild(named: "minorFont")?.firstChild(named: "cs")?.attribute("typeface")?.nilIfEmpty,
+            majorScriptFonts: scriptFonts("majorFont"),
+            minorScriptFonts: scriptFonts("minorFont"),
             fillStyles: fills("fillStyleLst"),
             backgroundFillStyles: fills("bgFillStyleLst"),
             lineStyles: format?.firstChild(named: "lnStyleLst")?.children(named: "ln").map(LineStyle.init(element:)) ?? [],

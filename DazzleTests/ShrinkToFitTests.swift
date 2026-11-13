@@ -157,7 +157,7 @@ struct ShrinkToFitTests {
         let layout = TableLayout(table: table, frame: frame.frame.points,
                                  style: SlideStyleContext(presentation: presentation, slide: presentation.slides[0]),
                                  presentation: presentation, slideNumber: 1)
-        let body = try #require(layout.body(for: table.rows[0].cells[0], row: 0))
+        let body = try #require(layout.body(for: table.rows[0].cells[0], row: 0, column: 0))
         #expect(body.properties.autofit == nil)
     }
 
