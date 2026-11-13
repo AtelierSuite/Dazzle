@@ -14,7 +14,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     lazy var finder = FindController(deck: deck)
     /// The Header & Footer sheet, while it is open.
     var headerFooter: HeaderFooterSheet?
-    /// The Theme Colors & Fonts sheet, while it is open.
+    /// The Theme Colours & Fonts sheet, while it is open.
     var themeSheet: ThemeSheet?
 
     var canvas: CanvasViewController { split.editor.canvas }

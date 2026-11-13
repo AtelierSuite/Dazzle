@@ -1443,7 +1443,7 @@ export class PresentationWindow {
     });
   }
 
-  /** Theme Colors & Fonts: the theme's twelve colours and its heading and body fonts, which every slide follows. */
+  /** Theme Colours & Fonts: the theme's twelve colours and its heading and body fonts, which every slide follows. */
   async showTheme() {
     const data = await this.engine.call("inspect");
     const theme = data?.themeSettings;

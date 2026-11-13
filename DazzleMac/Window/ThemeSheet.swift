@@ -1,7 +1,7 @@
 import AppKit
 import DazzleEngine
 
-/// Theme Colors & Fonts: the theme's twelve colours and its heading and
+/// Theme Colours & Fonts: the theme's twelve colours and its heading and
 /// body fonts, which every slide that refers to them follows.
 @MainActor
 final class ThemeSheet: NSObject {

@@ -20086,7 +20086,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Theme Colors & Fonts"
+            "value" : "Theme Colours & Fonts"
           }
         },
         "ja" : {
@@ -20121,7 +20121,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Theme Colors & Fonts…"
+            "value" : "Theme Colours & Fonts…"
           }
         },
         "ja" : {
@@ -20156,7 +20156,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Colors"
+            "value" : "Colours"
           }
         },
         "ja" : {
@@ -20296,7 +20296,7 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Every slide that uses the theme's colors and fonts changes with them."
+            "value" : "Every slide that uses the theme's colours and fonts changes with them."
           }
         },
         "ja" : {
