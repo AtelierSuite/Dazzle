@@ -1346,6 +1346,56 @@ test("clips patterned transitions, plays unknown ones as a fade, and saves them 
 });
 
 /** Text boxes that shrink on overflow, some saying how far and some not, and a table whose cell says to shrink. */
+/** Two slides sharing a box by name and, as a box and an ellipse, by a `!!` name; the second arrives with a Morph. */
+function deckWithMorph() {
+  call("new", { name: "Morph.pptx" });
+  call("addSlide");
+  const entries = unzip(call("save", { format: "pptx" }).payload);
+  const shape = (id, name, preset, x, cx, rot, colour) => `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`
+    + `<p:spPr><a:xfrm${rot ? ` rot="${rot}"` : ""}><a:off x="${x}" y="914400"/><a:ext cx="${cx}" cy="914400"/></a:xfrm>`
+    + `<a:prstGeom prst="${preset}"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="${colour}"/></a:solidFill></p:spPr></p:sp>`;
+  const morph = '<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main">'
+    + '<mc:Choice xmlns:p159="http://schemas.microsoft.com/office/powerpoint/2015/09/main" Requires="p159"><p:transition spd="slow" p14:dur="1000"><p159:morph option="byObject"/></p:transition></mc:Choice>'
+    + '<mc:Fallback><p:transition spd="slow"><p:fade/></p:transition></mc:Fallback></mc:AlternateContent>';
+  const edit = (name, shapes, transition = "") => {
+    const slide = new TextDecoder().decode(entries.get(name)).replace("</p:spTree>", `${shapes}</p:spTree>`);
+    const anchor = slide.includes("</p:clrMapOvr>") ? "</p:clrMapOvr>" : "</p:cSld>";
+    entries.set(name, new TextEncoder().encode(slide.replace(anchor, anchor + transition)));
+  };
+  edit("ppt/slides/slide1.xml", shape(901, "Box", "rect", 914400, 914400, 0, "FF0000") + shape(902, "!!Hero", "rect", 4572000, 914400, 0, "00FF00")
+    + shape(903, "Leaving", "rect", 7315200, 914400, 0, "888888"));
+  edit("ppt/slides/slide2.xml", shape(911, "Box", "rect", 2743200, 1828800, 5400000, "0000FF") + shape(912, "!!Hero", "ellipse", 4572000, 914400, 0, "00FF00")
+    + shape(913, "Arriving", "rect", 7315200, 914400, 0, "888888"), morph);
+  return zip(entries);
+}
+
+test("plays a Morph as pairs of shared shapes placed together over a cross-fade, and saves it as it was", () => {
+  const opened = call("open", { name: "Morph.pptx" }, deckWithMorph());
+  assert.equal(opened.result.unsupported.length, 0, "a Morph plays, so nothing is said about it");
+  const [first, second] = opened.state.slides.map((slide) => slide.id);
+  const ids = (slide) => call("scene", { slide }).result.shapes.map((node) => node.id);
+  assert.equal(call("timeline", { slide: second }).result.transition, 1);
+  const played = call("transition", { slide: second, from: first, fromBegun: 0 }).result;
+  assert.deepEqual(played.layers.map((layer) => layer.content), ["outgoing", "incoming"], "the rest cross-fades");
+  assert.equal(played.layers[1].keyframes[0].opacity, 0);
+  // The layout's placeholders pair too; the shapes added here come last.
+  const pairs = played.morph.slice(-2);
+  assert.equal(played.morph.length, ids(second).length - 1, "every shape but the one only this slide has: the box by name, the hero by its !! name");
+  for (const pair of pairs) {
+    assert.ok(ids(first).includes(pair.from) && ids(second).includes(pair.to));
+    assert.equal(pair.keyframes[0].from, "matrix(1, 0, 0, 1, 0, 0)", "the shape being left starts where it sits");
+    assert.equal(pair.keyframes.at(-1).to, "matrix(1, 0, 0, 1, 0, 0)", "the shape arriving ends where it sits");
+    assert.equal(pair.keyframes[0].mix, 0);
+    assert.equal(pair.keyframes.at(-1).mix, 1);
+  }
+  // The box ends twice as wide, a quarter turn round, 3 inches to the right of where it began (its middle 216 + 72 points on).
+  const end = pairs[0].keyframes.at(-1).from.match(/-?[\d.]+/g).map(Number);
+  assert.ok(Math.abs(end[0]) < 0.001 && Math.abs(end[1] - 2) < 0.001 && Math.abs(end[2] + 1) < 0.001 && Math.abs(end[3]) < 0.001, `turned and stretched: ${end}`);
+  assert.ok(call("transition", { slide: second, from: first, reduceMotion: true }).result.morph === undefined, "a plain cross-fade when motion is reduced");
+  const saved = new TextDecoder().decode(unzip(call("save", { format: "pptx" }).payload).get("ppt/slides/slide2.xml"));
+  assert.ok(saved.includes('<p159:morph option="byObject"/>'), "saved as it was");
+});
+
 function deckWithShrinkingText() {
   call("new", { name: "Shrinking.pptx" });
   const entries = unzip(call("save", { format: "pptx" }).payload);

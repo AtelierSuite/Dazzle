@@ -480,7 +480,23 @@ final class Bridge {
             guard let transition = slide.transition?.played(
                 reduceMotion: r["reduceMotion"] as? Bool ?? false, seed: r["seed"] as? Int ?? 0
             ), transition.isAnimated else { return nil }
-            return transitionJSON(transition, size: presentation.slideSize.points)
+            var json = transitionJSON(transition, size: presentation.slideSize.points)
+            // A Morph also needs the slide being left (`from`, with how many of
+            // its animation steps had begun), to find the shapes the two share.
+            if transition.effect == .morph, let outgoing = self.slide(r["from"]) {
+                let size = presentation.slideSize.points
+                let left = outgoing.animations.isEmpty ? nil : outgoing.animationTimeline.frame(
+                    begun: r["fromBegun"] as? Int ?? 0, elapsed: 1e6, shapes: outgoing.shapes, slideSize: size
+                )
+                let timeline = slide.animationTimeline
+                let arriving = slide.animations.isEmpty ? nil : timeline.frame(
+                    begun: timeline.initiallyBegun, elapsed: 0, shapes: slide.shapes, slideSize: size
+                )
+                json["morph"] = morphJSON(
+                    SlideMorph(from: outgoing, to: slide, outgoingFrame: left, incomingFrame: arriving), duration: transition.duration
+                )
+            }
+            return json
         case "frame":
             // How the slide's animated shapes look `elapsed` seconds into step `begun`.
             guard let slide = slide(r["slide"]) else { throw Failure(message: "No such slide.") }
@@ -1250,6 +1266,31 @@ final class Bridge {
             ]
         }
         return ["duration": transition.duration, "layers": layers]
+    }
+
+    /// A Morph's shared shapes, back to front: each pair's two shapes, and
+    /// keyframes placing both (a transform of the slide, in slide points)
+    /// with how far the first has dissolved into the second.
+    private func morphJSON(_ morph: SlideMorph, duration: Double) -> [[String: Any]] {
+        let count = min(max(Int((duration * 30).rounded(.up)), 2), 120)
+        func n(_ value: CGFloat) -> String {
+            let rounded = (Double(value) * 10_000).rounded() / 10_000
+            return rounded == rounded.rounded() ? String(Int(rounded)) : String(rounded)
+        }
+        func css(_ t: CGAffineTransform) -> String {
+            "matrix(\(n(t.a)), \(n(t.b)), \(n(t.c)), \(n(t.d)), \(n(t.tx)), \(n(t.ty)))"
+        }
+        return morph.pairs.map { pair in
+            [
+                "from": pair.outgoing.id.uuidString,
+                "to": pair.incoming.id.uuidString,
+                "keyframes": (0...count).map { index -> [String: Any] in
+                    let offset = Double(index) / Double(count)
+                    let placement = morph.placement(of: pair, progress: offset)
+                    return ["offset": offset, "from": css(placement.outgoing), "to": css(placement.incoming), "mix": placement.mix]
+                },
+            ]
+        }
     }
 
     private func frameJSON(_ frame: AnimationFrame, slide: Slide) -> [String: Any] {
