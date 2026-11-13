@@ -90,7 +90,7 @@ struct MediaSettingsTests {
         let saved = try PPTXWriter.data(from: presentation)
         let slidePath = try #require(presentation.slides[0].partName)
         let xml = String(decoding: try #require(try ZipArchive.entries(in: saved)[slidePath]), as: UTF8.self)
-        #expect(xml.contains(#"<p14:trim st="500" end="250"/>"#))
+        #expect(xml.contains(#"<p14:trim end="250" st="500"/>"#))
         #expect(xml.contains(#"<p14:fade in="1000" out="750"/>"#))
         #expect(xml.contains(#"<p:video fullScrn="1">"#))
         #expect(xml.contains(#"vol="60000""#))
@@ -128,7 +128,7 @@ struct MediaSettingsTests {
         let root = try XMLLite.parse(Data(#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld/></p:sld>"#.utf8))
         MediaXML.write([shape], changed: [4], into: root)
         let xml = try #require(XMLLite.serialize(root))
-        #expect(xml.contains(#"<p:audio><p:cMediaNode vol="100000" numSld="999">"#))
+        #expect(xml.contains(#"<p:audio><p:cMediaNode numSld="999" vol="100000">"#))
         #expect(!xml.contains("fullScrn"))
         var read = [shape]
         MediaXML.read(try #require(root.firstChild(named: "timing")), into: &read)
