@@ -21,7 +21,7 @@ extension ChartPainter {
     /// The legend's entries for trendlines: each its own name, or the kind
     /// of line and its series', as PowerPoint names them.
     func trendlineLegendEntries() -> [(String, RGBAColor)] {
-        guard chart.kind.hasAxes, chart.kind != .surface else { return [] }
+        guard chart.kind.hasAxes, chart.kind != .surface, !chart.kind.isExtended else { return [] }
         return chart.allSeries.enumerated().flatMap { index, series in
             series.trendlines.compactMap { trendline -> (String, RGBAColor)? in
                 guard let color = lineColor(trendline.line, fallback: seriesColor(series, index: index)) else { return nil }
