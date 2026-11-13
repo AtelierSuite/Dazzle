@@ -280,6 +280,8 @@ export class PresentationWindow {
   }
 
   layoutItems() {
+    // In master view, what is added is a layout.
+    if (this.engine.state?.masterView) return [this.item("newSlide")];
     return (this.engine.info?.layouts ?? []).map((layout) => ({ label: layout.name, action: () => this.engine.call("addSlide", { layout: layout.path }) }));
   }
 
@@ -387,6 +389,10 @@ export class PresentationWindow {
     const textual = has && (shapes > 0 || editingText);
     const look = this.look ?? {};
     const selected = shapes === 1 ? this.canvas?.shape(this.selection.shapes[0]) : null;
+    // Master view edits the masters and layouts in the slides' place, so what is only a slide's is off.
+    const master = Boolean(state?.masterView);
+    const picked = master ? this.pickedSlides().map((id) => state.slides.find((slide) => slide.id === id)) : [];
+    const layoutsPicked = picked.length > 0 && picked.every((slide) => slide?.role === "layout");
     return {
       new: { label: t("Menu.File.New"), shortcut: shortcut("N"), run: () => this.newDocument() },
       open: { label: t("Menu.File.Open"), shortcut: shortcut("O"), run: () => this.openPicked() },
@@ -395,8 +401,8 @@ export class PresentationWindow {
       saveAs: { label: t("Web.Menu.SaveAs"), shortcut: shortcut("S", { shift: true }), enabled: has, run: () => this.saveAs() },
       rename: { label: t("Menu.File.Rename"), enabled: has, run: () => this.renameDocument() },
       exportPowerPoint: { label: t("Menu.File.Export.PowerPoint"), enabled: has, run: () => this.exportAs({ key: "pptx", extension: "pptx", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }) },
-      exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has, run: () => this.print() },
-      print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has, run: () => this.print() },
+      exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.print() },
+      print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has && !master, run: () => this.print() },
       undo: { label: t("Toolbar.Undo"), shortcut: shortcut("Z"), enabled: has && (state?.canUndo || editingText), run: () => this.undo() },
       redo: { label: t("Toolbar.Redo"), shortcut: shortcut("Z", { shift: true }), enabled: has && (state?.canRedo || editingText), run: () => this.redo() },
       cut: { label: t("Edit.Cut"), shortcut: shortcut("X"), enabled: has, run: () => this.clipboard("cut") },
@@ -410,13 +416,28 @@ export class PresentationWindow {
       findReplace: { label: t("Mac.Menu.Find.FindReplace"), shortcut: shortcut("F", { alt: true }), enabled: has, run: () => this.showFind(true) },
       findNext: { label: t("Menu.Edit.Find.Next"), shortcut: shortcut("G"), enabled: has, run: () => this.findAction("next") },
       findPrevious: { label: t("Menu.Edit.Find.Previous"), shortcut: shortcut("G", { shift: true }), enabled: has, run: () => this.findAction("previous") },
-      newSlide: { label: t("Slide.New"), shortcut: shortcut("N", { shift: true }), enabled: has, run: () => this.engine.call("addSlide", { layout: this.currentLayout() }) },
-      duplicateSlides: { label: t("Slide.Menu.Duplicate"), enabled: has, run: () => this.engine.call("duplicateSlides", { ids: this.pickedSlides() }) },
-      deleteSlides: { label: t("Slide.Menu.Delete"), enabled: has && (state?.slides.length ?? 0) > 1, run: () => this.engine.call("deleteSlides", { ids: this.pickedSlides() }) },
-      toggleHidden: { label: this.currentSlide()?.hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), enabled: has, run: () => this.engine.call("toggleHidden", { ids: this.pickedSlides() }) },
+      newSlide: {
+        label: master ? t("MasterView.NewLayout") : t("Slide.New"), shortcut: shortcut("N", { shift: true }), enabled: has,
+        run: () => (master ? this.engine.call("addLayout") : this.engine.call("addSlide", { layout: this.currentLayout() })),
+      },
+      duplicateSlides: {
+        label: master ? t("MasterView.Duplicate") : t("Slide.Menu.Duplicate"), enabled: has && (!master || layoutsPicked),
+        run: () => this.engine.call("duplicateSlides", { ids: this.pickedSlides() }),
+      },
+      deleteSlides: {
+        label: master ? t("MasterView.Delete") : t("Slide.Menu.Delete"),
+        enabled: has && (master ? layoutsPicked && picked.length === 1 && picked[0].canDelete : (state?.slides.length ?? 0) > 1),
+        run: () => this.engine.call("deleteSlides", { ids: this.pickedSlides() }),
+      },
+      renameLayout: { label: t("MasterView.Rename"), enabled: master && this.currentSlide()?.role === "layout", run: () => this.renameLayout(this.selection.slide) },
+      masterView: {
+        label: master ? t("MasterView.Close") : t("Toolbar.EditMasters"), enabled: has && (master || Boolean(info?.canEditMasters)),
+        run: () => this.toggleMasterView(),
+      },
+      toggleHidden: { label: this.currentSlide()?.hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), enabled: has && !master, run: () => this.engine.call("toggleHidden", { ids: this.pickedSlides() }) },
       previousSlide: { label: t("Menu.Slide.Previous"), enabled: has, run: () => this.stepSlide(-1) },
       nextSlide: { label: t("Menu.Slide.Next"), enabled: has, run: () => this.stepSlide(1) },
-      headerFooter: { label: t("Mac.Menu.Slide.HeaderFooter"), enabled: has, run: () => this.showHeaderFooter() },
+      headerFooter: { label: t("Mac.Menu.Slide.HeaderFooter"), enabled: has && !master, run: () => this.showHeaderFooter() },
       insertTextBox: { label: t("Menu.Insert.TextBox"), enabled: has, run: () => this.insert("insertTextBox") },
       insertTable: { label: t("Menu.Insert.Table"), enabled: has, run: () => this.insertTable() },
       insertPicture: { label: t("Menu.Insert.Choose"), shortcut: shortcut("I", { shift: true }), enabled: has, run: () => this.insertPicture() },
@@ -447,11 +468,11 @@ export class PresentationWindow {
       rotateRight: { label: t("Arrange.RotateRight"), enabled: shapes === 1, run: () => this.engine.call("rotate", { clockwise: true }) },
       flipH: { label: t("Arrange.FlipHorizontal"), enabled: shapes === 1, run: () => this.engine.call("flip", { horizontally: true }) },
       flipV: { label: t("Arrange.FlipVertical"), enabled: shapes === 1, run: () => this.engine.call("flip", { horizontally: false }) },
-      play: { label: t("Toolbar.PlayFromCurrent"), shortcut: shortcut("↩", { alt: true }), enabled: has, run: () => this.play(this.selection.slide) },
-      playFromStart: { label: t("Toolbar.PlayFromStart"), shortcut: shortcut("↩", { alt: true, shift: true }), enabled: has, run: () => this.play(this.engine.state?.slides[0]?.id) },
-      playFromCurrent: { label: t("Toolbar.PlayFromCurrent"), enabled: has, run: () => this.play(this.selection.slide) },
-      playHere: { label: t("Web.Play.ThisWindow"), enabled: has, run: () => this.play(this.selection.slide, { presenter: false }) },
-      playPresenter: { label: t("Web.Play.PresenterView"), enabled: has, run: () => this.play(this.selection.slide, { presenter: true }) },
+      play: { label: t("Toolbar.PlayFromCurrent"), shortcut: shortcut("↩", { alt: true }), enabled: has && !master, run: () => this.play(this.selection.slide) },
+      playFromStart: { label: t("Toolbar.PlayFromStart"), shortcut: shortcut("↩", { alt: true, shift: true }), enabled: has && !master, run: () => this.play(this.engine.state?.slides[0]?.id) },
+      playFromCurrent: { label: t("Toolbar.PlayFromCurrent"), enabled: has && !master, run: () => this.play(this.selection.slide) },
+      playHere: { label: t("Web.Play.ThisWindow"), enabled: has && !master, run: () => this.play(this.selection.slide, { presenter: false }) },
+      playPresenter: { label: t("Web.Play.PresenterView"), enabled: has && !master, run: () => this.play(this.selection.slide, { presenter: true }) },
       previewAnimations: { label: t("Menu.Play.PreviewAnimations"), enabled: has, run: () => this.previewAnimations() },
       zoomIn: { label: t("Menu.View.ZoomIn"), shortcut: shortcut("="), enabled: has, run: () => this.stepZoom(1) },
       zoomOut: { label: t("Menu.View.ZoomOut"), shortcut: shortcut("-", { alt: true }), enabled: has, run: () => this.stepZoom(-1) },
@@ -530,7 +551,7 @@ export class PresentationWindow {
         return [
           ...self.items("newSlide"),
           { label: t("Menu.Slide.NewWithLayout"), disabled: !self.hasDocument, submenu: self.layoutItems() },
-          ...self.items("duplicateSlides", "deleteSlides", "toggleHidden", "-", "previousSlide", "nextSlide", "-", "headerFooter"),
+          ...self.items("duplicateSlides", "deleteSlides", "renameLayout", "toggleHidden", "-", "previousSlide", "nextSlide", "-", "headerFooter"),
         ];
       } },
       { label: t("Menu.Format"), get items() {
@@ -557,7 +578,7 @@ export class PresentationWindow {
       { label: t("Menu.View"), get items() {
         const current = readSetting("appearance", "");
         return [
-          ...self.items("toggleNavigator", "toggleNotes", "toggleInspector", "-", "zoomIn", "zoomOut", "zoomToFit", "actualSize", "-"),
+          ...self.items("toggleNavigator", "toggleNotes", "toggleInspector", "-", "masterView", "-", "zoomIn", "zoomOut", "zoomToFit", "actualSize", "-"),
           { label: t("Web.Menu.Appearance"), submenu: [
             { label: t("Web.Appearance.System"), checked: current === "", action: () => self.applyAppearance("") },
             { label: t("Web.Appearance.Light"), checked: current === "light", action: () => self.applyAppearance("light") },
@@ -639,6 +660,16 @@ export class PresentationWindow {
   slideMenu(ids) {
     if (!this.hasDocument) return null;
     const hidden = ids.length && ids.every((id) => this.engine.state.slides.find((slide) => slide.id === id)?.hidden);
+    // A master offers a new layout; a layout, what can be done to it.
+    if (this.engine.state.masterView) {
+      const isLayout = this.engine.state.slides.find((slide) => slide.id === ids[0])?.role === "layout";
+      return [
+        this.item("newSlide"),
+        ...(isLayout ? [this.item("duplicateSlides"), { label: t("MasterView.Rename"), action: () => this.renameLayout(ids[0]) }, { separator: true }, this.item("deleteSlides")] : []),
+        { separator: true },
+        this.item("masterView"),
+      ];
+    }
     return [
       this.item("newSlide"),
       { label: t("Menu.Slide.NewWithLayout"), submenu: this.layoutItems() },
@@ -659,6 +690,21 @@ export class PresentationWindow {
 
   currentSlide() {
     return this.engine.state?.slides.find((slide) => slide.id === this.selection.slide) ?? null;
+  }
+
+  /** Shows the masters and layouts in place of the slides, to be edited as slides are, or the slides again. */
+  async toggleMasterView() {
+    await this.canvas.endEditing();
+    await this.flushNotes();
+    await this.engine.call("masterView", { on: !this.engine.state?.masterView });
+  }
+
+  /** Asks for another name for a layout. */
+  async renameLayout(id) {
+    const layout = this.engine.state?.slides.find((slide) => slide.id === id);
+    if (layout?.role !== "layout") return;
+    const name = await this.askText(t("MasterView.Rename.Title"), layout.name, t("MasterView.Rename.Confirm"));
+    if (name && name !== layout.name) await this.engine.call("renameLayout", { ids: [id], name });
   }
 
   currentLayout() {
@@ -1278,7 +1324,9 @@ export class PresentationWindow {
     const name = this.document?.name ?? "Dazzle";
     this.titleElement.textContent = name;
     const edited = this.engine.state?.edited;
-    this.subtitleElement.textContent = this.document ? (edited ? t("Web.Document.Edited") : this.document.handle ? t("Web.Document.Saved") : "") : "";
+    const status = this.document ? (edited ? t("Web.Document.Edited") : this.document.handle ? t("Web.Document.Saved") : "") : "";
+    // Says the masters and layouts are what is being edited.
+    this.subtitleElement.textContent = this.document && this.engine.state?.masterView ? [t("MasterView.Title"), status].filter(Boolean).join(" — ") : status;
     document.title = this.document ? `${name}${edited ? " — " + t("Web.Document.Edited") : ""}` : "Dazzle";
   }
 

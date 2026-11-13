@@ -20,6 +20,8 @@ PresetShapeDefinition parses when a shape first needs it:
     g NAME OP ARG...          a guide: OP is the formula's operator, ARGs
                               are numbers or the names of earlier values
     t L T R B                 the text rectangle
+    c ANG X Y                 a connection site: where a connector meets the
+                              shape, and the angle it leaves at
     p W H FILL STROKE         a path: its own coordinate space (0 for the
                               shape's), FILL n(orm), x (none), d(arken),
                               D (darkenLess), l(ighten) or L (lightenLess),
@@ -92,6 +94,12 @@ def encode(shape):
     rect = shape.find(NS + "rect")
     if rect is not None:
         statements.append(" ".join(["t"] + [operand(rect.get(k)) for k in ("l", "t", "r", "b")]))
+    sites = shape.find(NS + "cxnLst")
+    for site in sites if sites is not None else []:
+        position = site.find(NS + "pos")
+        # A third of a turn is a constant no formula uses, so it has no slot.
+        angle = "7200000" if site.get("ang") == "cd3" else operand(site.get("ang"))
+        statements.append(" ".join(["c", angle, operand(position.get("x")), operand(position.get("y"))]))
     paths = shape.find(NS + "pathLst")
     for path in paths if paths is not None else []:
         stroke = "0" if path.get("stroke") in ("false", "0") else "1"

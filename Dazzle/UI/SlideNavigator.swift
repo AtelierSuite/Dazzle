@@ -11,6 +11,9 @@ struct SlideNavigator: View {
     var play: (Int) -> Void
 
     @State private var dropTargetID: Slide.ID?
+    /// The layout being renamed, and the name typed for it so far.
+    @State private var renamingID: Slide.ID?
+    @State private var newName = ""
 
     /// How far in from the strip's ends thumbnails blur: no further than its
     /// buttons reach, so as many thumbnails as fit stay sharp.
@@ -34,6 +37,15 @@ struct SlideNavigator: View {
             .onChange(of: state.selectedSlideID) { _, id in
                 guard let id else { return }
                 withAnimation(.snappy(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
+            }
+        }
+        .alert("MasterView.Rename.Title", isPresented: Binding(get: { renamingID != nil }, set: { if !$0 { renamingID = nil } })) {
+            TextField("MasterView.LayoutName", text: $newName)
+                .accessibilityIdentifier("layoutNameField")
+            Button("Common.Cancel", role: .cancel) { renamingID = nil }
+            Button("MasterView.Rename.Confirm") {
+                if let renamingID { state.renameLayout(renamingID, to: newName, in: &presentation) }
+                renamingID = nil
             }
         }
     }
@@ -65,7 +77,9 @@ struct SlideNavigator: View {
         let isSelected = slide.id == state.selectedSlideID
         let thumbnail = SlideThumbnail(presentation: presentation, slide: slide, number: index + 1, isSelected: isSelected)
         return Group {
-            if axis == .vertical {
+            if presentation.isInMasterView {
+                templateItem(for: slide, thumbnail: thumbnail, isSelected: isSelected)
+            } else if axis == .vertical {
                 HStack(alignment: .top, spacing: 6) {
                     Text(String(index + 1))
                         .font(.caption.monospacedDigit().weight(isSelected ? .semibold : .regular))
@@ -113,8 +127,65 @@ struct SlideNavigator: View {
         .accessibilityIdentifier("slideThumbnail.\(index + 1)")
     }
 
+    /// A master or layout in master view: a master at full width, its
+    /// layouts set in beneath it, each with its name.
+    @ViewBuilder
+    private func templateItem(for slide: Slide, thumbnail: SlideThumbnail, isSelected: Bool) -> some View {
+        let name = slide.role == .master ? String(localized: "MasterView.Master") : slide.layoutName ?? ""
+        if axis == .vertical {
+            VStack(alignment: .leading, spacing: 4) {
+                thumbnail
+                Text(name)
+                    .font(.caption2.weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .lineLimit(1)
+            }
+            .padding(.leading, slide.role == .master ? 0 : 28)
+        } else {
+            thumbnail.frame(height: slide.role == .master ? 52 : 44)
+                .visualEffect { content, proxy in
+                    content.layerEffect(Self.edgeBlur(for: proxy), maxSampleOffset: CGSize(width: Self.edgeBlurRadius, height: Self.edgeBlurRadius))
+                }
+        }
+    }
+
+    /// What can be done to a master or layout: a layout can be renamed,
+    /// copied, and deleted once no slide is built on it.
+    @ViewBuilder
+    private func templateMenu(for slide: Slide) -> some View {
+        if slide.role == .master {
+            Button("MasterView.NewLayout", systemImage: "plus") {
+                state.selectSlide(slide.id)
+                state.addLayout(in: &presentation)
+            }
+        } else {
+            Button("MasterView.Rename", systemImage: "pencil") {
+                newName = slide.layoutName ?? ""
+                renamingID = slide.id
+            }
+            Button("MasterView.Duplicate", systemImage: "plus.square.on.square") {
+                state.duplicateSlide(slide.id, in: &presentation)
+            }
+            Section {
+                Button("MasterView.Delete", systemImage: "trash", role: .destructive) {
+                    state.deleteSlide(slide.id, in: &presentation)
+                }
+                .disabled(!state.canDeleteLayout(slide.id, in: presentation))
+            }
+        }
+    }
+
     @ViewBuilder
     private func menu(for slide: Slide, at index: Int) -> some View {
+        if presentation.isInMasterView {
+            templateMenu(for: slide)
+        } else {
+            slideMenu(for: slide, at: index)
+        }
+    }
+
+    @ViewBuilder
+    private func slideMenu(for slide: Slide, at index: Int) -> some View {
         Button("Slide.Menu.Play", systemImage: "play") { play(index) }
         Button("Slide.Menu.Duplicate", systemImage: "plus.square.on.square") {
             state.duplicateSlide(slide.id, in: &presentation)
@@ -154,13 +225,28 @@ struct SlideNavigator: View {
     }
 }
 
-/// New Slide: picks one of the presentation's layouts.
+/// New Slide: picks one of the presentation's layouts. In master view,
+/// adds a layout instead.
 struct NewSlideMenu<Label: View>: View {
     @Binding var presentation: Presentation
     @Bindable var state: EditorState
     @ViewBuilder var label: () -> Label
 
     var body: some View {
+        if presentation.isInMasterView {
+            Button {
+                state.addLayout(in: &presentation)
+            } label: {
+                label()
+            }
+            .accessibilityIdentifier("newLayout")
+            .accessibilityLabel("MasterView.NewLayout")
+        } else {
+            slideMenu
+        }
+    }
+
+    private var slideMenu: some View {
         Menu {
             ForEach(presentation.resources.orderedLayouts, id: \.path) { layout in
                 Button(layout.name) { state.addSlide(using: layout, in: &presentation) }

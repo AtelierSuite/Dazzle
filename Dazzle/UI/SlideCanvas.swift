@@ -7,7 +7,9 @@ import SwiftUI
 ///
 /// Tap a shape to select it, drag it to move it, drag a handle to resize
 /// it, drag the handle above it to turn it, and double-tap one with text to
-/// edit the text. Shift-tap, or tap while selecting several, to add a shape
+/// edit the text. A selected connector has a handle at each end instead:
+/// drag one onto a shape's connection site to attach it there, after which
+/// it goes with the shape. Shift-tap, or tap while selecting several, to add a shape
 /// to the selection; dragging any of them moves them all. Moves, resizes and
 /// turns are previewed live and written to the document once, when the
 /// finger lifts, so each is a single undo step. Pinch to zoom the slide in;
@@ -54,6 +56,20 @@ struct SlideCanvas: View {
         var frame: CGRect
         var picture: SlideShape.Picture
     }
+
+    /// An end of a connector being dragged: where it is, in slide points,
+    /// and the connection site it has settled on, if any.
+    @State private var connectorDrag: ConnectorDrag?
+
+    private struct ConnectorDrag: Equatable {
+        var shapeID: SlideShape.ID
+        var end: SlideShape.ConnectorEnd
+        var point: CGPoint
+        var site: ConnectionSite?
+    }
+
+    /// How near a connection site a connector's end has to come to attach to it, in view points.
+    private static let connectionDistance: CGFloat = 14
 
     /// The lines a moved or resized shape has settled on.
     @State private var guides: [Snapping.Guide] = []
@@ -209,6 +225,8 @@ struct SlideCanvas: View {
                 if selected.count == 1, let shape = selected.first, shape.id == state.croppingShapeID,
                    case .picture(let picture) = shape.kind {
                     cropOverlay(for: shape, picture: picture, scale: scale)
+                } else if selected.count == 1, let shape = selected.first, shape.kind == .connector, shape.isEditable {
+                    connectorSelection(for: shape, on: displayed, scale: scale)
                 } else if selected.count == 1, let shape = selected.first {
                     selection(for: shape, scale: scale)
                 } else {
@@ -418,7 +436,7 @@ struct SlideCanvas: View {
                 height: rect.height - EMU.points((cell.marginTop ?? 45_720) + (cell.marginBottom ?? 45_720))
             )
             InPlaceTextEditor(
-                body: body, shape: TableLayout.cellShape(body, rect), sources: [layout.styleSource(forRow: position.row)],
+                body: body, shape: TableLayout.cellShape(body, rect), sources: [layout.styleSource(for: position)],
                 style: layout.style, slideNumber: (presentation.index(of: slide.id) ?? 0) + 1, scale: scale, fontScale: 1,
                 anchor: cell.anchor ?? .top, selection: state.textSelection,
                 onChange: { state.setCellText($0, in: &presentation) },
@@ -503,12 +521,18 @@ struct SlideCanvas: View {
             slide.shapes[index].frame = EMURect(points: cropDraft.frame)
             slide.shapes[index].kind = .picture(cropDraft.picture)
         }
+        if let connectorDrag {
+            slide.setConnectorEnd(connectorDrag.end, of: connectorDrag.shapeID, to: connectorDrag.point, connection: connectorDrag.site?.connection)
+        }
         guard let interaction else { return slide }
+        let before = slide
         for index in slide.shapes.indices {
             guard let placement = interaction.current[slide.shapes[index].id] else { continue }
             slide.shapes[index].frame = EMURect(points: placement.frame)
             slide.shapes[index].rotation = placement.rotation
         }
+        // Connectors go with the shapes they are attached to as they move.
+        slide.followConnections(from: before)
         return slide
     }
 
@@ -826,6 +850,73 @@ struct SlideCanvas: View {
             x: rect.midX / max(presentation.slideSize.points.width * scale, 1),
             y: rect.midY / max(presentation.slideSize.points.height * scale, 1)
         ))
+    }
+
+    // MARK: - Connectors
+
+    /// A selected connector: a handle at each end, filled where the end is
+    /// attached to a shape. While an end is dragged, the connection sites of
+    /// the shapes it passes are shown, and the one it has settled on stands out.
+    @ViewBuilder
+    private func connectorSelection(for shape: SlideShape, on slide: Slide, scale: CGFloat) -> some View {
+        let ends = shape.connectorEnds
+        ZStack(alignment: .topLeading) {
+            if let drag = connectorDrag, drag.shapeID == shape.id {
+                let sites = slide.connectionSites(around: drag.point, margin: 24 / scale)
+                ForEach(Array(sites.enumerated()), id: \.offset) { _, site in
+                    let isSettled = site.connection == drag.site?.connection
+                    Circle()
+                        .fill(isSettled ? Color.accentColor : .white)
+                        .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: 1.5))
+                        .frame(width: isSettled ? 14 : 8, height: isSettled ? 14 : 8)
+                        .position(x: site.point.x * scale, y: site.point.y * scale)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            ForEach(SlideShape.ConnectorEnd.allCases, id: \.self) { end in
+                let point = end == .start ? ends.start : ends.end
+                let isAttached = shape[connection: end] != nil
+                Circle()
+                    .fill(isAttached ? Color.accentColor : .white)
+                    .overlay(Circle().strokeBorder(isAttached ? .white : Color.accentColor, lineWidth: 1.5))
+                    .frame(width: 12, height: 12)
+                    .padding(10)
+                    .contentShape(.circle)
+                    .offset(x: point.x * scale - 16, y: point.y * scale - 16)
+                    .gesture(connectorEndGesture(end, of: shape.id, scale: scale))
+                    .accessibilityIdentifier(end == .start ? "connectorStart" : "connectorEnd")
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(
+            width: presentation.slideSize.points.width * scale, height: presentation.slideSize.points.height * scale,
+            alignment: .topLeading
+        )
+    }
+
+    /// Moves one end of a connector with the finger. Near a shape's
+    /// connection site it settles on the site, and is attached there when
+    /// the finger lifts; let go anywhere else, it is attached to nothing.
+    private func connectorEndGesture(_ end: SlideShape.ConnectorEnd, of id: SlideShape.ID, scale: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                guard connectorDrag != nil || value.translation != .zero,
+                      let slide = state.selectedSlide(in: presentation),
+                      let original = slide.shapes.first(where: { $0.id == id }) else { return }
+                let ends = original.connectorEnds
+                let origin = end == .start ? ends.start : ends.end
+                var point = CGPoint(x: origin.x + value.translation.width / scale, y: origin.y + value.translation.height / scale)
+                let site = slide.connectionSite(near: point, within: Self.connectionDistance / scale)
+                if let site { point = site.point }
+                connectorDrag = ConnectorDrag(shapeID: id, end: end, point: point, site: site)
+            }
+            .onEnded { _ in
+                if let drag = connectorDrag {
+                    state.setConnectorEnd(drag.end, of: drag.shapeID, to: drag.point, connection: drag.site?.connection, in: &presentation)
+                }
+                connectorDrag = nil
+            }
     }
 
     /// One of several selected shapes: its frame alone, without handles.

@@ -183,6 +183,28 @@ export class SlideCanvas extends EventTarget {
     for (const node of selected) {
       const frame = this.preview?.[node.id] ?? node;
       const rotation = frame.rot ?? node.rot ?? 0;
+      if (selected.length === 1 && node.ends && !node.locked) {
+        // A connector's handles are its two ends, filled where they are attached to a shape.
+        const drag = this.connectorDrag?.id === node.id ? this.connectorDrag : null;
+        for (const end of ["start", "end"]) {
+          const at = drag?.end === end ? drag : { x: node.ends[end].x + frame.x - node.x, y: node.ends[end].y + frame.y - node.y };
+          const handle = make("canvas__handle canvas__handle--end", { left: `${at.x * scale}px`, top: `${at.y * scale}px` });
+          handle.dataset.handle = `end:${end}`;
+          handle.classList.toggle("is-attached", drag?.end === end ? Boolean(drag.site) : node.ends[end].attached);
+        }
+        if (drag) {
+          // The line the connector will take, and the sites it can be attached to nearby.
+          const fixed = node.ends[drag.end === "start" ? "end" : "start"];
+          const length = Math.hypot(drag.x - fixed.x, drag.y - fixed.y) * scale;
+          const angle = Math.atan2(drag.y - fixed.y, drag.x - fixed.x);
+          make("canvas__connector", { left: `${fixed.x * scale}px`, top: `${fixed.y * scale}px`, width: `${length}px`, transform: `rotate(${angle}rad)` });
+          for (const site of drag.sites) {
+            const dot = make("canvas__site", { left: `${site.x * scale}px`, top: `${site.y * scale}px` });
+            dot.classList.toggle("is-settled", site === drag.site);
+          }
+        }
+        continue;
+      }
       const box = make("canvas__selection", {
         left: `${frame.x * scale}px`, top: `${frame.y * scale}px`, width: `${frame.w * scale}px`, height: `${frame.h * scale}px`,
         transform: rotation ? `rotate(${rotation}deg)` : "",
@@ -230,6 +252,11 @@ export class SlideCanvas extends EventTarget {
         this.endEditing();
       }
       this.element.focus({ preventScroll: true });
+      if (handle?.startsWith("end:")) {
+        event.preventDefault();
+        this.dragConnectorEnd(handle.slice(4));
+        return;
+      }
       if (handle) {
         event.preventDefault();
         this.drag(event, handle === "rotate" ? "rotate" : `resize:${handle}`);
@@ -275,6 +302,37 @@ export class SlideCanvas extends EventTarget {
       if (node && !this.selection.includes(node.id)) this.select([node.id]);
       this.dispatchEvent(new CustomEvent("contextmenu", { detail: { event, shape: node?.id ?? null } }));
     });
+  }
+
+  /**
+   * Moves one end of the selected connector with the pointer. Near a shape's connection site it
+   * settles on the site and is attached there when let go; let go anywhere else, it is attached to nothing.
+   */
+  dragConnectorEnd(end) {
+    const node = this.shape(this.selection[0]);
+    if (!node?.ends) return;
+    let sites = [];
+    this.engine.call("connectionSites").then((found) => { sites = found ?? []; });
+    const move = (event) => {
+      const point = this.point(event);
+      const distance = (site) => Math.hypot(site.x - point.x, site.y - point.y) * this.scale;
+      const near = sites.filter((site) => distance(site) < 90);
+      const site = near.filter((site) => distance(site) < 10).sort((a, b) => distance(a) - distance(b))[0] ?? null;
+      this.connectorDrag = { id: node.id, end, x: site?.x ?? point.x, y: site?.y ?? point.y, site, sites: near };
+      this.drawOverlay();
+    };
+    const up = async () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      const drag = this.connectorDrag;
+      this.connectorDrag = null;
+      if (!drag) return;
+      await this.engine.call("setConnectorEnd", { id: node.id, end, x: drag.x, y: drag.y, shape: drag.site?.shape, site: drag.site?.site });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   }
 
   /** Follows the pointer until it is let go, moving, resizing, turning or rubber-banding. */
