@@ -5,10 +5,12 @@ import Foundation
 enum TransitionXML {
     static let p14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
     static let p159 = "http://schemas.microsoft.com/office/powerpoint/2015/09/main"
+    static let p15 = "http://schemas.microsoft.com/office/powerpoint/2012/main"
     static let markupCompatibility = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 
     /// The effect element, as PowerPoint 2007 reads it, and as PowerPoint
-    /// 2010 and later do when that differs.
+    /// 2010 and later do when that differs (`p15:` for one only PowerPoint
+    /// 2013 and later read).
     static func elements(for effect: SlideTransition.Effect) -> (plain: String, p14: String?) {
         func dir(_ direction: SlideTransition.Direction, default fallback: SlideTransition.Direction = .left) -> String {
             direction == fallback ? "" : " dir=\"\(direction.rawValue)\""
@@ -29,6 +31,7 @@ enum TransitionXML {
         case .comb(let vertical): return ("<p:comb\(orientation(vertical))/>", nil)
         case .random: return ("<p:random/>", nil)
         case .morph: return ("<p:fade/>", "<p159:morph option=\"byObject\"/>")
+        case .preset(let preset): return ("<p:fade/>", preset.xml)
         case .pattern(let filter):
             let vertical = ["vertical", "down"].contains(filter.subtype)
             switch filter.kind {
@@ -68,11 +71,13 @@ enum TransitionXML {
         let speed = transition.duration < 0.625 ? "fast" : transition.duration < 0.875 ? "med" : "slow"
         let (plain, newer) = elements(for: transition.effect)
         let milliseconds = Int((transition.duration * 1_000).rounded())
-        // Morph is PowerPoint 2019's, so is offered only to readers that know it.
+        // The newest effects are offered only to readers that know them: Morph is PowerPoint 2019's.
         let isMorph = transition.effect == .morph
+        let isNewest = newer?.hasPrefix("<p15:") == true
+        let namespace = isMorph ? " xmlns:p159=\"\(p159)\"" : isNewest ? " xmlns:p15=\"\(p15)\"" : ""
         return """
-            <mc:AlternateContent xmlns:mc="\(markupCompatibility)" xmlns:p14="\(p14)"\(isMorph ? " xmlns:p159=\"\(p159)\"" : "")>\
-            <mc:Choice Requires="\(isMorph ? "p159" : "p14")">\
+            <mc:AlternateContent xmlns:mc="\(markupCompatibility)" xmlns:p14="\(p14)"\(namespace)>\
+            <mc:Choice Requires="\(isMorph ? "p159" : isNewest ? "p15" : "p14")">\
             <p:transition spd="\(speed)" p14:dur="\(milliseconds)"\(advance)>\(newer ?? plain)</p:transition>\
             </mc:Choice><mc:Fallback><p:transition spd="\(speed)"\(advance)>\(plain)</p:transition></mc:Fallback>\
             </mc:AlternateContent>
