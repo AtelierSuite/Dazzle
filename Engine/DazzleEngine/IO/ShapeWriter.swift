@@ -95,7 +95,7 @@ public struct ShapeWriter {
                 <a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm>\
                 </p:grpSpPr>\(members)</p:grpSp>
                 """
-        case .chart(let chart?):
+        case .chart(let chart?) where !chart.kind.isExtended:
             let reference = relationshipID(for: chart.path, type: OOXML.RelationshipType.chart)
             return """
                 <p:graphicFrame><p:nvGraphicFramePr>\(identity)<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>\

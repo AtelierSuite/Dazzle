@@ -855,7 +855,7 @@ final class EditorState {
 
     /// Changes the selected chart, writing its part and its workbook anew.
     func updateChart(in presentation: inout Presentation, _ change: (inout Chart) -> Void) {
-        guard let shape = selectedShape(in: presentation), shape.isEditable, case .chart(var chart?) = shape.kind,
+        guard let shape = selectedShape(in: presentation), shape.isEditable, case .chart(var chart?) = shape.kind, !chart.kind.isExtended,
               let slideIndex = presentation.index(of: selectedSlideID ?? presentation.slides.first?.id),
               presentation.slides[slideIndex].canEditShapes else { return }
         let before = chart

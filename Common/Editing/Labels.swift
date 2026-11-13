@@ -166,6 +166,13 @@ extension Chart.Kind {
         case .surface: String(localized: "Chart.Kind.Surface")
         case .pieOfPie: String(localized: "Chart.Kind.PieOfPie")
         case .barOfPie: String(localized: "Chart.Kind.BarOfPie")
+        case .waterfall: String(localized: "Chart.Kind.Waterfall")
+        case .funnel: String(localized: "Chart.Kind.Funnel")
+        case .treemap: String(localized: "Chart.Kind.Treemap")
+        case .sunburst: String(localized: "Chart.Kind.Sunburst")
+        case .histogram: String(localized: "Chart.Kind.Histogram")
+        case .pareto: String(localized: "Chart.Kind.Pareto")
+        case .boxWhisker: String(localized: "Chart.Kind.BoxWhisker")
         }
     }
 
@@ -184,6 +191,12 @@ extension Chart.Kind {
         case .surface: "square.grid.3x3.fill"
         case .pieOfPie: "chart.pie.fill"
         case .barOfPie: "chart.pie.fill"
+        case .waterfall: "chart.bar.xaxis"
+        case .funnel: "line.3.horizontal.decrease"
+        case .treemap: "rectangle.split.2x2"
+        case .sunburst: "sun.max"
+        case .histogram, .pareto: "chart.bar.fill"
+        case .boxWhisker: "rectangle.split.1x2"
         }
     }
 }
