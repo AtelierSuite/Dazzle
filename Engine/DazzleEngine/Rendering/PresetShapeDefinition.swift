@@ -71,6 +71,8 @@ struct PresetShapeDefinition: Sendable {
     /// The guides, which take the slots after the adjust values, in order.
     var guides: [Guide] = []
     var textRect: (left: Operand, top: Operand, right: Operand, bottom: Operand)?
+    /// Where connectors meet the shape, in the order `a:stCxn` and `a:endCxn` count them.
+    var sites: [(angle: Operand, x: Operand, y: Operand)] = []
     var paths: [Path] = []
 
     /// Whether no path is filled, so the preset is a line.
@@ -108,6 +110,9 @@ struct PresetShapeDefinition: Sendable {
             case "t":
                 guard operands.count == 4 else { return nil }
                 textRect = (operands[0], operands[1], operands[2], operands[3])
+            case "c":
+                guard operands.count == 3 else { return nil }
+                sites.append((operands[0], operands[1], operands[2]))
             case "p":
                 guard tokens.count == 5, let width = Double(tokens[1]), let height = Double(tokens[2]),
                       let fillCode = tokens[3].first, let fill = Fill(rawValue: fillCode) else { return nil }
@@ -191,6 +196,21 @@ struct PresetShapeDefinition: Sendable {
         let left = value(textRect.left), top = value(textRect.top)
         return CGRect(x: rect.minX + left, y: rect.minY + top,
                       width: Swift.max(value(textRect.right) - left, 1), height: Swift.max(value(textRect.bottom) - top, 1))
+    }
+
+    /// The connection sites of a shape drawn in `rect`: where each is, and
+    /// the angle a connector leaves it at, in degrees clockwise from rightwards.
+    func connectionSites(adjustments: [String: Int], in rect: CGRect) -> [(point: CGPoint, angle: CGFloat)] {
+        let values = values(adjustments: adjustments, size: rect.size)
+        func value(_ operand: Operand) -> CGFloat {
+            switch operand {
+            case .number(let number): number
+            case .slot(let slot): values[slot]
+            }
+        }
+        return sites.map { site in
+            (CGPoint(x: rect.minX + value(site.x), y: rect.minY + value(site.y)), value(site.angle) / 60_000)
+        }
     }
 
     /// The paths, drawn in `rect`.

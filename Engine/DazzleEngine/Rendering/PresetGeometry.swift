@@ -75,6 +75,21 @@ public enum PresetGeometry {
         return Outline(fill: definition.isOpen ? stroke : fill, stroke: stroke, shades: shades)
     }
 
+    /// Where connectors meet a preset drawn in `rect`, in the order a
+    /// connector counts them, and the angle each is left at, in degrees
+    /// clockwise from rightwards. A preset that names none has one in the
+    /// middle of each side, as a rectangle does.
+    public static func connectionSites(_ name: String?, adjustments: [String: Int], in rect: CGRect) -> [(point: CGPoint, angle: CGFloat)] {
+        if let name, let sites = PresetShapeDefinition.named(name)?.connectionSites(adjustments: adjustments, in: rect),
+           !sites.isEmpty {
+            return sites
+        }
+        return [
+            (CGPoint(x: rect.midX, y: rect.minY), 270), (CGPoint(x: rect.minX, y: rect.midY), 180),
+            (CGPoint(x: rect.midX, y: rect.maxY), 90), (CGPoint(x: rect.maxX, y: rect.midY), 0),
+        ]
+    }
+
     /// The area the preset fills (for a line, the line itself).
     public static func path(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath {
         outline(name, adjustments: adjustments, in: rect).fill
