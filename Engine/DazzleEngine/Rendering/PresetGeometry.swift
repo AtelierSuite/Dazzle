@@ -180,12 +180,6 @@ public enum PresetGeometry {
             path.addCurve(to: point(w, h - lid / 2), control1: point(0, h + lid / 6), control2: point(w, h + lid / 6))
             path.addLine(to: point(w, lid / 2))
             path.addEllipse(in: CGRect(x: x, y: y, width: w, height: lid))
-        case "bentConnector4", "bentConnector5":
-            let bend = w * adjust("adj1", 50_000)
-            path.addLines(between: [point(0, 0), point(bend, 0), point(bend, h), point(w, h)])
-        case "curvedConnector2", "curvedConnector3", "curvedConnector4", "curvedConnector5":
-            path.move(to: point(0, 0))
-            path.addCurve(to: point(w, h), control1: point(w / 2, 0), control2: point(w / 2, h))
         case "arc":
             let start = CGFloat(adjustments["adj1"] ?? 16_200_000) / 60_000 * .pi / 180
             let end = CGFloat(adjustments["adj2"] ?? 0) / 60_000 * .pi / 180
