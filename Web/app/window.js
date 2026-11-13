@@ -1462,9 +1462,9 @@ export class PresentationWindow {
             </tbody></table></div>
             <div class="app__custom-show-table"><table class="ds-table"><thead><tr><th colspan="2">${escapeHTML(t("CustomShow.InShow"))}</th></tr></thead><tbody>${show.slides.length ? show.slides.map((id, index) => `
               <tr><td>${escapeHTML(slideLabel(id))}</td><td class="app__custom-show-moves">
-                <button class="ds-button ds-button--ghost ds-button--xs" type="button" data-move="${index}:-1"${index ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveUp"))}" title="${escapeHTML(t("CustomShow.MoveUp"))}">${icon("chevronUp")}</button>
-                <button class="ds-button ds-button--ghost ds-button--xs" type="button" data-move="${index}:1"${index < show.slides.length - 1 ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveDown"))}" title="${escapeHTML(t("CustomShow.MoveDown"))}">${icon("chevronDown")}</button>
-                <button class="ds-button ds-button--ghost ds-button--xs" type="button" data-remove="${index}">${escapeHTML(t("CustomShow.Remove"))}</button>
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-move="${index}:-1"${index ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveUp"))}" title="${escapeHTML(t("CustomShow.MoveUp"))}">${icon("chevronUp")}</button>
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-move="${index}:1"${index < show.slides.length - 1 ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveDown"))}" title="${escapeHTML(t("CustomShow.MoveDown"))}">${icon("chevronDown")}</button>
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-remove="${index}" aria-label="${escapeHTML(t("CustomShow.Remove"))}" title="${escapeHTML(t("CustomShow.Remove"))}">${icon("close")}</button>
               </td></tr>`).join("") : `<tr><td class="ds-caption">${escapeHTML(t("CustomShow.Empty"))}</td></tr>`}
             </tbody></table></div>
           </div>
