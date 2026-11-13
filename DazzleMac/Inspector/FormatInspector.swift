@@ -697,7 +697,11 @@ extension InspectorViewController {
         form.row(nil, form.checkbox(String(localized: "Show.PlayNarration"), get: { settings().playsNarration }, set: { isOn in
             update { $0.playsNarration = isOn }
         }))
-        form.note(String(localized: "Show.Kiosk.Footer"))
+        // What the settings do: a kiosk show's explanation while it is one.
+        let note = NSTextField(wrappingLabelWithString: String(localized: "Show.Footer"))
+        note.textColor = .secondaryLabelColor
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        form.add(note, fill: true)
         form.onUpdate {
             let current = settings()
             var isSlides = false
@@ -709,6 +713,7 @@ extension InspectorViewController {
             restart.superview?.isHidden = !current.isKiosk
             loop.isEnabled = !current.isKiosk
             timings.isEnabled = !current.isKiosk
+            note.stringValue = String(localized: current.isKiosk ? "Show.Kiosk.Footer" : "Show.Footer")
         }
         form.row(nil, form.button(String(localized: "Menu.Play.CustomShows")) { [unowned self] in
             (view.window?.windowController as? DocumentWindowController)?.showCustomShows(nil)
