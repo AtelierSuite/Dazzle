@@ -29,7 +29,7 @@ extension Presentation {
         var layoutsSeen: Set<String> = []
         for slide in slides {
             let layout = layout(for: slide)
-            let master = resources.master(for: layout)
+            let master = master(for: slide)
             let theme = master?.theme ?? .office
             names.insert(theme.majorFont)
             names.insert(theme.minorFont)

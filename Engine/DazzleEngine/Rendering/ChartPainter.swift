@@ -34,15 +34,15 @@ public struct ChartPainter {
         self.style = style
     }
 
-    private var fontSize: CGFloat { CGFloat(chart.fontSize ?? 1_200) / 100 }
-    private var textColor: RGBAColor {
+    var fontSize: CGFloat { CGFloat(chart.fontSize ?? 1_200) / 100 }
+    var textColor: RGBAColor {
         style.color(.scheme("tx1")).applying(.init(name: "lumMod", value: 65_000)).applying(.init(name: "lumOff", value: 35_000))
     }
-    private var gridColor: RGBAColor {
+    var gridColor: RGBAColor {
         style.color(.scheme("tx1")).applying(.init(name: "lumMod", value: 15_000)).applying(.init(name: "lumOff", value: 85_000))
     }
-    private var axisColor: RGBAColor { gridColor.applying(.init(name: "lumMod", value: 75_000)) }
-    private var background: RGBAColor { style.color(.scheme("bg1")) }
+    var axisColor: RGBAColor { gridColor.applying(.init(name: "lumMod", value: 75_000)) }
+    var background: RGBAColor { style.color(.scheme("bg1")) }
 
     /// Draws the chart filling `frame`, in a space whose y axis points down.
     public func draw(in frame: CGRect, on canvas: ChartCanvas) {
@@ -72,6 +72,7 @@ public struct ChartPainter {
         case .bubble: bubbles(in: area, canvas: canvas)
         case .radar: radar(in: area, canvas: canvas)
         case .surface: surface(in: area, canvas: canvas)
+        case .waterfall, .funnel, .treemap, .sunburst, .histogram, .pareto, .boxWhisker: extended(in: area, canvas: canvas)
         default: categoryPlots(in: area, canvas: canvas)
         }
     }
@@ -90,11 +91,11 @@ public struct ChartPainter {
         return style.color(color)
     }
 
-    private func seriesColor(_ series: Chart.Series, index: Int) -> RGBAColor {
+    func seriesColor(_ series: Chart.Series, index: Int) -> RGBAColor {
         series.color.map { style.color($0) } ?? color(at: index)
     }
 
-    private func pointColor(_ series: Chart.Series, at index: Int) -> RGBAColor {
+    func pointColor(_ series: Chart.Series, at index: Int) -> RGBAColor {
         series.pointColors[index].map { style.color($0) } ?? color(at: index)
     }
 
@@ -112,6 +113,7 @@ public struct ChartPainter {
 
     /// What the legend lists: categories for a pie, value bands for a surface, series otherwise.
     func legendEntries() -> [(String, RGBAColor)] {
+        if chart.kind.isExtended { return extendedLegendEntries() }
         if chart.kind.colorsByPoint {
             guard let series = chart.plots.first?.series.first else { return [] }
             var entries = chart.categories.enumerated().map { index, name in (formatCategory(name), pointColor(series, at: index)) }
@@ -127,12 +129,14 @@ public struct ChartPainter {
                 ("\(format(band.0, percent: false))-\(format(band.1, percent: false))", color(at: index))
             }
         }
-        return chart.allSeries.enumerated().map { ($1.name, seriesColor($1, index: $0)) }
+        return chart.allSeries.enumerated().map { ($1.name, seriesColor($1, index: $0)) } + trendlineLegendEntries()
     }
 
     private func legend(in area: CGRect, padding: CGFloat, canvas: ChartCanvas) -> CGRect {
         let entries = legendEntries()
         guard !entries.isEmpty else { return area }
+        // Trendlines come last, and show as a short line.
+        let firstLine = entries.count - trendlineLegendEntries().count
         let swatch = fontSize * 0.7
         let lineHeight = fontSize * 1.5
         let widths = entries.map { canvas.measure($0.0, size: fontSize) + swatch + fontSize * 0.5 }
@@ -143,7 +147,7 @@ public struct ChartPainter {
             var x = area.midX - min(total, area.width) / 2
             let y = chart.legendPosition == "b" ? area.maxY - lineHeight : area.minY
             for (index, entry) in entries.enumerated() {
-                legendEntry(entry, at: CGPoint(x: x, y: y + (lineHeight - swatch) / 2), swatch: swatch, canvas: canvas)
+                legendEntry(entry, at: CGPoint(x: x, y: y + (lineHeight - swatch) / 2), swatch: swatch, isLine: index >= firstLine, canvas: canvas)
                 x += widths[index] + fontSize
             }
             plot.size.height -= lineHeight + padding / 2
@@ -153,8 +157,8 @@ public struct ChartPainter {
             let total = CGFloat(entries.count) * lineHeight
             var y = area.midY - total / 2
             let x = chart.legendPosition == "l" ? area.minX : area.maxX - width + padding / 2
-            for entry in entries {
-                legendEntry(entry, at: CGPoint(x: x, y: y + (lineHeight - swatch) / 2), swatch: swatch, canvas: canvas)
+            for (index, entry) in entries.enumerated() {
+                legendEntry(entry, at: CGPoint(x: x, y: y + (lineHeight - swatch) / 2), swatch: swatch, isLine: index >= firstLine, canvas: canvas)
                 y += lineHeight
             }
             plot.size.width -= width
@@ -163,8 +167,13 @@ public struct ChartPainter {
         return plot
     }
 
-    private func legendEntry(_ entry: (String, RGBAColor), at point: CGPoint, swatch: CGFloat, canvas: ChartCanvas) {
-        canvas.fill(CGRect(x: point.x, y: point.y, width: swatch, height: swatch), color: entry.1)
+    private func legendEntry(_ entry: (String, RGBAColor), at point: CGPoint, swatch: CGFloat, isLine: Bool = false, canvas: ChartCanvas) {
+        if isLine {
+            line(from: CGPoint(x: point.x, y: point.y + swatch / 2), to: CGPoint(x: point.x + swatch, y: point.y + swatch / 2),
+                 color: entry.1, width: max(swatch * 0.2, 1), canvas: canvas)
+        } else {
+            canvas.fill(CGRect(x: point.x, y: point.y, width: swatch, height: swatch), color: entry.1)
+        }
         text(entry.0, in: CGRect(x: point.x + swatch + fontSize * 0.35, y: point.y + swatch / 2 - fontSize * 0.7, width: 1_000, height: fontSize * 1.4),
              size: fontSize, alignment: .left, canvas: canvas)
     }
@@ -232,6 +241,9 @@ public struct ChartPainter {
                 let values = plot.series.flatMap { $0.values.prefix(max(count, 1)).compactMap(\.self) }
                 high = max(high, values.max() ?? 0)
                 low = min(low, values.min() ?? 0)
+                if !plot.isThreeD, let reach = errorBarReach(plot.series, along: .y) {
+                    (low, high) = (min(low, reach.lowerBound), max(high, reach.upperBound))
+                }
             }
         }
         if !low.isFinite { low = 0 }
@@ -361,6 +373,38 @@ public struct ChartPainter {
                 break
             }
             seriesIndex += plotData.series.count
+        }
+
+        // Error bars and trendlines, over every plot's series.
+        seriesIndex = 0
+        for plotData in chart.plots {
+            defer { seriesIndex += plotData.series.count }
+            guard !plotData.isThreeD else { continue }
+            let plotScale = isSecondary(plotData) ? secondary ?? scale : scale
+            let stacked = plotData.grouping != .standard && plotData.kind.hasGrouping
+            let slots = stacked ? 1 : max(plotData.series.count, 1)
+            for (index, series) in plotData.series.enumerated() where !series.trendlines.isEmpty || !series.errorBars.isEmpty {
+                // Where across its category a point sits: a bar's middle, or the category's.
+                var across = 0.5
+                if plotData.kind == .column || plotData.kind == .bar {
+                    let slot = stacked ? 0 : (horizontal ? slots - 1 - index : index)
+                    across = (0.75 + Double(slot) + 0.5) / (Double(slots) + 1.5)
+                }
+                let frame = AnalysisFrame(
+                    rect: plot, xRange: 0.5...(Double(count) + 0.5), yRange: plotScale.minimum...plotScale.maximum
+                ) { x, value in
+                    let category = CGFloat(x - 1)
+                    let along = position(value, on: plotScale)
+                    return horizontal
+                        ? CGPoint(x: along, y: plot.maxY - band * (category + 1) + band * CGFloat(across))
+                        : CGPoint(x: plot.minX + band * (category + CGFloat(across)), y: along)
+                }
+                let points = (0..<chart.categories.count).compactMap { category -> (index: Int, x: Double, y: Double)? in
+                    stackedRange(plotData, series: index, category: category).map { (category, Double(category + 1), $0.to) }
+                }
+                analysis(series, color: seriesColor(series, index: seriesIndex + index), points: points, values: series.values,
+                         xValues: [], frame: frame, canvas: canvas)
+            }
         }
 
         // The axis line along the categories, at zero.
@@ -510,7 +554,7 @@ public struct ChartPainter {
         }
     }
 
-    private func polyline(_ points: [CGPoint], color: RGBAColor, closed: Bool = false, canvas: ChartCanvas) {
+    func polyline(_ points: [CGPoint], color: RGBAColor, closed: Bool = false, canvas: ChartCanvas) {
         guard let first = points.first else { return }
         let path = CGMutablePath()
         path.move(to: first)
@@ -519,7 +563,7 @@ public struct ChartPainter {
         canvas.draw(path, fill: nil, stroke: color, lineWidth: max(fontSize * 0.19, 1.5), round: true)
     }
 
-    private func markers(_ points: [CGPoint], color: RGBAColor, canvas: ChartCanvas) {
+    func markers(_ points: [CGPoint], color: RGBAColor, canvas: ChartCanvas) {
         let marker = fontSize * 0.42
         for point in points {
             let dot = CGMutablePath()
@@ -744,7 +788,7 @@ public struct ChartPainter {
     // MARK: - Scatter and bubbles
 
     /// Where an x-y chart's points sit: its value axes, gridlines and labels.
-    private struct XYPlot {
+    struct XYPlot {
         var rect: CGRect
         var x: Scale
         var y: Scale
@@ -754,7 +798,7 @@ public struct ChartPainter {
         }
     }
 
-    private func xValue(_ series: Chart.Series, at index: Int) -> Double {
+    func xValue(_ series: Chart.Series, at index: Int) -> Double {
         series.xValues.isEmpty ? Double(index + 1) : (series.xValues.indices.contains(index) ? series.xValues[index] ?? 0 : 0)
     }
 
@@ -762,8 +806,11 @@ public struct ChartPainter {
         let series = chart.allSeries
         let xs = series.flatMap { series in series.values.indices.map { xValue(series, at: $0) } }
         let ys = series.flatMap { $0.values.compactMap(\.self) }
-        let xScale = Scale.nice(low: xs.min() ?? 0, high: xs.max() ?? 1)
-        let yScale = Scale.nice(low: ys.min() ?? 0, high: ys.max() ?? 1, fixedMinimum: chart.minimum, fixedMaximum: chart.maximum)
+        let xReach = errorBarReach(series, along: .x)
+        let yReach = errorBarReach(series, along: .y)
+        let xScale = Scale.nice(low: min(xs.min() ?? 0, xReach?.lowerBound ?? .infinity), high: max(xs.max() ?? 1, xReach?.upperBound ?? -.infinity))
+        let yScale = Scale.nice(low: min(ys.min() ?? 0, yReach?.lowerBound ?? .infinity), high: max(ys.max() ?? 1, yReach?.upperBound ?? -.infinity),
+                                fixedMinimum: chart.minimum, fixedMaximum: chart.maximum)
         let labelWidth = (yScale.ticks.map { canvas.measure(format($0, percent: false), size: fontSize) }.max() ?? 0) + fontSize * 0.5
         var rect = area
         rect.origin.x += labelWidth
@@ -799,6 +846,19 @@ public struct ChartPainter {
                 dot.addEllipse(in: CGRect(x: at.x - marker / 2, y: at.y - marker / 2, width: marker, height: marker))
                 canvas.draw(dot, fill: color, stroke: nil, lineWidth: 0, round: false)
             }
+        }
+        xyAnalysis(plot, canvas: canvas)
+    }
+
+    /// Error bars and trendlines over an x-y chart's series.
+    private func xyAnalysis(_ plot: XYPlot, canvas: ChartCanvas) {
+        let frame = AnalysisFrame(rect: plot.rect, xRange: plot.x.minimum...plot.x.maximum, yRange: plot.y.minimum...plot.y.maximum, place: plot.point)
+        for (index, series) in chart.allSeries.enumerated() where !series.trendlines.isEmpty || !series.errorBars.isEmpty {
+            let points = series.values.enumerated().compactMap { pointIndex, value -> (index: Int, x: Double, y: Double)? in
+                value.map { (pointIndex, xValue(series, at: pointIndex), $0) }
+            }
+            analysis(series, color: seriesColor(series, index: index), points: points, values: series.values,
+                     xValues: series.values.indices.map { xValue(series, at: $0) }, frame: frame, canvas: canvas)
         }
     }
 
@@ -836,6 +896,7 @@ public struct ChartPainter {
                      size: fontSize * 0.85, alignment: .center, canvas: canvas)
             }
         }
+        xyAnalysis(plot, canvas: canvas)
     }
 
     // MARK: - Radar
@@ -1031,7 +1092,7 @@ public struct ChartPainter {
 
     // MARK: - Paths
 
-    private func polygon(_ points: [CGPoint]) -> CGPath {
+    func polygon(_ points: [CGPoint]) -> CGPath {
         let path = CGMutablePath()
         guard let first = points.first else { return path }
         path.move(to: first)
@@ -1044,7 +1105,7 @@ public struct ChartPainter {
         canvas.draw(polygon(points), fill: nil, stroke: color, lineWidth: 0.75, round: false)
     }
 
-    private func line(from: CGPoint, to: CGPoint, color: RGBAColor, width: CGFloat, canvas: ChartCanvas) {
+    func line(from: CGPoint, to: CGPoint, color: RGBAColor, width: CGFloat, canvas: ChartCanvas) {
         let path = CGMutablePath()
         path.move(to: from)
         path.addLine(to: to)
@@ -1113,7 +1174,7 @@ public struct ChartPainter {
         return result
     }
 
-    private func text(
+    func text(
         _ text: String, in rect: CGRect, size: CGFloat, alignment: ChartTextAlignment, canvas: ChartCanvas, color: RGBAColor? = nil
     ) {
         canvas.text(text, in: rect, size: size, alignment: alignment, color: color ?? textColor)

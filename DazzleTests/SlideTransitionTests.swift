@@ -66,23 +66,133 @@ struct SlideTransitionTests {
         #expect(flash.effect == .flash)
         #expect(flash.duration == 2)
         #expect(flash.approximates == nil)
-        let doors = try #require(try transition(alternate("<p14:doors dir=\"vert\"/>")))
-        #expect(doors.effect == .split(vertical: true, outward: true))
-        // A vortex has no drawing: PowerPoint's own fallback is played, still for its duration.
-        let vortex = try #require(try transition(alternate("<p14:vortex dir=\"r\"/>", fallback: "<p:push dir=\"r\"/>")))
-        #expect(vortex.effect == .push(.right))
-        #expect(vortex.duration == 2)
-        #expect(vortex.approximates == "vortex")
-        let curtains = try #require(try transition(alternate("<p15:prstTrans prst=\"curtains\"/>", requires: "p15")))
-        #expect(curtains.effect == .fade(throughBlack: false))
-        #expect(curtains.approximates == "curtains")
+        // An effect with no drawing: PowerPoint's own fallback is played, still for its duration.
+        let unknown = try #require(try transition(alternate("<p14:somethingNew dir=\"r\"/>", fallback: "<p:push dir=\"r\"/>")))
+        #expect(unknown.effect == .push(.right))
+        #expect(unknown.duration == 2)
+        #expect(unknown.approximates == "somethingNew")
+        let preset = try #require(try transition(alternate("<p15:prstTrans prst=\"somethingNew\"/>", requires: "p15")))
+        #expect(preset.effect == .fade(throughBlack: false))
+        #expect(preset.approximates == "somethingNew")
         let morph = try #require(try transition(alternate("<p159:morph option=\"byObject\"/>", requires: "p159")))
         #expect(morph.effect == .fade(throughBlack: false))
         #expect(morph.approximates == "morph")
         // With nothing better offered, still a fade rather than a cut.
-        let ripple = try #require(try transition("<p:transition><p14:ripple/></p:transition>"))
-        #expect(ripple.effect == .fade(throughBlack: false))
-        #expect(ripple.approximates == "ripple")
+        let bare = try #require(try transition("<p:transition><p14:somethingNew/></p:transition>"))
+        #expect(bare.effect == .fade(throughBlack: false))
+        #expect(bare.approximates == "somethingNew")
+    }
+
+    @Test("PowerPoint 2010's and 2013's own effects are read as themselves, with their options")
+    func presets() throws {
+        typealias Preset = SlideTransition.Preset
+        func preset(_ choice: String, requires: String = "p14") throws -> Preset? {
+            let read = try #require(try transition(alternate(choice, requires: requires, fallback: "<p:push dir=\"r\"/>")))
+            #expect(read.approximates == nil)
+            #expect(read.duration == 2)
+            guard case .preset(let preset) = read.effect else { return nil }
+            return preset
+        }
+        #expect(try preset("<p14:vortex dir=\"r\"/>") == Preset(.vortex, direction: .right))
+        #expect(try preset("<p14:vortex dir=\"u\"/>") == Preset(.vortex, direction: .up))
+        #expect(try preset("<p14:switch dir=\"r\"/>") == Preset(.switch, direction: .right))
+        #expect(try preset("<p14:flip dir=\"l\"/>") == Preset(.flip, direction: .left))
+        #expect(try preset("<p14:ferris dir=\"l\"/>") == Preset(.ferris, direction: .left))
+        #expect(try preset("<p14:gallery dir=\"r\"/>") == Preset(.gallery, direction: .right))
+        #expect(try preset("<p14:conveyor dir=\"l\"/>") == Preset(.conveyor, direction: .left))
+        #expect(try preset("<p14:doors dir=\"vert\"/>") == Preset(.doors))
+        #expect(try preset("<p14:doors dir=\"horz\"/>") == Preset(.doors, direction: .up))
+        #expect(try preset("<p14:window dir=\"horz\"/>") == Preset(.window, direction: .up))
+        #expect(try preset("<p14:glitter pattern=\"hexagon\" dir=\"l\"/>") == Preset(.glitter, direction: .left))
+        #expect(try preset("<p14:glitter pattern=\"diamond\" dir=\"d\"/>")
+            == Preset(.glitter, direction: .down, isAlternatePattern: true))
+        #expect(try preset("<p14:honeycomb/>") == Preset(.honeycomb))
+        #expect(try preset("<p14:shred pattern=\"strip\" dir=\"in\"/>") == Preset(.shred))
+        #expect(try preset("<p14:shred pattern=\"rectangle\" dir=\"out\"/>")
+            == Preset(.shred, isAlternatePattern: true, isReversed: true))
+        #expect(try preset("<p14:ripple/>") == Preset(.ripple))
+        #expect(try preset("<p14:ripple dir=\"ld\"/>") == Preset(.ripple, direction: .leftDown))
+        for kind in Preset.Kind.allCases where kind.isPresetTransition {
+            #expect(try preset("<p15:prstTrans prst=\"\(kind.rawValue)\"/>", requires: "p15") == Preset(kind))
+            #expect(try preset("<p15:prstTrans prst=\"\(kind.rawValue)\" invX=\"1\"/>", requires: "p15") == Preset(kind, isReversed: true))
+        }
+        // A name of one kind is not read as the other.
+        #expect(try transition(alternate("<p15:prstTrans prst=\"vortex\"/>", requires: "p15"))?.approximates == "vortex")
+        // With Reduce Motion they cross-fade like anything else that moves.
+        #expect(SlideTransition(effect: .preset(Preset(.vortex))).played(reduceMotion: true).effect == .fade(throughBlack: false))
+    }
+
+    /// The colours of a grid of points across a moment of `preset`, the old slide drawn red and the new one green.
+    private func colours(of preset: SlideTransition.Preset, at progress: Double) throws -> [(red: UInt8, green: UInt8, blue: UInt8)] {
+        let width = 200, height = 120
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        try pixels.withUnsafeMutableBytes { buffer in
+            let context = try #require(CGContext(
+                data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            let size = CGSize(width: width, height: height)
+            context.setFillColor(CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [0, 0, 0, 1])!)
+            context.fill(CGRect(origin: .zero, size: size))
+            let frame = SlideTransition(effect: .preset(preset), duration: 1).frame(progress: progress, size: size)
+            frame.draw(in: context, size: size) { content, context in
+                context.setFillColor(CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: content == .outgoing ? [1, 0, 0, 1] : [0, 1, 0, 1])!)
+                context.fill(CGRect(origin: .zero, size: size))
+            }
+        }
+        return stride(from: 3, to: height, by: 6).flatMap { y in
+            // Columns that mirror onto each other.
+            stride(from: 2, to: width, by: 5).map { x in
+                let at = (y * width + x) * 4
+                return (pixels[at], pixels[at + 1], pixels[at + 2])
+            }
+        }
+    }
+
+    @Test("Each preset starts as the old slide, ends as the new one, and shows both on the way, with the same layers throughout")
+    func presetFrames() throws {
+        typealias Preset = SlideTransition.Preset
+        var presets = Preset.Kind.allCases.map { Preset($0) }
+        presets += Preset.Kind.allCases.filter(\.isPresetTransition).map { Preset($0, isReversed: true) }
+        presets += [
+            Preset(.vortex, direction: .down), Preset(.switch, direction: .right), Preset(.flip, direction: .right),
+            Preset(.ferris, direction: .right), Preset(.gallery, direction: .right), Preset(.conveyor, direction: .right),
+            Preset(.doors, direction: .up), Preset(.window, direction: .up), Preset(.glitter, direction: .up, isAlternatePattern: true),
+            Preset(.shred, isAlternatePattern: true), Preset(.shred, isReversed: true),
+            Preset(.shred, isAlternatePattern: true, isReversed: true), Preset(.ripple, direction: .rightDown),
+        ]
+        let size = CGSize(width: 200, height: 120)
+        for preset in presets {
+            let transition = SlideTransition(effect: .preset(preset), duration: 1)
+            let contents = transition.frame(progress: 0, size: size).layers.map(\.content)
+            for step in 1...20 {
+                #expect(transition.frame(progress: Double(step) / 20, size: size).layers.map(\.content) == contents, "\(preset)")
+            }
+            let start = try colours(of: preset, at: 0)
+            #expect(start.allSatisfy { $0.red > 235 && $0.green < 20 }, "\(preset) starts as the old slide")
+            let end = try colours(of: preset, at: 1)
+            #expect(end.allSatisfy { $0.green > 235 && $0.red < 20 }, "\(preset) ends as the new slide")
+            let middle = try colours(of: preset, at: 0.4)
+            #expect(middle.contains { $0.red > 100 || $0.green > 100 }, "\(preset) shows a slide midway")
+            #expect(!middle.allSatisfy { $0.green > 235 && $0.red < 20 } && !middle.allSatisfy { $0.red > 235 && $0.green < 20 },
+                    "\(preset) is under way midway")
+        }
+        // Travelling the other way is the mirror image.
+        let left = try colours(of: Preset(.wind), at: 0.5), right = try colours(of: Preset(.wind, isReversed: true), at: 0.5)
+        let columns = 40
+        #expect(columns > 0 && (0..<left.count).allSatisfy { index in
+            let mirrored = right[index - index % columns + (columns - 1 - index % columns)]
+            return abs(Int(left[index].red) - Int(mirrored.red)) < 40 && abs(Int(left[index].green) - Int(mirrored.green)) < 40
+        })
+        // Doors hinge at the slide's sides: partway open, the middle shows the new slide and the edges the old.
+        let doors = SlideTransition(effect: .preset(Preset(.doors)), duration: 1).frame(progress: 0.5, size: size).layers
+        #expect(doors.map(\.content) == [.black, .incoming, .outgoing, .black, .outgoing, .black])
+        #expect(doors[2].clip?.contains(CGPoint(x: 10, y: 60)) == true)
+        #expect(doors[2].clip?.contains(CGPoint(x: 95, y: 60)) == false)
+        // A page peeled back shows its back, mirrored in the fold.
+        let peel = SlideTransition(effect: .preset(Preset(.peelOff)), duration: 1).frame(progress: 0.5, size: size).layers
+        #expect(peel.map(\.content) == [.incoming, .black, .outgoing, .white, .outgoing])
+        #expect(peel[4].transform.a * peel[4].transform.d - peel[4].transform.b * peel[4].transform.c < 0)
     }
 
     @Test("Only transitions played as something else are noted")
@@ -92,7 +202,10 @@ struct SlideTransitionTests {
         #expect(playable.slides[0].transition == SlideTransition(effect: .push(.up), duration: 2))
         #expect(playable.slides[0].autoAdvanceAfter == 1.5)
         let vortex = try deck(slideXML: alternate("<p14:vortex/>"))
-        #expect(vortex.unsupportedFeatures.features == [.transitions])
+        #expect(vortex.unsupportedFeatures.features.isEmpty)
+        #expect(vortex.slides[0].transition?.effect == .preset(SlideTransition.Preset(.vortex)))
+        let unknown = try deck(slideXML: alternate("<p14:somethingNew/>"))
+        #expect(unknown.unsupportedFeatures.features == [.transitions])
     }
 
     @Test("Transitions are saved exactly as they were read, slide timing edits included")
@@ -122,7 +235,13 @@ struct SlideTransitionTests {
         var presentation = try deck(slideXML: alternate("<p14:vortex/>"))
         let state = EditorState()
         state.selectSlide(presentation.slides[0].id)
-        let effects: [SlideTransition.Effect] = [
+        typealias Preset = SlideTransition.Preset
+        var effects: [SlideTransition.Effect] = Preset.Kind.allCases.filter { $0 != .vortex }.map { .preset(Preset($0)) }
+        effects += Preset.Kind.allCases.filter(\.isPresetTransition).map { .preset(Preset($0, isReversed: true)) }
+        effects += [
+            .preset(Preset(.flip, direction: .right)), .preset(Preset(.doors, direction: .up)),
+            .preset(Preset(.glitter, direction: .up, isAlternatePattern: true)), .preset(Preset(.ripple, direction: .rightDown)),
+            .preset(Preset(.shred, isAlternatePattern: true, isReversed: true)),
             .push(.down), .wipe(.right), .cover(.leftUp), .uncover(.up), .split(vertical: true, outward: false),
             .zoom(outward: true), .fade(throughBlack: true), .cut(throughBlack: true), .flash, .comb(vertical: true),
             .newsflash, .random, .pattern(AnimationFilter("blinds(vertical)")!), .pattern(AnimationFilter("checkerboard(down)")!),

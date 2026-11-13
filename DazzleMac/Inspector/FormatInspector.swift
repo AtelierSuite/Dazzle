@@ -493,12 +493,11 @@ extension InspectorViewController {
 
     private func buildTable(_ table: SlideTable) {
         form.section(String(localized: "Format.Section.Table"))
-        form.row(nil, form.checkbox(String(localized: "Table.HeaderRow"), get: { [unowned self] in
-            state.selectedTable(in: deck.presentation)?.hasHeaderRow ?? false
-        }, set: { [unowned self] isOn in edit { state.setTableHeaderRow(isOn, in: &$0) } }))
-        form.row(nil, form.checkbox(String(localized: "Table.BandedRows"), get: { [unowned self] in
-            state.selectedTable(in: deck.presentation)?.hasBandedRows ?? false
-        }, set: { [unowned self] isOn in edit { state.setTableBandedRows(isOn, in: &$0) } }))
+        for option in SlideTable.StyleOption.allCases {
+            form.row(nil, form.checkbox(option.label, get: { [unowned self] in
+                state.selectedTable(in: deck.presentation)?[option] ?? false
+            }, set: { [unowned self] isOn in edit { state.setTableOption(option, isOn, in: &$0) } }))
+        }
         guard let position = state.selectedCell, table.cell(at: position) != nil else {
             form.note(String(localized: "Mac.Inspector.Table.PickCell"))
             return
@@ -715,6 +714,19 @@ extension InspectorViewController {
             set: { [unowned self] color in edit { state.setBackground(color.map(Fill.solid), in: &$0) } }
         ))
         form.note(String(localized: "Format.Background.Footer"))
+
+        // A master or layout has a name, and none of what a slide has besides.
+        if deck.presentation.isInMasterView {
+            guard slide.role != .master else { return }
+            form.section(String(localized: "MasterView.Section.Layout"))
+            form.row(String(localized: "MasterView.LayoutName"), form.text(placeholder: "", get: { [unowned self] in
+                deck.selectedSlide?.layoutName ?? ""
+            }, set: { [unowned self] name in
+                guard let id = deck.selectedSlide?.id else { return }
+                edit { state.renameLayout(id, to: name, in: &$0) }
+            }))
+            return
+        }
 
         form.section(String(localized: "Format.Section.Slide"))
         form.row(String(localized: "Format.Slide.Layout"), NSTextField(labelWithString: deck.presentation.layout(for: slide)?.name ?? ""))

@@ -24,6 +24,26 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
         case effects
         /// Where clicking it goes.
         case link
+        /// The text styles a layout's or master's placeholder hands down.
+        case listStyle
+        /// Which preset it is drawn as, and its adjust values.
+        case geometry
+        /// The shapes a connector's ends are attached to.
+        case connections
+    }
+
+    /// `a:stCxn` or `a:endCxn`: the shape one end of a connector is attached
+    /// to, and which of its connection sites.
+    public struct Connection: Equatable, Hashable, Sendable {
+        /// The shape's `shapeID`.
+        public var shapeID: Int
+        /// The site's place among the shape's connection sites.
+        public var site: Int
+
+        public init(shapeID: Int, site: Int) {
+            self.shapeID = shapeID
+            self.site = site
+        }
     }
 
     public enum Kind: Equatable, Hashable, Sendable {
@@ -160,6 +180,10 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
     /// For SmartArt shapes, where the text goes when it is not the whole shape.
     public var textFrame: EMURect?
     public var isTextBox = false
+    /// What a connector's first end is attached to, if anything.
+    public var startConnection: Connection?
+    /// What a connector's last end is attached to, if anything.
+    public var endConnection: Connection?
     /// `descr`: what the shape shows, for people who cannot see it.
     public var altText: String?
     /// Where clicking the shape goes, in a slideshow.
