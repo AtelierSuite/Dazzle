@@ -16,7 +16,7 @@ extension DeckResources {
         }
         return DeckResources(
             masters: masters, layouts: layouts, layoutOrder: layoutOrder, defaultTextStyle: defaultTextStyle,
-            notesMasterPath: notesMasterPath, tableStyles: tableStyles, embeddedFonts: embeddedFonts
+            notesMasterPath: notesMasterPath, tableStyles: tableStyles, embeddedFonts: embeddedFonts, masterOrder: masterOrder
         )
     }
 }

@@ -128,6 +128,7 @@ enum MainMenu {
         menu.addItem(submenu(layouts))
         menu.addItem(item(String(localized: "Slide.Menu.Duplicate"), #selector(Commands.duplicateSlide(_:))))
         menu.addItem(item(String(localized: "Slide.Menu.Delete"), #selector(Commands.deleteSlide(_:))))
+        menu.addItem(item(String(localized: "MasterView.Rename"), #selector(Commands.renameLayout(_:))))
         menu.addItem(item(String(localized: "Slide.Menu.Hide"), #selector(Commands.toggleSlideHidden(_:))))
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Mac.Menu.Slide.HeaderFooter"), #selector(Commands.showHeaderFooter(_:))))
@@ -223,6 +224,8 @@ enum MainMenu {
         menu.addItem(item(String(localized: "Menu.View.Inspector"), #selector(NSSplitViewController.toggleInspector(_:)), "i",
                           [.command, .option]))
         menu.addItem(item(String(localized: "Menu.View.Notes"), #selector(Commands.toggleNotes(_:)), "n", [.command, .option]))
+        menu.addItem(.separator())
+        menu.addItem(item(String(localized: "Toolbar.EditMasters"), #selector(Commands.toggleMasterView(_:)), "m", [.command, .option]))
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Menu.View.ZoomIn"), #selector(Commands.zoomIn(_:)), ">"))
         menu.addItem(item(String(localized: "Menu.View.ZoomOut"), #selector(Commands.zoomOut(_:)), "<"))

@@ -29,9 +29,10 @@ extension EditorState {
     }
 
     /// Whether the theme can be changed: not in a Keynote document, which
-    /// keeps its styles in a form Dazzle doesn't write.
+    /// keeps its styles in a form Dazzle doesn't write, nor in master view,
+    /// whose slides are the masters themselves.
     func canEditTheme(in presentation: Presentation) -> Bool {
-        presentation.keynoteSource == nil && themeMasterPath(in: presentation) != nil
+        presentation.keynoteSource == nil && !presentation.isInMasterView && themeMasterPath(in: presentation) != nil
     }
 
     func setThemeColor(_ color: UInt32, for slot: String, in presentation: inout Presentation) {

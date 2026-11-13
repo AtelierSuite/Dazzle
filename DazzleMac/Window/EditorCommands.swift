@@ -60,6 +60,8 @@ extension DocumentWindowController: NSMenuItemValidation {
     /// names, or failing that, the selected slide's.
     @objc func newSlide(_ sender: Any?) {
         let presentation = deck.presentation
+        // In master view, what is added is a layout.
+        guard !presentation.isInMasterView else { return edit { state.addLayout(in: &$0) } }
         let layouts = presentation.resources.orderedLayouts
         let path = (sender as? NSMenuItem)?.representedObject as? String
         let current = deck.selectedSlide.flatMap { presentation.layout(for: $0) }
@@ -92,6 +94,38 @@ extension DocumentWindowController: NSMenuItemValidation {
         guard let id = deck.selectedSlide?.id else { return }
         let index = deck.selectedIndex
         edit { state.moveSlide(id, to: index + 1, in: &$0) }
+    }
+
+    // MARK: - Master view
+
+    /// Shows the masters and layouts in place of the slides, or the slides again.
+    @objc func toggleMasterView(_ sender: Any?) {
+        state.endEditingText()
+        edit {
+            if $0.isInMasterView {
+                state.leaveMasterView(in: &$0)
+            } else {
+                state.enterMasterView(in: &$0)
+            }
+        }
+    }
+
+    /// Asks for another name for the layout being edited.
+    @objc func renameLayout(_ sender: Any?) {
+        guard let window, let slide = deck.selectedSlide, slide.role != .master, deck.presentation.isInMasterView else { return }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "MasterView.Rename.Title")
+        alert.addButton(withTitle: String(localized: "MasterView.Rename.Confirm"))
+        alert.addButton(withTitle: String(localized: "Common.Cancel"))
+        let field = NSTextField(string: slide.layoutName ?? "")
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        field.setAccessibilityIdentifier("layoutNameField")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            edit { state.renameLayout(slide.id, to: field.stringValue, in: &$0) }
+        }
     }
 
     @objc func showHeaderFooter(_ sender: Any?) {
@@ -264,6 +298,8 @@ extension DocumentWindowController: NSMenuItemValidation {
     @objc func playFromBeginning(_ sender: Any?) { play(from: 0) }
 
     func play(from index: Int) {
+        // The slideshow shows the slides, which master view has set aside.
+        guard !deck.presentation.isInMasterView else { return }
         state.endEditingText()
         state.stopPreviewingAnimations()
         SlideshowController.shared.start(deck: deck, title: name, from: index, editorWindow: window)
@@ -304,13 +340,24 @@ extension DocumentWindowController: NSMenuItemValidation {
         let presentation = deck.presentation
         let hasShapes = !state.selectedShapeIDs.isEmpty
         let text = state.effectiveRunProperties(in: presentation)
+        let isInMasterView = presentation.isInMasterView
         switch menuItem.action {
+        case #selector(toggleMasterView(_:)):
+            menuItem.title = String(localized: isInMasterView ? "MasterView.Close" : "Toolbar.EditMasters")
+            return isInMasterView || presentation.canEditMasters
+        case #selector(renameLayout(_:)):
+            return isInMasterView && deck.selectedSlide.map { $0.role != .master } == true
+        case #selector(newSlide(_:)):
+            if menuItem.representedObject == nil {
+                menuItem.title = String(localized: isInMasterView ? "MasterView.NewLayout" : "Slide.New")
+            }
+            return true
         case #selector(copy(_:)):
             menuItem.title = String(localized: hasShapes ? "Edit.Copy" : "Edit.CopySlide")
-            return deck.selectedSlide != nil
+            return hasShapes ? true : deck.selectedSlide != nil && !isInMasterView
         case #selector(cut(_:)):
             menuItem.title = String(localized: hasShapes ? "Edit.Cut" : "Edit.CutSlide")
-            return hasShapes ? canArrange : presentation.slides.count > 1
+            return hasShapes ? canArrange : presentation.slides.count > 1 && !isInMasterView
         case #selector(paste(_:)):
             return deck.selectedSlide != nil
         case #selector(delete(_:)):
@@ -324,17 +371,27 @@ extension DocumentWindowController: NSMenuItemValidation {
         case #selector(editText(_:)):
             return deck.selectedShape?.canHoldText == true && canArrange
         case #selector(deleteSlide(_:)):
+            menuItem.title = String(localized: isInMasterView ? "MasterView.Delete" : "Slide.Menu.Delete")
+            if isInMasterView { return deck.selectedSlide.map { state.canDeleteLayout($0.id, in: presentation) } ?? false }
             return presentation.slides.count > 1
-        case #selector(duplicateSlide(_:)), #selector(showHeaderFooter(_:)):
+        case #selector(duplicateSlide(_:)):
+            menuItem.title = String(localized: isInMasterView ? "MasterView.Duplicate" : "Slide.Menu.Duplicate")
+            if isInMasterView { return deck.selectedSlide.map { $0.role != .master } ?? false }
             return deck.selectedSlide != nil
+        case #selector(showHeaderFooter(_:)):
+            return deck.selectedSlide != nil && !isInMasterView
         case #selector(showTheme(_:)):
             return state.canEditTheme(in: presentation)
         case #selector(toggleSlideHidden(_:)):
             menuItem.title = String(localized: deck.selectedSlide?.isHidden == true ? "Slide.Menu.Show" : "Slide.Menu.Hide")
-            return deck.selectedSlide != nil
-        case #selector(moveSlideEarlier(_:)), #selector(previousSlide(_:)):
+            return deck.selectedSlide != nil && !isInMasterView
+        case #selector(moveSlideEarlier(_:)):
+            return deck.selectedIndex > 0 && !isInMasterView
+        case #selector(previousSlide(_:)):
             return deck.selectedIndex > 0
-        case #selector(moveSlideLater(_:)), #selector(nextSlide(_:)):
+        case #selector(moveSlideLater(_:)):
+            return deck.selectedIndex < presentation.slides.count - 1 && !isInMasterView
+        case #selector(nextSlide(_:)):
             return deck.selectedIndex < presentation.slides.count - 1
         case #selector(insertTextBox(_:)), #selector(insertShape(_:)), #selector(insertTable(_:)), #selector(chooseTableSize(_:)),
              #selector(insertChart(_:)), #selector(insertMedia(_:)):
@@ -391,7 +448,7 @@ extension DocumentWindowController: NSMenuItemValidation {
             menuItem.title = String(localized: split.editor.areNotesShown ? "Mac.Menu.View.HideNotes" : "Menu.View.Notes")
             return true
         case #selector(playSlideshow(_:)), #selector(playFromBeginning(_:)):
-            return !presentation.visibleSlideIndices.isEmpty && !SlideshowController.shared.isPresenting
+            return !presentation.visibleSlideIndices.isEmpty && !SlideshowController.shared.isPresenting && !isInMasterView
         case #selector(previewAnimations(_:)):
             menuItem.title = String(localized: state.animationPreviewStartedAt != nil ? "Animation.Stop" : "Menu.Play.PreviewAnimations")
             return !(deck.selectedSlide?.animations.isEmpty ?? true)
