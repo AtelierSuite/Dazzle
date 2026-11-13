@@ -89,6 +89,9 @@ final class ThemeSheet: NSObject {
         }
         popUp.addItems(withTitles: families)
         popUp.selectItem(withTitle: selected)
+        // A set width: left to itself, the popup grows to its longest family name.
+        popUp.translatesAutoresizingMaskIntoConstraints = false
+        popUp.widthAnchor.constraint(equalToConstant: 220).isActive = true
         return popUp
     }
 
