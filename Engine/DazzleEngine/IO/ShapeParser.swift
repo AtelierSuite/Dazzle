@@ -68,6 +68,14 @@ public final class ShapeParser {
         case "grpSp": return group(element)
         case "graphicFrame": return graphicFrame(element)
         case "AlternateContent":
+            // One of Office 2016's charts is drawn as itself, from the rendition
+            // that has it, rather than from the picture of it kept for older readers.
+            if let frame = element.firstChild(named: "Choice")?.children.first, frame.name == "graphicFrame",
+               extendedChartPath(in: frame).flatMap({ Chart(path: $0, data: parts[$0]) }) != nil {
+                var shape = graphicFrame(frame)
+                shape.isLocked = true
+                return shape
+            }
             // Two renditions of one thing for different readers. The fallback
             // is the one every reader understands; it is drawn, and the whole
             // is kept as it was.
@@ -124,6 +132,10 @@ public final class ShapeParser {
         var shape = SlideShape(shapeID: id, name: name, kind: connector ? .connector : .shape, frame: .zero)
         shape.placeholder = placeholder
         shape.isTextBox = nonVisual?.firstChild(named: "cNvSpPr")?.attribute("txBox") == "1"
+        if connector, let ends = nonVisual?.firstChild(named: "cNvCxnSpPr") {
+            shape.startConnection = Self.connection(ends.firstChild(named: "stCxn"))
+            shape.endConnection = Self.connection(ends.firstChild(named: "endCxn"))
+        }
         applyTransform(properties?.firstChild(named: "xfrm"), to: &shape)
         shape.geometry = geometry(in: properties)
         shape.fill = Fill.parse(in: properties, image: target(of:))
@@ -142,6 +154,12 @@ public final class ShapeParser {
             shape.kind = .unsupported(label)
         }
         return shape
+    }
+
+    /// `a:stCxn` or `a:endCxn`: the shape and site an end of a connector is attached to.
+    private static func connection(_ element: XMLElement?) -> SlideShape.Connection? {
+        guard let id = element?.attribute("id").flatMap(Int.init) else { return nil }
+        return SlideShape.Connection(shapeID: id, site: element?.attribute("idx").flatMap(Int.init) ?? 0)
     }
 
     private func picture(_ element: XMLElement) -> SlideShape {
@@ -243,6 +261,13 @@ public final class ShapeParser {
             shape.kind = .group(group)
         }
         return shape
+    }
+
+    /// The part of the `cx:chart` a graphic frame shows, if that is what it shows.
+    private func extendedChartPath(in frame: XMLElement) -> String? {
+        let data = frame.firstChild(named: "graphic")?.firstChild(named: "graphicData")
+        guard data?.attribute("uri")?.contains("chartex") == true else { return nil }
+        return data?.children.first { $0.name == "chart" }?.relationshipID.flatMap(target(of:))
     }
 
     private func graphicFrame(_ element: XMLElement) -> SlideShape {
@@ -368,13 +393,15 @@ public final class ShapeParser {
                 }
             )
         }
-        return SlideTable(
-            columnWidths: widths, rows: rows,
-            hasHeaderRow: properties?.attribute("firstRow") == "1",
-            hasBandedRows: properties?.attribute("bandRow") == "1",
+        var table = SlideTable(
+            columnWidths: widths, rows: rows, hasHeaderRow: false, hasBandedRows: false,
             styleID: properties?.firstChild(named: "tableStyleId")?.text.trimmed.nilIfEmpty,
             sourceProperties: properties.flatMap(capture)
         )
+        for option in SlideTable.StyleOption.allCases {
+            table[option] = ["1", "true"].contains(properties?.attribute(option.attribute))
+        }
+        return table
     }
 
     // MARK: - Transforms and geometry

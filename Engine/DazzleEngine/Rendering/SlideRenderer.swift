@@ -1044,30 +1044,24 @@ public struct SlideRenderer {
                 let position = TableCellPosition(row: rowIndex, column: columnIndex)
                 let rect = layout.rect(of: position)
                 let path = CGPath(rect: rect, transform: nil)
+                let regions = table.regions(row: rowIndex, column: columnIndex)
 
-                var fill = cell.fill
-                if fill == nil, let tableStyle = layout.tableStyle {
-                    fill = layout.isHeader(rowIndex) ? tableStyle.headerRow.fill
-                        : (layout.isBanded(rowIndex) ? tableStyle.bandedRow.fill : nil)
-                    fill = fill ?? tableStyle.whole.fill
-                }
-                if let fill {
+                if let fill = cell.fill ?? layout.tableStyle?.fill(for: regions) {
                     paint(fill, in: path, bounds: rect, placeholderColor: nil, style: style, context: context)
                 } else if layout.usesBuiltInLook {
-                    let tint = layout.isHeader(rowIndex) ? accent
-                        : accent.applying(.init(name: "tint", value: layout.isBanded(rowIndex) ? 40_000 : 20_000))
+                    let tint = regions.builtInTint.map { accent.applying(.init(name: "tint", value: $0)) } ?? accent
                     context.setFillColor(tint.cgColor)
                     context.fill(rect)
                 }
 
                 if options.editingCell != TableEditingCell(shapeID: shape.id, position: position),
-                   let body = layout.body(for: cell, row: rowIndex) {
+                   let body = layout.body(for: cell, row: rowIndex, column: columnIndex) {
                     renderer.draw(body, shape: TableLayout.cellShape(body, rect), sources: [], in: rect, context: context)
                 }
 
                 // The style's border for an edge: the outer edges of the table
-                // use its own, those between cells its inside lines, and a
-                // header or band row's borders override the whole table's.
+                // use its own, those between cells its inside lines, and the
+                // borders of the parts the cell is in override the whole table's.
                 let lastRow = min(rowIndex + cell.rowSpan, table.rows.count)
                 let lastColumn = columnIndex + cell.columnSpan >= layout.columnCount
                 let edgeNames = [
@@ -1075,11 +1069,7 @@ public struct SlideRenderer {
                     columnIndex == 0 ? "left" : "insideV", lastColumn ? "right" : "insideV",
                 ]
                 func styleBorder(_ name: String) -> LineStyle? {
-                    if let tableStyle = layout.tableStyle {
-                        let part = layout.isHeader(rowIndex) ? tableStyle.headerRow
-                            : (layout.isBanded(rowIndex) ? tableStyle.bandedRow : TableStyle.Part())
-                        return part.borders[name] ?? tableStyle.whole.borders[name]
-                    }
+                    if let tableStyle = layout.tableStyle { return tableStyle.border(name, for: regions) }
                     return layout.usesBuiltInLook && !["tl2br", "tr2bl"].contains(name)
                         ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
                 }
@@ -1197,7 +1187,7 @@ public struct TableLayout {
         for (rowIndex, row) in table.rows.enumerated() {
             for (columnIndex, cell) in row.cells.enumerated()
             where !cell.isMerged && cell.rowSpan == 1 && columnIndex < table.columnCount {
-                guard let body = body(for: cell, row: rowIndex) else { continue }
+                guard let body = body(for: cell, row: rowIndex, column: columnIndex) else { continue }
                 let width = spanWidth(columnIndex, cell.columnSpan)
                 let needed = renderer.height(
                     of: body, shape: Self.cellShape(body, CGRect(x: 0, y: 0, width: width, height: 1)), width: width
@@ -1208,12 +1198,6 @@ public struct TableLayout {
         var rows: [CGFloat] = [frame.minY]
         for height in heights { rows.append((rows.last ?? frame.minY) + height) }
         rowStarts = rows
-    }
-
-    public func isHeader(_ row: Int) -> Bool { table.hasHeaderRow && row == 0 }
-
-    public func isBanded(_ row: Int) -> Bool {
-        table.hasBandedRows && (row - (table.hasHeaderRow ? 1 : 0)).isMultiple(of: 2)
     }
 
     private func spanWidth(_ column: Int, _ span: Int) -> CGFloat {
@@ -1241,7 +1225,7 @@ public struct TableLayout {
     }
 
     /// A cell's text, with its margins and the style's text colour and weight.
-    public func body(for cell: SlideTable.Cell, row: Int, includeEmpty: Bool = false) -> TextBody? {
+    public func body(for cell: SlideTable.Cell, row: Int, column: Int, includeEmpty: Bool = false) -> TextBody? {
         guard var body = cell.text, includeEmpty || !body.isEmpty else { return nil }
         // A table's rows grow to hold their text, which never shrinks to fit a cell.
         body.properties.autofit = nil
@@ -1252,11 +1236,11 @@ public struct TableLayout {
         if body.properties.anchor == nil { body.properties.anchor = cell.anchor }
         var color: DrawingColor?
         var bold: Bool?
+        let regions = table.regions(row: row, column: column)
         if let tableStyle {
-            let part = isHeader(row) ? tableStyle.headerRow : tableStyle.whole
-            color = part.textColor ?? tableStyle.whole.textColor
-            bold = part.isBold
-        } else if usesBuiltInLook, isHeader(row), cell.fill == nil {
+            color = tableStyle.textColor(for: regions)
+            bold = tableStyle.isBold(for: regions)
+        } else if usesBuiltInLook, regions.isEmphasised, cell.fill == nil {
             color = .scheme("lt1")
             bold = true
         }
@@ -1269,12 +1253,12 @@ public struct TableLayout {
         return body
     }
 
-    /// A shape whose text style gives a row's cells the style's text colour
-    /// and weight, for typing into a cell without writing them into it.
-    public func styleSource(forRow row: Int) -> SlideShape {
+    /// A shape whose text style gives a cell the style's text colour and
+    /// weight, for typing into it without writing them into it.
+    public func styleSource(for position: TableCellPosition) -> SlideShape {
         var properties = ParagraphProperties()
         let empty = SlideTable.Cell(text: TextBody(paragraphs: [Paragraph(runs: [])]))
-        if let styled = body(for: empty, row: row, includeEmpty: true)?.paragraphs.first?.endProperties {
+        if let styled = body(for: empty, row: position.row, column: position.column, includeEmpty: true)?.paragraphs.first?.endProperties {
             properties.defaultRun = styled
         }
         var list = ListStyle()
