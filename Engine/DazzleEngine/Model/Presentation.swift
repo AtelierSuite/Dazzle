@@ -8,8 +8,9 @@ import Foundation
 public struct Presentation: Equatable, Sendable {
     public var slideSize: EMUSize
     public var slides: [Slide]
-    /// Theme, masters and layouts: read once, never edited.
-    public let resources: DeckResources
+    /// Theme, masters and layouts. Read with the file, and read again once
+    /// master view has changed them.
+    public var resources: DeckResources
     /// Every part of the file as it was read.
     public let package: Package
     /// Parts Dazzle has added since, such as pictures.
@@ -17,6 +18,11 @@ public struct Presentation: Equatable, Sendable {
     /// Content types for added parts that their extension does not settle,
     /// such as a chart's XML.
     public var addedContentTypes: [String: String] = [:]
+    /// Parts Dazzle has taken out since, such as a deleted layout.
+    public var removedParts: Set<String> = []
+    /// Set while the masters and layouts are being edited: `slides` then
+    /// holds them, and this the slides set aside.
+    public var masterView: MasterView?
     /// Whether slides were added, removed or reordered, which means the
     /// slide list itself has to be written again.
     public var isStructureModified = false
@@ -38,12 +44,12 @@ public struct Presentation: Equatable, Sendable {
 
     /// The bytes of a part, whether read or added.
     public func data(at path: String) -> Data? {
-        addedParts[path] ?? package.parts[path]
+        removedParts.contains(path) ? nil : addedParts[path] ?? package.parts[path]
     }
 
     /// Every part name in use, read or added.
     public var partNames: Set<String> {
-        Set(package.parts.keys).union(addedParts.keys)
+        Set(package.parts.keys).union(addedParts.keys).subtracting(removedParts)
     }
 
     /// A part's content type: one Dazzle gave it, or what the package's
@@ -57,8 +63,43 @@ public struct Presentation: Equatable, Sendable {
         slides.firstIndex { $0.id == slideID }
     }
 
+    /// The layout a slide is built on. In master view, a layout being edited
+    /// is its own slide, so what it is built on holds nothing but its settings.
     public func layout(for slide: Slide) -> SlideLayout? {
-        resources.layouts[slide.layoutPath]
+        switch slide.role {
+        case .slide:
+            return resources.layouts[slide.layoutPath]
+        case .master:
+            return nil
+        case .layout(let masterPath):
+            return SlideLayout(
+                path: slide.partName ?? "", name: slide.layoutName ?? "", masterPath: masterPath, background: nil,
+                shapes: [], showsMasterShapes: slide.showsMasterShapes,
+                colorMapOverride: slide.sourcePart.flatMap { resources.layouts[$0] }?.colorMapOverride
+            )
+        }
+    }
+
+    /// The master a slide is built on. In master view, a layout follows its
+    /// master as it stands being edited, and a master is built on nothing
+    /// but its own theme and text styles.
+    public func master(for slide: Slide) -> SlideMaster? {
+        switch slide.role {
+        case .slide:
+            return resources.master(for: layout(for: slide))
+        case .master:
+            guard var master = slide.partName.flatMap({ resources.masters[$0] }) else { return nil }
+            master.shapes = []
+            master.background = nil
+            return master
+        case .layout(let masterPath):
+            guard var master = resources.masters[masterPath] else { return nil }
+            if let edited = slides.first(where: { $0.role == .master && $0.partName == masterPath }) {
+                master.shapes = edited.shapes
+                master.background = edited.background
+            }
+            return master
+        }
     }
 
     /// The slides a slideshow steps through: all but the hidden ones.
@@ -114,9 +155,37 @@ public struct ContentTypeMap: Sendable {
     public func isOverridden(_ path: String) -> Bool { overrides[path] != nil }
 }
 
+/// The slides set aside while master view shows the masters and layouts.
+public struct MasterView: Equatable, Sendable {
+    public var slides: [Slide]
+    /// The masters and layouts as they were on the way in, to go back to
+    /// when nothing about them was changed.
+    public var resources: DeckResources
+    /// The slide that was being edited, to go back to.
+    public var selectedSlideID: Slide.ID?
+
+    public init(slides: [Slide], resources: DeckResources, selectedSlideID: Slide.ID? = nil) {
+        self.slides = slides
+        self.resources = resources
+        self.selectedSlideID = selectedSlideID
+    }
+}
+
 /// One slide.
 public struct Slide: Identifiable, Equatable, Sendable {
+    /// What a slide is. Master view edits masters and layouts as slides of
+    /// their own, so everything that edits a slide edits them.
+    public enum Role: Equatable, Sendable {
+        case slide
+        case master
+        /// A layout, and the master it belongs to.
+        case layout(masterPath: String)
+    }
+
     public let id: UUID
+    public var role = Role.slide
+    /// A layout's name, in master view.
+    public var layoutName: String?
     /// The part it is saved as; `nil` for a slide not yet saved.
     public var partName: String?
     /// The part whose XML supplies everything Dazzle does not model: the

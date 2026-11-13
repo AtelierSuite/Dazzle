@@ -150,6 +150,8 @@ extension EditorState {
     }
 
     func copySlides(_ ids: [Slide.ID], in presentation: Presentation) {
+        // Masters and layouts are not slides to paste among slides.
+        guard !presentation.isInMasterView else { return }
         let slides = presentation.slides.filter { ids.contains($0.id) }
         guard let first = slides.first else { return }
         DeckClipboard.shared.copy(
@@ -160,6 +162,7 @@ extension EditorState {
     }
 
     func cutSlide(_ id: Slide.ID, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
         guard presentation.slides.count > 1 else { return copySlides([id], in: presentation) }
         copySlides([id], in: presentation)
         deleteSlide(id, in: &presentation)

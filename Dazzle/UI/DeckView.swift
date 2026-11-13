@@ -48,6 +48,9 @@ struct DeckView: View {
                     isRaised: state.presentedPanel != nil
                 )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .top) {
+                        if document.presentation.isInMasterView, !state.isDrawing { masterViewBanner }
+                    }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if !state.isDrawing {
                             FloatingActionBar(presentation: presentation, state: state, namespace: panelTransition)
@@ -58,10 +61,24 @@ struct DeckView: View {
             if horizontalSizeClass == .compact {
                 Divider()
                 SlideStrip(presentation: presentation, state: state, play: play) {
-                    PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 17))
-                            .frame(width: 44, height: 44)
+                    Group {
+                        if document.presentation.isInMasterView {
+                            Button {
+                                state.leaveMasterView(in: &document.presentation)
+                            } label: {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .frame(width: 44, height: 44)
+                            }
+                            .accessibilityIdentifier("closeMasterView")
+                            .accessibilityLabel("MasterView.Close")
+                        } else {
+                            PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 17))
+                                    .frame(width: 44, height: 44)
+                            }
+                        }
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white)
@@ -170,7 +187,7 @@ struct DeckView: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             NewSlideMenu(presentation: presentation, state: state) {
-                Label("Slide.New", systemImage: "plus")
+                Label(document.presentation.isInMasterView ? "MasterView.NewLayout" : "Slide.New", systemImage: "plus")
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 16)
                     .frame(height: 36)
@@ -184,13 +201,25 @@ struct DeckView: View {
         .background(.bar)
     }
 
+    /// Says the masters and layouts are what is being edited, at the top of
+    /// the canvas, where the slide being edited would otherwise pass for one.
+    private var masterViewBanner: some View {
+        Label("MasterView.Title", systemImage: "rectangle.3.group")
+            .font(.footnote.weight(.semibold))
+            .padding(.horizontal, 14)
+            .frame(height: 32)
+            .glassEffect(.regular, in: .capsule)
+            .padding(.top, 8)
+            .accessibilityIdentifier("masterViewBanner")
+    }
+
     @ViewBuilder
     private func panelContent(_ panel: EditorPanel) -> some View {
         switch panel {
         case .text: TextPanel(presentation: presentation, state: state)
         case .format: FormatPanel(presentation: presentation, state: state)
         case .notes: NotesPanel(presentation: presentation, state: state)
-        case .export: ExportPanel(presentation: document.presentation, state: state, name: name)
+        case .export: ExportPanel(presentation: document.presentation.outOfMasterView, state: state, name: name)
         case .find: FindPanel(presentation: presentation, state: state)
         case .chart: ChartPanel(presentation: presentation, state: state)
         case .animations: AnimationPanel(presentation: presentation, state: state)
@@ -210,7 +239,8 @@ struct DeckView: View {
     }
 
     private func play(from index: Int) {
-        guard !session.isPresenting else { return }
+        // The slideshow shows the slides, which master view has set aside.
+        guard !session.isPresenting, !document.presentation.isInMasterView else { return }
         state.presentedPanel = nil
         state.isDrawing = false
         session.start(document.presentation, title: name, fromSlide: index, owner: editorID)
@@ -260,10 +290,18 @@ struct DeckView: View {
         if horizontalSizeClass != .compact {
             ToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
-                PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
-                    Label("Toolbar.Play", systemImage: "play.fill")
+                if document.presentation.isInMasterView {
+                    Button("MasterView.Close", systemImage: "checkmark") {
+                        state.leaveMasterView(in: &document.presentation)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .accessibilityIdentifier("closeMasterView")
+                } else {
+                    PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
+                        Label("Toolbar.Play", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.glassProminent)
                 }
-                .buttonStyle(.glassProminent)
             }
         }
         ToolbarSpacer(.fixed, placement: .primaryAction)
@@ -461,11 +499,25 @@ struct DeckView: View {
                 }
                 findButton
             }
-            Button("Toolbar.HeaderFooter", systemImage: "rectangle.bottomthird.inset.filled") {
-                state.endEditingText()
-                state.presentedPanel = .headerFooter
+            if document.presentation.isInMasterView {
+                Button("MasterView.Close", systemImage: "checkmark") {
+                    state.leaveMasterView(in: &document.presentation)
+                }
+                .accessibilityIdentifier("closeMasterViewMenu")
+            } else {
+                Button("Toolbar.HeaderFooter", systemImage: "rectangle.bottomthird.inset.filled") {
+                    state.endEditingText()
+                    state.presentedPanel = .headerFooter
+                }
+                .accessibilityIdentifier("headerFooter")
+                if document.presentation.canEditMasters {
+                    Button("Toolbar.EditMasters", systemImage: "rectangle.3.group") {
+                        state.endEditingText()
+                        state.enterMasterView(in: &document.presentation)
+                    }
+                    .accessibilityIdentifier("editMasters")
+                }
             }
-            .accessibilityIdentifier("headerFooter")
             Button("Toolbar.Properties", systemImage: "info.circle") {
                 state.endEditingText()
                 state.presentedPanel = .properties
