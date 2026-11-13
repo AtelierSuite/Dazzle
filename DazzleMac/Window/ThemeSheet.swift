@@ -20,7 +20,8 @@ final class ThemeSheet: NSObject {
     }
 
     func present(over parent: NSWindow) {
-        let colors = NSGridView(views: ThemeColorSlot.all.map { slot, key in
+        // One grid for colours and fonts, so their labels share a column.
+        let colorRows: [[NSView]] = ThemeColorSlot.all.map { slot, key in
             let well = NSColorWell(style: .minimal)
             well.color = NSColor(cgColor: RGBAColor(hex: theme.colors[slot] ?? 0).cgColor) ?? .black
             well.supportsAlpha = false
@@ -29,22 +30,29 @@ final class ThemeSheet: NSObject {
             well.widthAnchor.constraint(equalToConstant: 44).isActive = true
             wells[slot] = well
             return [NSTextField(labelWithString: ThemeColorSlot.label(key)), well]
-        })
-        colors.column(at: 0).xPlacement = .trailing
-        colors.rowSpacing = 6
-
+        }
         let families = NSFontManager.shared.availableFontFamilies.sorted()
-        let fonts = NSGridView(views: [
+        let fontRows: [[NSView]] = [
             [NSTextField(labelWithString: String(localized: "Theme.HeadingFont")), fill(headingFont, families: families, selected: theme.majorFont)],
             [NSTextField(labelWithString: String(localized: "Theme.BodyFont")), fill(bodyFont, families: families, selected: theme.minorFont)],
-        ])
-        fonts.column(at: 0).xPlacement = .trailing
+        ]
+        let grid = NSGridView(views: [[heading("Theme.Colors"), NSGridCell.emptyContentView]] + colorRows
+            + [[heading("Theme.Fonts"), NSGridCell.emptyContentView]] + fontRows)
+        grid.column(at: 0).xPlacement = .trailing
+        grid.rowSpacing = 6
+        grid.yPlacement = .center
+        for index in [0, colorRows.count + 1] {
+            let row = grid.row(at: index)
+            row.mergeCells(in: NSRange(location: 0, length: 2))
+            row.cell(at: 0).xPlacement = .leading
+            row.topPadding = index == 0 ? 0 : 12
+        }
 
         let note = NSTextField(wrappingLabelWithString: String(localized: "Theme.Footer"))
         note.textColor = .secondaryLabelColor
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        // As wide as the grids above it, so it wraps inside the sheet in any language.
-        let width = max(colors.fittingSize.width, fonts.fittingSize.width)
+        // As wide as the grid above it, so it wraps inside the sheet in any language.
+        let width = grid.fittingSize.width
         note.preferredMaxLayoutWidth = width
         note.translatesAutoresizingMaskIntoConstraints = false
         note.widthAnchor.constraint(equalToConstant: width).isActive = true
@@ -54,13 +62,11 @@ final class ThemeSheet: NSObject {
         apply.keyEquivalent = "\r"
         let buttons = NSStackView(views: [NSView(), cancel, apply])
 
-        let stack = NSStackView(views: [
-            heading("Theme.Colors"), colors, heading("Theme.Fonts"), fonts, note, buttons,
-        ])
+        let stack = NSStackView(views: [grid, note, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
-        stack.setCustomSpacing(18, after: colors)
+        stack.setCustomSpacing(12, after: grid)
         stack.setCustomSpacing(18, after: note)
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         buttons.translatesAutoresizingMaskIntoConstraints = false
