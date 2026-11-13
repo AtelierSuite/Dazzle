@@ -182,6 +182,8 @@ struct ShapeChoice: Identifiable {
         ShapeChoice(preset: "rightArrow", label: String(localized: "Shape.Arrow"), symbol: "arrow.right"),
         ShapeChoice(preset: "wedgeRoundRectCallout", label: String(localized: "Shape.Callout"), symbol: "bubble.left"),
         ShapeChoice(preset: "line", label: String(localized: "Shape.Line"), symbol: "line.diagonal"),
+        ShapeChoice(preset: "bentConnector3", label: String(localized: "Shape.ElbowConnector"), symbol: "arrow.turn.down.right"),
+        ShapeChoice(preset: "curvedConnector3", label: String(localized: "Shape.CurvedConnector"), symbol: "point.topleft.down.curvedto.point.bottomright.up"),
     ]
 }
 
