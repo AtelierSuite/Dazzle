@@ -569,6 +569,19 @@ extension InspectorViewController {
         ))
         form.note(String(localized: "Format.Background.Footer"))
 
+        // A master or layout has a name, and none of what a slide has besides.
+        if deck.presentation.isInMasterView {
+            guard slide.role != .master else { return }
+            form.section(String(localized: "MasterView.Section.Layout"))
+            form.row(String(localized: "MasterView.LayoutName"), form.text(placeholder: "", get: { [unowned self] in
+                deck.selectedSlide?.layoutName ?? ""
+            }, set: { [unowned self] name in
+                guard let id = deck.selectedSlide?.id else { return }
+                edit { state.renameLayout(id, to: name, in: &$0) }
+            }))
+            return
+        }
+
         form.section(String(localized: "Format.Section.Slide"))
         form.row(String(localized: "Format.Slide.Layout"), NSTextField(labelWithString: deck.presentation.layout(for: slide)?.name ?? ""))
         form.row(nil, form.checkbox(String(localized: "Format.Slide.Hidden"), get: { [unowned self] in

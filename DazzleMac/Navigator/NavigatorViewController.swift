@@ -76,12 +76,15 @@ final class NavigatorViewController: NSViewController, NSTableViewDataSource, NS
         let ids = presentation.slides.map(\.id)
         if ids != shownIDs {
             shownIDs = ids
+            // Reloading picks a row of its own, which is not the user picking a slide.
+            isMatchingSelection = true
             tableView.reloadData()
+            isMatchingSelection = false
         } else {
             let visible = tableView.rows(in: tableView.visibleRect)
             for row in visible.lowerBound..<visible.upperBound where presentation.slides.indices.contains(row) {
                 (tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? SlideRowView)?
-                    .show(presentation.slides[row], number: row + 1, in: presentation)
+                    .show(presentation.slides[row], number: number(ofRow: row, in: presentation), in: presentation)
             }
         }
         if let index = presentation.index(of: deck.state.selectedSlideID), tableView.selectedRow != index {
@@ -131,8 +134,17 @@ final class NavigatorViewController: NSViewController, NSTableViewDataSource, NS
         let presentation = deck.presentation
         guard presentation.slides.indices.contains(row) else { return nil }
         let view = tableView.makeView(withIdentifier: SlideRowView.identifier, owner: nil) as? SlideRowView ?? SlideRowView()
-        view.show(presentation.slides[row], number: row + 1, in: presentation)
+        view.show(presentation.slides[row], number: number(ofRow: row, in: presentation), in: presentation)
         return view
+    }
+
+    /// The number beside a row: the slide's place in the presentation, or
+    /// in master view, a layout's place among its master's, a master having none.
+    private func number(ofRow row: Int, in presentation: Presentation) -> Int? {
+        guard presentation.isInMasterView else { return row + 1 }
+        guard presentation.slides[row].role != .master else { return nil }
+        let master = presentation.slides[..<row].lastIndex { $0.role == .master } ?? -1
+        return row - master
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
@@ -156,6 +168,16 @@ final class NavigatorViewController: NSViewController, NSTableViewDataSource, NS
         let slide = deck.presentation.slides[row]
         func add(_ key: String.LocalizationValue, _ action: Selector) {
             menu.addItem(NSMenuItem(title: String(localized: key), action: action, keyEquivalent: ""))
+        }
+        // A master offers a new layout; a layout, what can be done to it.
+        if deck.presentation.isInMasterView {
+            add("MasterView.NewLayout", #selector(DocumentWindowController.newSlide(_:)))
+            guard slide.role != .master else { return }
+            add("MasterView.Duplicate", #selector(DocumentWindowController.duplicateSlide(_:)))
+            add("MasterView.Rename", #selector(DocumentWindowController.renameLayout(_:)))
+            menu.addItem(.separator())
+            add("MasterView.Delete", #selector(DocumentWindowController.deleteSlide(_:)))
+            return
         }
         add("Slide.Menu.Play", #selector(DocumentWindowController.playSlideshow(_:)))
         menu.addItem(.separator())
@@ -205,10 +227,14 @@ final class NavigatorViewController: NSViewController, NSTableViewDataSource, NS
         switch menuItem.action {
         case #selector(cut(_:)), #selector(delete(_:)):
             if menuItem.action == #selector(cut(_:)) { menuItem.title = String(localized: "Edit.CutSlide") }
+            if deck.presentation.isInMasterView {
+                guard menuItem.action == #selector(delete(_:)), let selectedID else { return false }
+                return deck.state.canDeleteLayout(selectedID, in: deck.presentation)
+            }
             return deck.presentation.slides.count > 1
         case #selector(copy(_:)):
             menuItem.title = String(localized: "Edit.CopySlide")
-            return selectedID != nil
+            return selectedID != nil && !deck.presentation.isInMasterView
         default:
             return true
         }
@@ -257,11 +283,19 @@ final class SlideRowView: NSTableCellView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("Not built from a nib") }
 
-    func show(_ slide: Slide, number: Int, in presentation: Presentation) {
-        self.number.stringValue = String(number)
+    func show(_ slide: Slide, number: Int?, in presentation: Presentation) {
+        self.number.stringValue = number.map(String.init) ?? ""
         thumbnail.show(slide, in: presentation)
+        // A master or layout goes by its name.
+        if presentation.isInMasterView {
+            let name = slide.role == .master ? String(localized: "MasterView.Master") : slide.layoutName ?? ""
+            toolTip = name
+            setAccessibilityLabel(name)
+            return
+        }
+        toolTip = nil
         setAccessibilityLabel(String(
-            format: String(localized: "Slide.Accessibility"), number, slide.title ?? String(localized: "Slide.Untitled")
+            format: String(localized: "Slide.Accessibility"), number ?? 0, slide.title ?? String(localized: "Slide.Untitled")
         ))
     }
 }

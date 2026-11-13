@@ -155,9 +155,86 @@ final class EditorState {
         if let editingTextShapeID, !selectedShapeIDs.contains(editingTextShapeID) { endEditingText() }
     }
 
+    // MARK: - Master view
+
+    /// Shows the masters and layouts in place of the slides, to be edited as
+    /// slides are, opening on the layout the slide being edited is built on.
+    func enterMasterView(in presentation: inout Presentation) {
+        guard presentation.canEditMasters, !presentation.isInMasterView else { return }
+        let current = selectedSlide(in: presentation)
+        var entered = presentation
+        entered.enterMasterView(selectedSlideID: current?.id)
+        guard entered.isInMasterView else { return }
+        presentedPanel = nil
+        isDrawing = false
+        stopPreviewingAnimations()
+        presentation = entered
+        selectedSlideID = nil
+        selectSlide((entered.slides.first { $0.partName == current?.layoutPath } ?? entered.slides.first)?.id)
+    }
+
+    /// Goes back to the slides, which now follow what was changed.
+    func leaveMasterView(in presentation: inout Presentation) {
+        guard let view = presentation.masterView else { return }
+        do {
+            let left = try presentation.leavingMasterView()
+            presentedPanel = nil
+            presentation = left
+            selectedSlideID = nil
+            selectSlide(left.index(of: view.selectedSlideID) == nil ? left.slides.first?.id : view.selectedSlideID)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// The master a master or layout shown in master view belongs to.
+    private func masterPath(of slide: Slide) -> String? {
+        switch slide.role {
+        case .slide: nil
+        case .master: slide.partName
+        case .layout(let masterPath): masterPath
+        }
+    }
+
+    /// Adds a layout with a title to the master being edited, or the one
+    /// the layout being edited belongs to, after that layout.
+    func addLayout(in presentation: inout Presentation) {
+        guard presentation.isInMasterView, let selected = selectedSlide(in: presentation),
+              let masterPath = masterPath(of: selected) else { return }
+        let taken = Set(presentation.slides.compactMap(\.layoutName))
+        let base = String(localized: "MasterView.NewLayoutName")
+        var name = base
+        var number = 2
+        while taken.contains(name) {
+            name = "\(base) \(number)"
+            number += 1
+        }
+        let layout = presentation.newLayout(named: name, masterPath: masterPath)
+        presentation.slides.insert(layout, at: min(selectedIndex(in: presentation) + 1, presentation.slides.count))
+        presentation.refreshTemplates()
+        selectSlide(layout.id)
+    }
+
+    func renameLayout(_ id: Slide.ID, to name: String, in presentation: inout Presentation) {
+        guard presentation.isInMasterView, let index = presentation.index(of: id), !name.trimmed.isEmpty,
+              presentation.slides[index].role != .master, presentation.slides[index].layoutName != name.trimmed else { return }
+        presentation.slides[index].layoutName = name.trimmed
+        presentation.slides[index].isModified = true
+    }
+
+    /// Whether a layout can be deleted: no slide is built on it, and its
+    /// master keeps at least one.
+    func canDeleteLayout(_ id: Slide.ID, in presentation: Presentation) -> Bool {
+        guard presentation.isInMasterView, let index = presentation.index(of: id),
+              case .layout(let masterPath) = presentation.slides[index].role else { return false }
+        return presentation.slideCount(usingLayoutAt: presentation.slides[index].partName) == 0
+            && presentation.slides.filter { $0.role == .layout(masterPath: masterPath) }.count > 1
+    }
+
     // MARK: - Slides
 
     func addSlide(using layout: SlideLayout, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
         var slide = Slide(layoutPath: layout.path)
         slide.relationships = [Relationship(
             id: "rId1", type: OOXML.RelationshipType.slideLayout,
@@ -182,6 +259,23 @@ final class EditorState {
 
     func duplicateSlide(_ id: Slide.ID, in presentation: inout Presentation) {
         guard let index = presentation.index(of: id) else { return }
+        if presentation.isInMasterView {
+            // A layout's copy is another layout of the same master; masters stay as they are.
+            let original = presentation.slides[index]
+            guard original.role != .master else { return }
+            var copy = Slide(layoutPath: "", relationships: original.relationships, shapes: original.shapes.map(SlideShape.init(copying:)))
+            copy.role = original.role
+            copy.sourcePart = original.sourcePart
+            copy.background = original.background
+            copy.isBackgroundModified = original.isBackgroundModified
+            copy.showsMasterShapes = original.showsMasterShapes
+            copy.canEditShapes = original.canEditShapes
+            copy.layoutName = String(localized: "MasterView.CopyName").replacingOccurrences(of: "%@", with: original.layoutName ?? "")
+            copy.isModified = true
+            presentation.slides.insert(copy, at: index + 1)
+            presentation.refreshTemplates()
+            return selectSlide(copy.id)
+        }
         let copy = Self.duplicate(of: presentation.slides[index])
         presentation.slides.insert(copy, at: index + 1)
         presentation.isStructureModified = true
@@ -191,15 +285,21 @@ final class EditorState {
     func deleteSlide(_ id: Slide.ID, in presentation: inout Presentation) {
         // A presentation always keeps at least one slide.
         guard presentation.slides.count > 1, let index = presentation.index(of: id) else { return }
+        if presentation.isInMasterView {
+            guard canDeleteLayout(id, in: presentation) else { return }
+        } else {
+            presentation.isStructureModified = true
+        }
         presentation.slides.remove(at: index)
-        presentation.isStructureModified = true
+        presentation.refreshTemplates()
         if selectedSlideID == id {
             selectSlide(presentation.slides[min(index, presentation.slides.count - 1)].id)
         }
     }
 
     func moveSlide(_ id: Slide.ID, to destination: Int, in presentation: inout Presentation) {
-        guard let index = presentation.index(of: id) else { return }
+        // Masters and layouts keep the order they are listed in.
+        guard !presentation.isInMasterView, let index = presentation.index(of: id) else { return }
         let target = min(max(destination, 0), presentation.slides.count - 1)
         guard target != index else { return }
         let slide = presentation.slides.remove(at: index)
@@ -208,7 +308,7 @@ final class EditorState {
     }
 
     func toggleHidden(_ id: Slide.ID, in presentation: inout Presentation) {
-        guard let index = presentation.index(of: id) else { return }
+        guard !presentation.isInMasterView, let index = presentation.index(of: id) else { return }
         presentation.slides[index].isHidden.toggle()
         presentation.slides[index].isModified = true
     }
@@ -433,6 +533,7 @@ final class EditorState {
         presentation.slides[index].background = fill.map(Background.fill)
         presentation.slides[index].isBackgroundModified = true
         presentation.slides[index].isModified = true
+        presentation.refreshTemplates()
     }
 
     // MARK: - Shapes
@@ -453,6 +554,8 @@ final class EditorState {
             presentation.slides[index].animations.removeAll { removed.contains($0.shapeID) }
             presentation.slides[index].areAnimationsModified = true
         }
+        // A master's layouts follow it as it changes.
+        if presentation.slides[index].role == .master { presentation.refreshTemplates() }
     }
 
     /// Changes one shape, noting which parts of it were changed.
@@ -1092,7 +1195,9 @@ final class EditorState {
     }
 
     /// Changes the text formatting applies to.
-    private func updateFormattedText(in presentation: inout Presentation, _ change: (inout TextBody) -> Void) {
+    private func updateFormattedText(
+        in presentation: inout Presentation, edits: Set<SlideShape.Edit> = [.text], _ change: (inout TextBody) -> Void
+    ) {
         if isEditingCell, let position = selectedCell {
             updateTable(in: &presentation) { table in
                 guard table.cell(at: position) != nil else { return }
@@ -1103,7 +1208,7 @@ final class EditorState {
             return
         }
         let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
-        updateShape(selectedShapeID, edits: [.text], in: &presentation) { shape in
+        updateShape(selectedShapeID, edits: edits, in: &presentation) { shape in
             var body = shape.text ?? TextBody(paragraphs: [Paragraph(runs: [])])
             change(&body)
             shape.text = style.map { Self.shrunkToFit(body, shape: shape, style: $0) } ?? body
@@ -1186,25 +1291,51 @@ final class EditorState {
         effectiveParagraphProperties(in: presentation).effectiveAlignment
     }
 
+    /// Whether formatting the selected shape's text also sets the styles it
+    /// hands down: a placeholder of a layout or master, in master view.
+    private func handsDownTextStyles(in presentation: Presentation) -> Bool {
+        guard !isEditingCell, let slide = selectedSlide(in: presentation), slide.role != .slide else { return false }
+        return selectedShape(in: presentation)?.placeholder != nil
+    }
+
+    /// The outline levels of the paragraphs formatting applies to.
+    private static func levels(of body: TextBody, in range: NSRange?) -> Set<Int> {
+        let indices = range.flatMap { $0.length > 0 ? body.paragraphIndices(in: $0) : nil } ?? Array(body.paragraphs.indices)
+        let levels = Set(indices.filter(body.paragraphs.indices.contains).map { body.paragraphs[$0].properties.level ?? 0 })
+        return levels.isEmpty ? [0] : levels
+    }
+
     func updateRuns(in presentation: inout Presentation, _ change: (inout RunProperties) -> Void) {
         let range = activeTextRange
-        updateFormattedText(in: &presentation) { body in
+        let handsDown = handsDownTextStyles(in: presentation)
+        updateFormattedText(in: &presentation, edits: handsDown ? [.text, .listStyle] : [.text]) { body in
             if let range, range.length > 0 {
                 body.updateRuns(in: range, change)
             } else {
                 body.updateRuns(change)
+            }
+            guard handsDown else { return }
+            // The placeholder's own text shows the change; its list style
+            // is what slides built on it take it from.
+            for level in Self.levels(of: body, in: range) {
+                body.listStyle.updateLevel(level) { change(&$0.defaultRun) }
             }
         }
     }
 
     func updateParagraphs(in presentation: inout Presentation, _ change: (inout ParagraphProperties) -> Void) {
         let range = activeTextRange
-        updateFormattedText(in: &presentation) { body in
+        let handsDown = handsDownTextStyles(in: presentation)
+        updateFormattedText(in: &presentation, edits: handsDown ? [.text, .listStyle] : [.text]) { body in
             if let range {
                 body.updateParagraphs(in: range, change)
             } else {
                 body.updateParagraphs(change)
             }
+            guard handsDown else { return }
+            let levels = range.map { Set(body.paragraphIndices(in: $0).map { body.paragraphs[$0].properties.level ?? 0 }) }
+                ?? Self.levels(of: body, in: nil)
+            for level in levels { body.listStyle.updateLevel(level, change) }
         }
     }
 

@@ -482,88 +482,99 @@ struct FormatPanel: View {
                 Text("Format.Background.Footer")
             }
 
-            Section("Format.Section.Presentation") {
-                Picker("Format.SlideSize", selection: Binding(
-                    get: { SlideSizeConverter.Preset.matching(presentation.slideSize) },
-                    set: { pendingSize = $0 }
-                )) {
-                    ForEach(SlideSizeConverter.Preset.allCases) { preset in
-                        Text(preset.label).tag(Optional(preset))
-                    }
-                    if SlideSizeConverter.Preset.matching(presentation.slideSize) == nil {
-                        Text("SlideSize.Custom").tag(SlideSizeConverter.Preset?.none)
-                    }
-                }
-                .accessibilityIdentifier("slideSize")
-                NavigationLink {
-                    SlideshowSettingsView(presentation: $presentation, state: state)
-                } label: {
-                    Text("Show.Title")
-                }
-                .accessibilityIdentifier("slideshowSettings")
-                NavigationLink {
-                    CustomShowsView(presentation: $presentation, state: state)
-                } label: {
-                    LabeledContent("CustomShow.Title") {
-                        if !presentation.customShows.isEmpty { Text(verbatim: "\(presentation.customShows.count)") }
-                    }
-                }
-                .accessibilityIdentifier("customShows")
-                .confirmationDialog(
-                    "SlideSize.Scaling.Title", isPresented: Binding(get: { pendingSize != nil }, set: { if !$0 { pendingSize = nil } }),
-                    titleVisibility: .visible
-                ) {
-                    Button("SlideSize.Scaling.EnsureFit") {
-                        if let pendingSize { state.setSlideSize(pendingSize, scaling: .ensureFit, in: &presentation) }
-                        pendingSize = nil
-                    }
-                    Button("SlideSize.Scaling.Maximize") {
-                        if let pendingSize { state.setSlideSize(pendingSize, scaling: .maximize, in: &presentation) }
-                        pendingSize = nil
-                    }
-                } message: {
-                    Text("SlideSize.Scaling.Message")
-                }
-            }
-
-            Section {
-                Toggle("Advance.Automatically", isOn: Binding(
-                    get: { slide.autoAdvanceAfter != nil },
-                    set: { state.setAutoAdvance($0 ? 5 : nil, in: &presentation) }
-                ))
-                .accessibilityIdentifier("autoAdvance")
-                if let seconds = slide.autoAdvanceAfter {
-                    LabeledContent("Advance.After") {
-                        Stepper(
-                            value: Binding(get: { seconds }, set: { state.setAutoAdvance(max($0, 0.5), in: &presentation) }),
-                            in: 0.5...3_600, step: seconds < 5 ? 0.5 : 1
-                        ) {
-                            Text(seconds.formatted(.number.precision(.fractionLength(0...1))) + " " + String(localized: "Advance.Seconds"))
-                                .monospacedDigit()
+            if presentation.isInMasterView {
+                if slide.role != .master {
+                    Section("MasterView.Section.Layout") {
+                        CommitTextField("MasterView.LayoutName", text: slide.layoutName ?? "") { name in
+                            state.renameLayout(slide.id, to: name, in: &presentation)
                         }
-                        .fixedSize()
+                        .accessibilityIdentifier("layoutName")
                     }
-                    Toggle("Advance.OnTap", isOn: Binding(
-                        get: { slide.advancesOnClick },
-                        set: { state.setAdvancesOnClick($0, in: &presentation) }
+                }
+            } else {
+                Section("Format.Section.Presentation") {
+                    Picker("Format.SlideSize", selection: Binding(
+                        get: { SlideSizeConverter.Preset.matching(presentation.slideSize) },
+                        set: { pendingSize = $0 }
+                    )) {
+                        ForEach(SlideSizeConverter.Preset.allCases) { preset in
+                            Text(preset.label).tag(Optional(preset))
+                        }
+                        if SlideSizeConverter.Preset.matching(presentation.slideSize) == nil {
+                            Text("SlideSize.Custom").tag(SlideSizeConverter.Preset?.none)
+                        }
+                    }
+                    .accessibilityIdentifier("slideSize")
+                    NavigationLink {
+                        SlideshowSettingsView(presentation: $presentation, state: state)
+                    } label: {
+                        Text("Show.Title")
+                    }
+                    .accessibilityIdentifier("slideshowSettings")
+                    NavigationLink {
+                        CustomShowsView(presentation: $presentation, state: state)
+                    } label: {
+                        LabeledContent("CustomShow.Title") {
+                            if !presentation.customShows.isEmpty { Text(verbatim: "\(presentation.customShows.count)") }
+                        }
+                    }
+                    .accessibilityIdentifier("customShows")
+                    .confirmationDialog(
+                        "SlideSize.Scaling.Title", isPresented: Binding(get: { pendingSize != nil }, set: { if !$0 { pendingSize = nil } }),
+                        titleVisibility: .visible
+                    ) {
+                        Button("SlideSize.Scaling.EnsureFit") {
+                            if let pendingSize { state.setSlideSize(pendingSize, scaling: .ensureFit, in: &presentation) }
+                            pendingSize = nil
+                        }
+                        Button("SlideSize.Scaling.Maximize") {
+                            if let pendingSize { state.setSlideSize(pendingSize, scaling: .maximize, in: &presentation) }
+                            pendingSize = nil
+                        }
+                    } message: {
+                        Text("SlideSize.Scaling.Message")
+                    }
+                }
+
+                Section {
+                    Toggle("Advance.Automatically", isOn: Binding(
+                        get: { slide.autoAdvanceAfter != nil },
+                        set: { state.setAutoAdvance($0 ? 5 : nil, in: &presentation) }
+                    ))
+                    .accessibilityIdentifier("autoAdvance")
+                    if let seconds = slide.autoAdvanceAfter {
+                        LabeledContent("Advance.After") {
+                            Stepper(
+                                value: Binding(get: { seconds }, set: { state.setAutoAdvance(max($0, 0.5), in: &presentation) }),
+                                in: 0.5...3_600, step: seconds < 5 ? 0.5 : 1
+                            ) {
+                                Text(seconds.formatted(.number.precision(.fractionLength(0...1))) + " " + String(localized: "Advance.Seconds"))
+                                    .monospacedDigit()
+                            }
+                            .fixedSize()
+                        }
+                        Toggle("Advance.OnTap", isOn: Binding(
+                            get: { slide.advancesOnClick },
+                            set: { state.setAdvancesOnClick($0, in: &presentation) }
+                        ))
+                    }
+                    Button("Advance.ApplyToAll", systemImage: "square.stack.3d.down.right") {
+                        state.setAutoAdvance(slide.autoAdvanceAfter, toAll: true, in: &presentation)
+                        state.setAdvancesOnClick(slide.advancesOnClick, toAll: true, in: &presentation)
+                    }
+                } header: {
+                    Text("Format.Section.Advance")
+                } footer: {
+                    Text("Advance.Footer")
+                }
+
+                Section("Format.Section.Slide") {
+                    LabeledContent("Format.Slide.Layout", value: presentation.layout(for: slide)?.name ?? "")
+                    Toggle("Format.Slide.Hidden", isOn: Binding(
+                        get: { slide.isHidden },
+                        set: { _ in state.toggleHidden(slide.id, in: &presentation) }
                     ))
                 }
-                Button("Advance.ApplyToAll", systemImage: "square.stack.3d.down.right") {
-                    state.setAutoAdvance(slide.autoAdvanceAfter, toAll: true, in: &presentation)
-                    state.setAdvancesOnClick(slide.advancesOnClick, toAll: true, in: &presentation)
-                }
-            } header: {
-                Text("Format.Section.Advance")
-            } footer: {
-                Text("Advance.Footer")
-            }
-
-            Section("Format.Section.Slide") {
-                LabeledContent("Format.Slide.Layout", value: presentation.layout(for: slide)?.name ?? "")
-                Toggle("Format.Slide.Hidden", isOn: Binding(
-                    get: { slide.isHidden },
-                    set: { _ in state.toggleHidden(slide.id, in: &presentation) }
-                ))
             }
             if let shape, !shape.isEditable {
                 Section {

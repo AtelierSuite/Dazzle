@@ -18,7 +18,8 @@ public enum PresentationWriteError: LocalizedError {
 /// them together. Untouched slides are written back byte for byte.
 public enum PPTXWriter {
     public static func data(from presentation: Presentation) throws -> Data {
-        var package = PackageBuilder(presentation: presentation)
+        // Saved from master view, the masters and layouts are written as they stand.
+        var package = PackageBuilder(presentation: try presentation.leavingMasterView())
         try package.build()
         return try package.archive()
     }
@@ -39,6 +40,10 @@ private struct PackageBuilder {
         self.presentation = presentation
         parts = presentation.package.parts.merging(presentation.addedParts) { _, added in added }
         contentTypes = ContentTypes(data: parts["[Content_Types].xml"])
+        for path in presentation.removedParts {
+            parts[path] = nil
+            contentTypes.removeOverride(for: path)
+        }
         mainRelationships = Relationship.parse(parts[PackagePath.relationships(of: presentation.package.mainPart)])
         slides = presentation.slides
         commentAuthors = presentation.commentAuthors
@@ -643,7 +648,7 @@ public enum SlideSkeleton {
     private static let namespaces = OOXML.namespaces.sorted { $0.key < $1.key }
         .map { "xmlns:\($0.key)=\"\($0.value)\"" }.joined(separator: " ")
 
-    private static let groupProperties = """
+    static let groupProperties = """
         <p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm>\
         <a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>
         """
@@ -652,6 +657,14 @@ public enum SlideSkeleton {
         <p:sld \(namespaces)><p:cSld><p:spTree>\(groupProperties)</p:spTree></p:cSld>\
         <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>
         """
+
+    /// A layout with nothing on it yet.
+    public static func layout(name: String) -> String {
+        """
+        <p:sldLayout \(namespaces) preserve="1" userDrawn="1"><p:cSld name="\(XMLLite.escape(name))"><p:spTree>\(groupProperties)\
+        </p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>
+        """
+    }
 
     public static func notesBody(_ paragraphs: String, id: Int) -> String {
         """
