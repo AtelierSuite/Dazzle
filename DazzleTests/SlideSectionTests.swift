@@ -38,6 +38,7 @@ struct SlideSectionTests {
         #expect(layout(presentation) == [[0, 1], [2], [3, 4]])
         // At the first slide with no sections yet, every slide goes in one.
         var (other, otherState) = deck(3)
+        otherState.selectSlide(other.slides[0].id)
         otherState.addSection(in: &other)
         #expect(layout(other) == [[0, 1, 2]])
     }
