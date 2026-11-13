@@ -37,6 +37,9 @@ struct TableDiagonalBorderTests {
         let canvas = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
                                             space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        // Drawn top-down, as on screen, so the first row of pixels is the top of the slide.
+        canvas.translateBy(x: 0, y: CGFloat(height))
+        canvas.scaleBy(x: 1, y: -1)
         SlideRenderer(presentation: presentation, slide: presentation.slides[0], options: .init(drawsBackground: false))
             .draw(in: canvas, size: size)
         return (try #require(canvas.makeImage()?.dataProvider?.data as Data?), canvas.bytesPerRow)
@@ -97,6 +100,7 @@ struct TableDiagonalBorderTests {
         guard case .table(var table) = shape.kind else { Issue.record("not a table"); return }
         table.rows[0].cells[0].text = TextBody(paragraphs: [Paragraph(runs: [TextRun(text: "Edited")])])
         shape.kind = .table(table)
+        shape.edits.insert(.table)
         var presentation = Presentation.blank
         presentation.slides[0].shapes = [shape]
         presentation.slides[0].isModified = true
