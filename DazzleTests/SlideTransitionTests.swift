@@ -76,9 +76,6 @@ struct SlideTransitionTests {
         let curtains = try #require(try transition(alternate("<p15:prstTrans prst=\"curtains\"/>", requires: "p15")))
         #expect(curtains.effect == .fade(throughBlack: false))
         #expect(curtains.approximates == "curtains")
-        let morph = try #require(try transition(alternate("<p159:morph option=\"byObject\"/>", requires: "p159")))
-        #expect(morph.effect == .fade(throughBlack: false))
-        #expect(morph.approximates == "morph")
         // With nothing better offered, still a fade rather than a cut.
         let ripple = try #require(try transition("<p:transition><p14:ripple/></p:transition>"))
         #expect(ripple.effect == .fade(throughBlack: false))

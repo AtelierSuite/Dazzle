@@ -4,6 +4,7 @@ import Foundation
 /// set rather than read. One it read is left exactly as the file had it.
 enum TransitionXML {
     static let p14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    static let p159 = "http://schemas.microsoft.com/office/powerpoint/2015/09/main"
     static let markupCompatibility = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 
     /// The effect element, as PowerPoint 2007 reads it, and as PowerPoint
@@ -27,6 +28,7 @@ enum TransitionXML {
         case .newsflash: return ("<p:newsflash/>", nil)
         case .comb(let vertical): return ("<p:comb\(orientation(vertical))/>", nil)
         case .random: return ("<p:random/>", nil)
+        case .morph: return ("<p:fade/>", "<p159:morph option=\"byObject\"/>")
         case .pattern(let filter):
             let vertical = ["vertical", "down"].contains(filter.subtype)
             switch filter.kind {
@@ -66,8 +68,11 @@ enum TransitionXML {
         let speed = transition.duration < 0.625 ? "fast" : transition.duration < 0.875 ? "med" : "slow"
         let (plain, newer) = elements(for: transition.effect)
         let milliseconds = Int((transition.duration * 1_000).rounded())
+        // Morph is PowerPoint 2019's, so is offered only to readers that know it.
+        let isMorph = transition.effect == .morph
         return """
-            <mc:AlternateContent xmlns:mc="\(markupCompatibility)" xmlns:p14="\(p14)"><mc:Choice Requires="p14">\
+            <mc:AlternateContent xmlns:mc="\(markupCompatibility)" xmlns:p14="\(p14)"\(isMorph ? " xmlns:p159=\"\(p159)\"" : "")>\
+            <mc:Choice Requires="\(isMorph ? "p159" : "p14")">\
             <p:transition spd="\(speed)" p14:dur="\(milliseconds)"\(advance)>\(newer ?? plain)</p:transition>\
             </mc:Choice><mc:Fallback><p:transition spd="\(speed)"\(advance)>\(plain)</p:transition></mc:Fallback>\
             </mc:AlternateContent>
