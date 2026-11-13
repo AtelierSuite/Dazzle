@@ -416,14 +416,13 @@ struct FormatPanel: View {
     @ViewBuilder
     private func tableSections(_ table: SlideTable) -> some View {
         Section("Format.Section.Table") {
-            Toggle("Table.HeaderRow", isOn: Binding(
-                get: { table.hasHeaderRow },
-                set: { state.setTableHeaderRow($0, in: &presentation) }
-            ))
-            Toggle("Table.BandedRows", isOn: Binding(
-                get: { table.hasBandedRows },
-                set: { state.setTableBandedRows($0, in: &presentation) }
-            ))
+            ForEach(SlideTable.StyleOption.allCases, id: \.self) { option in
+                Toggle(option.label, isOn: Binding(
+                    get: { table[option] },
+                    set: { state.setTableOption(option, $0, in: &presentation) }
+                ))
+                .accessibilityIdentifier("table.\(option.rawValue)")
+            }
         }
         if let position = state.selectedCell, let cell = table.cell(at: position) {
             Section("Format.Section.CellFill") {

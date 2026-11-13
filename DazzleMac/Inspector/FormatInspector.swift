@@ -310,12 +310,11 @@ extension InspectorViewController {
 
     private func buildTable(_ table: SlideTable) {
         form.section(String(localized: "Format.Section.Table"))
-        form.row(nil, form.checkbox(String(localized: "Table.HeaderRow"), get: { [unowned self] in
-            state.selectedTable(in: deck.presentation)?.hasHeaderRow ?? false
-        }, set: { [unowned self] isOn in edit { state.setTableHeaderRow(isOn, in: &$0) } }))
-        form.row(nil, form.checkbox(String(localized: "Table.BandedRows"), get: { [unowned self] in
-            state.selectedTable(in: deck.presentation)?.hasBandedRows ?? false
-        }, set: { [unowned self] isOn in edit { state.setTableBandedRows(isOn, in: &$0) } }))
+        for option in SlideTable.StyleOption.allCases {
+            form.row(nil, form.checkbox(option.label, get: { [unowned self] in
+                state.selectedTable(in: deck.presentation)?[option] ?? false
+            }, set: { [unowned self] isOn in edit { state.setTableOption(option, isOn, in: &$0) } }))
+        }
         guard let position = state.selectedCell, table.cell(at: position) != nil else {
             form.note(String(localized: "Mac.Inspector.Table.PickCell"))
             return

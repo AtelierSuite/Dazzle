@@ -91,9 +91,40 @@ export function substituteFor(family, has) {
 
 const quote = (family) => `"${String(family).replace(/["\\]/g, "\\$&")}"`;
 
-/** A CSS font-family list for a run: its own face, East Asian face, then the closest the device has. */
-export function fontStack(family, eastAsian) {
+/** What a run's complex-script face sets: Hebrew, Arabic, the Indic scripts, Thai and the like, and the marks that join them. */
+const COMPLEX_SCRIPTS = "U+0590-08FF, U+0900-109F, U+1780-18AF, U+19E0-19FF, U+200C-200F, U+A8E0-A8FF, U+FB1D-FDFF, U+FE70-FEFE";
+const complexFamilies = new Map();
+
+/**
+ * A family that sets complex scripts alone in `name`, or in what stands in for it, so it can lead a
+ * run's font list without taking its Latin letters. Null where the page can't make one.
+ */
+function complexFamily(name) {
+  if (complexFamilies.has(name)) return complexFamilies.get(name);
+  let alias = null;
+  if (typeof FontFace === "function" && typeof document !== "undefined" && document.fonts) {
+    alias = `Dazzle Complex ${name}`;
+    const names = [name, ...(SUBSTITUTES.find(([pattern]) => pattern.test(name.toLowerCase()))?.[1] ?? [])];
+    try {
+      document.fonts.add(new FontFace(alias, names.map((other) => `local(${quote(other)})`).join(", "), { unicodeRange: COMPLEX_SCRIPTS }));
+      document.fonts.add(new FontFace(alias, names.map((other) => `local(${quote(`${other} Bold`)})`).join(", "),
+        { unicodeRange: COMPLEX_SCRIPTS, weight: "700" }));
+    } catch {
+      alias = null;
+    }
+  }
+  complexFamilies.set(name, alias);
+  return alias;
+}
+
+/**
+ * A CSS font-family list for a run: its complex-script face for Arabic, Hebrew and the like, its
+ * own face, East Asian face, then the closest the device has.
+ */
+export function fontStack(family, eastAsian, complexScript) {
   const names = [];
+  const complex = complexScript ? complexFamily(complexScript) : null;
+  if (complex) names.push(complex);
   for (const name of [family, eastAsian]) {
     if (!name || names.includes(name)) continue;
     names.push(name);
@@ -837,6 +868,8 @@ export class SlideDrawer {
       textAlign: align, paddingInlineStart: `${paragraph.ml}px`, textIndent: `${first - paragraph.ml}px`,
       marginBlockStart: `${paragraph.sb * scale}px`, marginBlockEnd: `${paragraph.sa * scale}px`,
     });
+    // A right-to-left paragraph reads from the right, and its margin, indent and bullet start there.
+    if (paragraph.rtl) element.style.direction = "rtl";
     if (paragraph.lh?.pt) {
       element.style.lineHeight = `${paragraph.lh.pt}px`;
     } else {
@@ -1083,7 +1116,7 @@ export class SlideDrawer {
 /** A run's look, as CSS. */
 export function runStyle(element, run, scale = 1) {
   const size = run.sz * scale * (run.base ? 2 / 3 : 1);
-  element.style.fontFamily = fontStack(run.f, run.ea);
+  element.style.fontFamily = fontStack(run.f, run.ea, run.cs);
   element.style.fontSize = `${size}px`;
   element.style.color = run.c;
   if (run.b) element.style.fontWeight = "700";
@@ -1102,8 +1135,8 @@ export function runStyle(element, run, scale = 1) {
 
 /**
  * Widens each tab in the paragraphs under `root` so the text after it lies on
- * its stop as PowerPoint lays it: from the left of the text, by its left
- * edge, middle or right edge, or with its decimal point centred on the stop;
+ * its stop as PowerPoint lays it: from the left of the text, or the right in
+ * a right-to-left paragraph, by its left edge, middle or right edge, or with its decimal point centred on the stop;
  * past the paragraph's own stops, on every multiple of the default tab size.
  * Measured with offsets, which slide zoom and turned text leave alone.
  * Text set in vertical lines keeps the page's own tabs.
@@ -1114,9 +1147,14 @@ export function alignTabs(root) {
     const stops = JSON.parse(paragraph.dataset.tabs);
     const interval = Number(paragraph.dataset.dts) || 72;
     const tabs = [...paragraph.querySelectorAll(":scope > .text__tab")];
+    // How far along the line an element starts: from the left, or from the right in a right-to-left paragraph.
+    const rightToLeft = paragraph.style.direction === "rtl";
+    const along = (element) => rightToLeft
+      ? paragraph.offsetLeft + paragraph.offsetWidth - element.offsetLeft - element.offsetWidth
+      : element.offsetLeft - paragraph.offsetLeft;
     for (const tab of tabs) tab.style.paddingInlineStart = "0px";
     for (const tab of tabs) {
-      const at = tab.offsetLeft - paragraph.offsetLeft;
+      const at = along(tab);
       const [stop, alignment] = stops.find(([location]) => location > at + 0.5)
         ?? [(Math.floor(at / interval + 0.001) + 1) * interval, "l"];
       const segment = tab.nextElementSibling?.classList.contains("text__seg") ? tab.nextElementSibling : null;
@@ -1133,7 +1171,7 @@ export function alignTabs(root) {
       const target = stop - before;
       tab.style.paddingInlineStart = `${Math.max(target - at, 0)}px`;
       if (!segment) continue;
-      const off = segment.offsetLeft - paragraph.offsetLeft - Math.max(target, at);
+      const off = along(segment) - Math.max(target, at);
       if (Math.abs(off) > 0.25) tab.style.paddingInlineStart = `${Math.max(target - at - off, 0)}px`;
     }
   }

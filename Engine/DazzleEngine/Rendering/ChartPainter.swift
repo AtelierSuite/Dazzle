@@ -34,15 +34,15 @@ public struct ChartPainter {
         self.style = style
     }
 
-    private var fontSize: CGFloat { CGFloat(chart.fontSize ?? 1_200) / 100 }
-    private var textColor: RGBAColor {
+    var fontSize: CGFloat { CGFloat(chart.fontSize ?? 1_200) / 100 }
+    var textColor: RGBAColor {
         style.color(.scheme("tx1")).applying(.init(name: "lumMod", value: 65_000)).applying(.init(name: "lumOff", value: 35_000))
     }
-    private var gridColor: RGBAColor {
+    var gridColor: RGBAColor {
         style.color(.scheme("tx1")).applying(.init(name: "lumMod", value: 15_000)).applying(.init(name: "lumOff", value: 85_000))
     }
-    private var axisColor: RGBAColor { gridColor.applying(.init(name: "lumMod", value: 75_000)) }
-    private var background: RGBAColor { style.color(.scheme("bg1")) }
+    var axisColor: RGBAColor { gridColor.applying(.init(name: "lumMod", value: 75_000)) }
+    var background: RGBAColor { style.color(.scheme("bg1")) }
 
     /// Draws the chart filling `frame`, in a space whose y axis points down.
     public func draw(in frame: CGRect, on canvas: ChartCanvas) {
@@ -72,6 +72,7 @@ public struct ChartPainter {
         case .bubble: bubbles(in: area, canvas: canvas)
         case .radar: radar(in: area, canvas: canvas)
         case .surface: surface(in: area, canvas: canvas)
+        case .waterfall, .funnel, .treemap, .sunburst, .histogram, .pareto, .boxWhisker: extended(in: area, canvas: canvas)
         default: categoryPlots(in: area, canvas: canvas)
         }
     }
@@ -90,11 +91,11 @@ public struct ChartPainter {
         return style.color(color)
     }
 
-    private func seriesColor(_ series: Chart.Series, index: Int) -> RGBAColor {
+    func seriesColor(_ series: Chart.Series, index: Int) -> RGBAColor {
         series.color.map { style.color($0) } ?? color(at: index)
     }
 
-    private func pointColor(_ series: Chart.Series, at index: Int) -> RGBAColor {
+    func pointColor(_ series: Chart.Series, at index: Int) -> RGBAColor {
         series.pointColors[index].map { style.color($0) } ?? color(at: index)
     }
 
@@ -112,6 +113,7 @@ public struct ChartPainter {
 
     /// What the legend lists: categories for a pie, value bands for a surface, series otherwise.
     func legendEntries() -> [(String, RGBAColor)] {
+        if chart.kind.isExtended { return extendedLegendEntries() }
         if chart.kind.colorsByPoint {
             guard let series = chart.plots.first?.series.first else { return [] }
             var entries = chart.categories.enumerated().map { index, name in (formatCategory(name), pointColor(series, at: index)) }
@@ -510,7 +512,7 @@ public struct ChartPainter {
         }
     }
 
-    private func polyline(_ points: [CGPoint], color: RGBAColor, closed: Bool = false, canvas: ChartCanvas) {
+    func polyline(_ points: [CGPoint], color: RGBAColor, closed: Bool = false, canvas: ChartCanvas) {
         guard let first = points.first else { return }
         let path = CGMutablePath()
         path.move(to: first)
@@ -519,7 +521,7 @@ public struct ChartPainter {
         canvas.draw(path, fill: nil, stroke: color, lineWidth: max(fontSize * 0.19, 1.5), round: true)
     }
 
-    private func markers(_ points: [CGPoint], color: RGBAColor, canvas: ChartCanvas) {
+    func markers(_ points: [CGPoint], color: RGBAColor, canvas: ChartCanvas) {
         let marker = fontSize * 0.42
         for point in points {
             let dot = CGMutablePath()
@@ -1031,7 +1033,7 @@ public struct ChartPainter {
 
     // MARK: - Paths
 
-    private func polygon(_ points: [CGPoint]) -> CGPath {
+    func polygon(_ points: [CGPoint]) -> CGPath {
         let path = CGMutablePath()
         guard let first = points.first else { return path }
         path.move(to: first)
@@ -1044,7 +1046,7 @@ public struct ChartPainter {
         canvas.draw(polygon(points), fill: nil, stroke: color, lineWidth: 0.75, round: false)
     }
 
-    private func line(from: CGPoint, to: CGPoint, color: RGBAColor, width: CGFloat, canvas: ChartCanvas) {
+    func line(from: CGPoint, to: CGPoint, color: RGBAColor, width: CGFloat, canvas: ChartCanvas) {
         let path = CGMutablePath()
         path.move(to: from)
         path.addLine(to: to)
@@ -1113,7 +1115,7 @@ public struct ChartPainter {
         return result
     }
 
-    private func text(
+    func text(
         _ text: String, in rect: CGRect, size: CGFloat, alignment: ChartTextAlignment, canvas: ChartCanvas, color: RGBAColor? = nil
     ) {
         canvas.text(text, in: rect, size: size, alignment: alignment, color: color ?? textColor)
