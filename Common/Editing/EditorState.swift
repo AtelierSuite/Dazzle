@@ -435,9 +435,12 @@ final class EditorState {
     private func updateSlide(in presentation: inout Presentation, _ change: (inout Slide) -> Void) {
         let index = selectedIndex(in: presentation)
         guard presentation.slides.indices.contains(index), presentation.slides[index].canEditShapes else { return }
-        let before = Set(presentation.slides[index].shapes.map(\.shapeID))
+        let slideBefore = presentation.slides[index]
+        let before = Set(slideBefore.shapes.map(\.shapeID))
         change(&presentation.slides[index])
         presentation.slides[index].isModified = true
+        // Connectors go with the shapes they are attached to.
+        presentation.slides[index].followConnections(from: slideBefore)
         // Animations go with the shapes they animate.
         let removed = before.subtracting(presentation.slides[index].shapes.map(\.shapeID))
         if presentation.slides[index].animations.contains(where: { removed.contains($0.shapeID) }) {
@@ -494,10 +497,16 @@ final class EditorState {
         guard let slide = selectedSlide(in: presentation) else { return }
         let side = presentation.slideSize.points.height * 0.3
         let isLine = preset == "line"
+        // A line is a connector, as PowerPoint makes it, so its ends can be attached to shapes.
+        let isConnector = isLine || preset.hasSuffix("Connector3")
+        let label = isLine ? "Straight Connector" : preset.hasPrefix("bent") ? "Elbow Connector" : "Curved Connector"
         var shape = SlideShape(
-            shapeID: slide.nextShapeID, name: "\(isLine ? "Straight Connector" : "Shape") \(slide.nextShapeID - 1)",
-            kind: .shape,
-            frame: centered(CGSize(width: isLine ? side * 1.5 : side, height: isLine ? 0 : side), in: presentation)
+            shapeID: slide.nextShapeID, name: "\(isConnector ? label : "Shape") \(slide.nextShapeID - 1)",
+            kind: isConnector ? .connector : .shape,
+            frame: centered(
+                CGSize(width: isConnector ? side * 1.5 : side, height: isLine ? 0 : isConnector ? side * 0.75 : side),
+                in: presentation
+            )
         )
         shape.geometry = .preset(preset, adjustments: [:])
         shape.style = StyleReferences(element: XMLLite.fragment(
@@ -506,7 +515,7 @@ final class EditorState {
                 + "<a:fontRef idx=\"minor\"><a:schemeClr val=\"lt1\"/></a:fontRef></p:style>",
             namespaces: OOXML.namespaces
         ))
-        if isLine {
+        if isConnector {
             shape.line = LineStyle(fill: .solid(.scheme("accent1")), width: 28_575)
         } else {
             var paragraph = Paragraph(runs: [])
@@ -587,6 +596,8 @@ final class EditorState {
             shape.edits.formUnion([.transform, .identity])
             copies.append(shape)
         }
+        // Copied connectors join the copies of the shapes they joined.
+        copies.reconnect(Dictionary(zip(originals.map(\.shapeID), copies.map(\.shapeID))) { first, _ in first })
         updateSlide(in: &presentation) { $0.shapes.append(contentsOf: copies) }
         selectedShapeIDs = copies.map(\.id)
     }
@@ -798,12 +809,9 @@ final class EditorState {
         selectCell(next)
     }
 
-    func setTableHeaderRow(_ isOn: Bool, in presentation: inout Presentation) {
-        updateTable(in: &presentation) { $0.hasHeaderRow = isOn }
-    }
-
-    func setTableBandedRows(_ isOn: Bool, in presentation: inout Presentation) {
-        updateTable(in: &presentation) { $0.hasBandedRows = isOn }
+    /// Turns one of the table style's options, such as its header row or banded columns, on or off.
+    func setTableOption(_ option: SlideTable.StyleOption, _ isOn: Bool, in presentation: inout Presentation) {
+        updateTable(in: &presentation) { $0[option] = isOn }
     }
 
     func setCellText(_ body: TextBody, in presentation: inout Presentation) {
@@ -847,7 +855,7 @@ final class EditorState {
 
     /// Changes the selected chart, writing its part and its workbook anew.
     func updateChart(in presentation: inout Presentation, _ change: (inout Chart) -> Void) {
-        guard let shape = selectedShape(in: presentation), shape.isEditable, case .chart(var chart?) = shape.kind,
+        guard let shape = selectedShape(in: presentation), shape.isEditable, case .chart(var chart?) = shape.kind, !chart.kind.isExtended,
               let slideIndex = presentation.index(of: selectedSlideID ?? presentation.slides.first?.id),
               presentation.slides[slideIndex].canEditShapes else { return }
         let before = chart
@@ -985,6 +993,18 @@ final class EditorState {
             shape.hasOwnFrame = true
             shape.rotation = SlideShape.normalized(rotation)
             shape.fitTableToFrame()
+        }
+    }
+
+    /// Moves one end of a connector to `point`, in slide points, and
+    /// attaches it to the site `connection` names, or to nothing.
+    func setConnectorEnd(
+        _ end: SlideShape.ConnectorEnd, of id: SlideShape.ID, to point: CGPoint, connection: SlideShape.Connection?,
+        in presentation: inout Presentation
+    ) {
+        updateSlide(in: &presentation) { slide in
+            guard slide.shapes.first(where: { $0.id == id })?.isEditable == true else { return }
+            slide.setConnectorEnd(end, of: id, to: point, connection: connection)
         }
     }
 
@@ -1157,7 +1177,7 @@ final class EditorState {
     }
 
     func effectiveAlignment(in presentation: Presentation) -> ParagraphAlignment {
-        effectiveParagraphProperties(in: presentation).alignment ?? .left
+        effectiveParagraphProperties(in: presentation).effectiveAlignment
     }
 
     func updateRuns(in presentation: inout Presentation, _ change: (inout RunProperties) -> Void) {
@@ -1217,9 +1237,18 @@ final class EditorState {
         updateRuns(in: &presentation) { $0.size = target }
     }
 
-    /// A typeface by name, or a theme font such as `+mn-lt`.
+    /// A typeface by name, or a theme font such as `+mn-lt`. Arabic, Hebrew
+    /// and other complex-script text takes it too, as it does in PowerPoint.
     func setFontFamily(_ family: String, in presentation: inout Presentation) {
-        updateRuns(in: &presentation) { $0.latinFont = family }
+        let complexScript = switch family {
+        case "+mj-lt": "+mj-cs"
+        case "+mn-lt": "+mn-cs"
+        default: family
+        }
+        updateRuns(in: &presentation) {
+            $0.latinFont = family
+            $0.complexScriptFont = complexScript
+        }
     }
 
     func setAlignment(_ alignment: ParagraphAlignment, in presentation: inout Presentation) {
