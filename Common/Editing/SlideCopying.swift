@@ -42,6 +42,8 @@ extension EditorState {
             pasted.append(shape)
         }
 
+        // Pasted connectors join the shapes pasted with them.
+        pasted.reconnect(Dictionary(zip(shapes.map(\.shapeID), pasted.map(\.shapeID))) { first, _ in first })
         target.shapes.append(contentsOf: pasted)
         target.isModified = true
         presentation.addedParts = importer.target.addedParts

@@ -75,6 +75,21 @@ public enum PresetGeometry {
         return Outline(fill: definition.isOpen ? stroke : fill, stroke: stroke, shades: shades)
     }
 
+    /// Where connectors meet a preset drawn in `rect`, in the order a
+    /// connector counts them, and the angle each is left at, in degrees
+    /// clockwise from rightwards. A preset that names none has one in the
+    /// middle of each side, as a rectangle does.
+    public static func connectionSites(_ name: String?, adjustments: [String: Int], in rect: CGRect) -> [(point: CGPoint, angle: CGFloat)] {
+        if let name, let sites = PresetShapeDefinition.named(name)?.connectionSites(adjustments: adjustments, in: rect),
+           !sites.isEmpty {
+            return sites
+        }
+        return [
+            (CGPoint(x: rect.midX, y: rect.minY), 270), (CGPoint(x: rect.minX, y: rect.midY), 180),
+            (CGPoint(x: rect.midX, y: rect.maxY), 90), (CGPoint(x: rect.maxX, y: rect.midY), 0),
+        ]
+    }
+
     /// The area the preset fills (for a line, the line itself).
     public static func path(_ name: String, adjustments: [String: Int], in rect: CGRect) -> CGPath {
         outline(name, adjustments: adjustments, in: rect).fill
@@ -165,12 +180,6 @@ public enum PresetGeometry {
             path.addCurve(to: point(w, h - lid / 2), control1: point(0, h + lid / 6), control2: point(w, h + lid / 6))
             path.addLine(to: point(w, lid / 2))
             path.addEllipse(in: CGRect(x: x, y: y, width: w, height: lid))
-        case "bentConnector4", "bentConnector5":
-            let bend = w * adjust("adj1", 50_000)
-            path.addLines(between: [point(0, 0), point(bend, 0), point(bend, h), point(w, h)])
-        case "curvedConnector2", "curvedConnector3", "curvedConnector4", "curvedConnector5":
-            path.move(to: point(0, 0))
-            path.addCurve(to: point(w, h), control1: point(w / 2, 0), control2: point(w / 2, h))
         case "arc":
             let start = CGFloat(adjustments["adj1"] ?? 16_200_000) / 60_000 * .pi / 180
             let end = CGFloat(adjustments["adj2"] ?? 0) / 60_000 * .pi / 180

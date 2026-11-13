@@ -20,8 +20,7 @@ struct CanvasMenu: Equatable {
         case ungroup
         case editChart
         case table(EditorState.TableChange)
-        case headerRow
-        case bandedRows
+        case tableOption(SlideTable.StyleOption)
         case selectAll
         case skipSlide
         case duplicateSlide
@@ -109,8 +108,9 @@ struct CanvasMenu: Equatable {
             if table.columnCount > 1 {
                 row(.table(.deleteColumn), "Table.DeleteColumn", "minus.rectangle.portrait", destructive: true)
             }
-            row(.headerRow, "Table.HeaderRow", "tablecells", isOn: table.hasHeaderRow)
-            row(.bandedRows, "Table.BandedRows", "rectangle.grid.1x2", isOn: table.hasBandedRows)
+            for option in SlideTable.StyleOption.allCases {
+                tableItems.append(Item(action: .tableOption(option), title: option.label, symbol: option.symbol, isOn: table[option]))
+            }
         }
     }
 
@@ -154,10 +154,8 @@ extension EditorState {
         case .ungroup: ungroupSelectedShape(in: &presentation)
         case .editChart: presentedPanel = .chart
         case .table(let change): changeTable(change, in: &presentation)
-        case .headerRow:
-            setTableHeaderRow(!(selectedTable(in: presentation)?.hasHeaderRow ?? false), in: &presentation)
-        case .bandedRows:
-            setTableBandedRows(!(selectedTable(in: presentation)?.hasBandedRows ?? false), in: &presentation)
+        case .tableOption(let option):
+            setTableOption(option, !(selectedTable(in: presentation)?[option] ?? false), in: &presentation)
         case .selectAll: selectAllShapes(in: presentation)
         case .skipSlide:
             if let id = selectedSlide(in: presentation)?.id { toggleHidden(id, in: &presentation) }
