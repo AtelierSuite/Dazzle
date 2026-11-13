@@ -203,6 +203,8 @@ final class PresentationSession {
         var outgoing: Slide
         var outgoingFrame: AnimationFrame?
         var incomingFrame: AnimationFrame?
+        /// The shapes the two slides share, when the transition is a Morph.
+        var morph: SlideMorph?
         var startedAt: Date
 
         /// How far through it is at `date`, from 0 to 1.
@@ -238,6 +240,11 @@ final class PresentationSession {
             showing.incomingFrame = slide.animations.isEmpty ? nil : slide.animationTimeline.frame(
                 begun: builds, elapsed: 0, shapes: slide.shapes, slideSize: presentation.slideSize.points
             )
+            if showing.transition.effect == .morph {
+                showing.morph = SlideMorph(
+                    from: showing.outgoing, to: slide, outgoingFrame: showing.outgoingFrame, incomingFrame: showing.incomingFrame
+                )
+            }
             transition = showing
         }
     }

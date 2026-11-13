@@ -150,14 +150,19 @@ final class SlideshowView: NSView {
                 options.animation = frame
                 return SlideExporter.cgImage(of: slide, in: presentation, width: pixels, options: options)
             }
-            transitionPictures = (showing.id, pixels, picture(showing.outgoing, showing.outgoingFrame),
-                                  picture(slide, showing.incomingFrame))
+            // A Morph draws the shapes the slides share itself.
+            transitionPictures = (
+                showing.id, pixels,
+                picture(showing.outgoing, showing.morph.map { $0.rest(of: .outgoing) } ?? showing.outgoingFrame),
+                picture(slide, showing.morph.map { $0.rest(of: .incoming) } ?? showing.incomingFrame)
+            )
         }
         let frame = showing.transition.frame(progress: showing.progress(at: Date()), size: slideSize)
         context.saveGState()
         context.translateBy(x: rect.minX, y: rect.minY)
         context.scaleBy(x: rect.width / slideSize.width, y: rect.height / slideSize.height)
         frame.draw(in: context, size: slideSize, outgoing: transitionPictures?.outgoing, incoming: transitionPictures?.incoming)
+        showing.morph?.draw(progress: showing.progress(at: Date()), in: context, size: slideSize, presentation: presentation)
         context.restoreGState()
     }
 
