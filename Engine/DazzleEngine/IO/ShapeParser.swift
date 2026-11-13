@@ -124,6 +124,10 @@ public final class ShapeParser {
         var shape = SlideShape(shapeID: id, name: name, kind: connector ? .connector : .shape, frame: .zero)
         shape.placeholder = placeholder
         shape.isTextBox = nonVisual?.firstChild(named: "cNvSpPr")?.attribute("txBox") == "1"
+        if connector, let ends = nonVisual?.firstChild(named: "cNvCxnSpPr") {
+            shape.startConnection = Self.connection(ends.firstChild(named: "stCxn"))
+            shape.endConnection = Self.connection(ends.firstChild(named: "endCxn"))
+        }
         applyTransform(properties?.firstChild(named: "xfrm"), to: &shape)
         shape.geometry = geometry(in: properties)
         shape.fill = Fill.parse(in: properties, image: target(of:))
@@ -142,6 +146,12 @@ public final class ShapeParser {
             shape.kind = .unsupported(label)
         }
         return shape
+    }
+
+    /// `a:stCxn` or `a:endCxn`: the shape and site an end of a connector is attached to.
+    private static func connection(_ element: XMLElement?) -> SlideShape.Connection? {
+        guard let id = element?.attribute("id").flatMap(Int.init) else { return nil }
+        return SlideShape.Connection(shapeID: id, site: element?.attribute("idx").flatMap(Int.init) ?? 0)
     }
 
     private func picture(_ element: XMLElement) -> SlideShape {
