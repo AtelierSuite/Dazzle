@@ -20,9 +20,16 @@ public struct ShapeWriter {
         if shape.edits.isEmpty, let source = shape.source { return source }
         guard let element = element(for: shape) else { return shape.source }
         let edits: Set<SlideShape.Edit> = shape.source == nil
-            ? [.transform, .fill, .line, .text, .table, .picture, .altText, .effects, .link] : shape.edits
+            ? [.transform, .fill, .line, .text, .table, .picture, .altText, .effects, .link, .geometry, .connections]
+            : shape.edits
         if edits.contains(.transform), shape.hasOwnFrame || shape.source != nil {
             writeTransform(of: shape, into: element)
+        }
+        if edits.contains(.geometry) {
+            writeGeometry(shape.geometry, into: element)
+        }
+        if edits.contains(.connections) {
+            writeConnections(of: shape, into: element)
         }
         if edits.contains(.fill), let fill = shape.fill {
             writeFill(fill, into: element)
@@ -140,6 +147,17 @@ public struct ShapeWriter {
                     """
             }
             let geometry = shape.geometry.presetName ?? "rect"
+            if shape.kind == .connector {
+                // PowerPoint's own style for a new line: an accent outline and no fill.
+                return """
+                    <p:cxnSp><p:nvCxnSpPr>\(identity)<p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr>\
+                    <a:prstGeom prst="\(geometry)"><a:avLst/></a:prstGeom></p:spPr><p:style>\
+                    <a:lnRef idx="1"><a:schemeClr val="accent1"/></a:lnRef>\
+                    <a:fillRef idx="0"><a:schemeClr val="accent1"/></a:fillRef>\
+                    <a:effectRef idx="0"><a:schemeClr val="accent1"/></a:effectRef>\
+                    <a:fontRef idx="minor"><a:schemeClr val="tx1"/></a:fontRef></p:style></p:cxnSp>
+                    """
+            }
             if shape.isTextBox {
                 return """
                     <p:sp><p:nvSpPr>\(identity)<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>\
@@ -227,6 +245,33 @@ public struct ShapeWriter {
             transform.firstChild(named: "chOff")?.setAttribute("y", String(group.childFrame.y))
             transform.firstChild(named: "chExt")?.setAttribute("cx", String(max(group.childFrame.width, 0)))
             transform.firstChild(named: "chExt")?.setAttribute("cy", String(max(group.childFrame.height, 0)))
+        }
+    }
+
+    /// Names the preset the shape is drawn as, with its adjust values. A
+    /// freeform outline is left as it was.
+    private func writeGeometry(_ geometry: ShapeGeometry, into element: XMLElement) {
+        guard case .preset(let name, let adjustments) = geometry,
+              let preset = properties(of: element)?.firstChild(named: "prstGeom") else { return }
+        preset.setAttribute("prst", name)
+        let values = adjustments.sorted { $0.key < $1.key }
+            .map { "<a:gd name=\"\(XMLLite.escape($0.key))\" fmla=\"val \($0.value)\"/>" }.joined()
+        guard let list = fragment("<a:avLst>\(values)</a:avLst>") else { return }
+        for old in preset.children(named: "avLst") { preset.removeChild(old) }
+        preset.insertChild(list, at: 0)
+    }
+
+    /// Says which shapes a connector's ends are attached to, or that they are attached to none.
+    private func writeConnections(of shape: SlideShape, into element: XMLElement) {
+        guard element.name == "cxnSp",
+              let ends = element.firstChild(named: "nvCxnSpPr")?.firstChild(named: "cNvCxnSpPr") else { return }
+        for old in ends.children where old.name == "stCxn" || old.name == "endCxn" { ends.removeChild(old) }
+        var index = ends.children.firstIndex { $0.name == "extLst" } ?? ends.children.count
+        for (name, connection) in [("stCxn", shape.startConnection), ("endCxn", shape.endConnection)] {
+            guard let connection,
+                  let new = fragment("<a:\(name) id=\"\(connection.shapeID)\" idx=\"\(connection.site)\"/>") else { continue }
+            ends.insertChild(new, at: index)
+            index += 1
         }
     }
 
