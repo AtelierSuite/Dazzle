@@ -23,6 +23,20 @@ public struct Chart: Equatable, Hashable, Sendable {
         case pieOfPie
         /// A pie whose smallest slices are pulled out into a stacked bar.
         case barOfPie
+        /// Columns that each start where the one before ended, with totals standing from zero.
+        case waterfall
+        /// Bars centred one under another, each as wide as its value.
+        case funnel
+        /// Rectangles nested by branch, each as large as its value.
+        case treemap
+        /// Rings of segments, a branch's leaves outside it.
+        case sunburst
+        /// How many values fall in each of a run of ranges.
+        case histogram
+        /// A histogram from the tallest column down, with a line of the running share.
+        case pareto
+        /// Each category's values as a box from quartile to quartile, with whiskers to the rest.
+        case boxWhisker
 
         /// The kinds a new chart can be made as, and a chart changed to.
         public static let insertable: [Kind] = [.column, .bar, .line, .area, .pie, .doughnut, .scatter]
@@ -32,7 +46,7 @@ public struct Chart: Equatable, Hashable, Sendable {
         public var choices: [Kind] { Self.insertable.contains(self) ? Self.insertable : Self.insertable + [self] }
 
         /// Whether the plot has axes: everything but the pies.
-        public var hasAxes: Bool { !colorsByPoint }
+        public var hasAxes: Bool { !colorsByPoint && ![.funnel, .treemap, .sunburst].contains(self) }
         /// Whether its points are coloured one by one rather than series by series.
         public var colorsByPoint: Bool { [.pie, .doughnut, .pieOfPie, .barOfPie].contains(self) }
         /// Whether its series can be side by side, stacked or stacked to 100%.
@@ -41,6 +55,9 @@ public struct Chart: Equatable, Hashable, Sendable {
         public var hasThreeD: Bool { [.column, .bar, .line, .area, .pie, .surface].contains(self) }
         /// Whether its points sit along two value axes rather than by category.
         public var isXY: Bool { self == .scatter || self == .bubble }
+        /// Whether it is one of Office 2016's kinds, kept in a `cx:chartSpace`
+        /// part, which Dazzle reads and draws but leaves as it was.
+        public var isExtended: Bool { [.waterfall, .funnel, .treemap, .sunburst, .histogram, .pareto, .boxWhisker].contains(self) }
     }
 
     /// How a radar chart draws its series.
@@ -158,6 +175,8 @@ public struct Chart: Equatable, Hashable, Sendable {
         public var gapWidth = 150
         /// Whether an of-pie chart draws lines joining its two plots.
         public var hasSeriesLines = false
+        /// What a waterfall, histogram, treemap or box and whisker chart says of its layout.
+        public var extended = Extended()
 
         public init(
             kind: Kind, grouping: Grouping = .standard, series: [Series], source: String? = nil, holeSize: Int = 50,
@@ -217,6 +236,9 @@ public struct Chart: Equatable, Hashable, Sendable {
     public var categoryFormat: String?
     /// The angle a 3D plot is seen from.
     public var view3D: View3D?
+    /// A treemap's or sunburst's categories level by level, the outermost
+    /// branches first, each with a label per point, empty where a point has none.
+    public var categoryLevels: [[String]] = []
 
     /// The angle 3D plots are seen from: the file's, or PowerPoint's default for the kind.
     public var effectiveView3D: View3D {
@@ -234,6 +256,12 @@ extension Chart {
     public init?(path: String, data: Data?) {
         guard let data, let root = try? XMLLite.parse(data), let chart = root.firstChild(named: "chart"),
               let area = chart.firstChild(named: "plotArea") else { return nil }
+        // Office 2016's kinds are in a format of their own.
+        if root.firstChild(named: "chartData") != nil {
+            guard let extended = Chart(extendedPath: path, root: root) else { return nil }
+            self = extended
+            return
+        }
         self.path = path
         plots = area.children.compactMap(Self.plot)
         categories = []
