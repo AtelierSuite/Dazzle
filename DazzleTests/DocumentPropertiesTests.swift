@@ -104,6 +104,18 @@ struct DocumentPropertiesTests {
         #expect(reopened.revision == 8)
     }
 
+    @Test("Each save moves the revision on, starting from a file that has none")
+    func revisions() throws {
+        var presentation = Presentation.blank
+        #expect(presentation.properties.revision == nil)
+        for expected in 1...3 {
+            let saved = try PPTXWriter.data(from: presentation.stampedForSaving(by: "Grace"))
+            presentation = try PPTXReader.presentation(from: saved)
+            #expect(presentation.properties.revision == expected)
+            #expect(try text(saved, "docProps/core.xml").contains("<cp:revision>\(expected)</cp:revision>"))
+        }
+    }
+
     @Test("Saving with no name keeps the last author")
     func anonymous() throws {
         let saved = try PPTXWriter.data(from: deck().stampedForSaving(by: nil))
