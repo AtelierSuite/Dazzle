@@ -214,4 +214,11 @@ public struct SlideStyleContext: Sendable {
     public func typeface(_ name: String?, eastAsian: Bool = false) -> String? {
         name.map(theme.typeface)
     }
+
+    /// The typeface `run`'s text in a complex `script` is set in: its `a:cs`,
+    /// through the theme. Nil when nothing names one, leaving the text in
+    /// its Latin typeface.
+    public func complexScriptTypeface(for run: RunProperties, script: String) -> String? {
+        theme.complexScriptTypeface(run.complexScriptFont, script: script)
+    }
 }
