@@ -1,9 +1,11 @@
 import Foundation
 
 /// The theme, masters and layouts a presentation's slides are built on.
-/// Read once with the file; Dazzle does not edit them.
+/// Read with the file, and never changed: master view's changes make another.
 public final class DeckResources: Equatable, Sendable {
     public let masters: [String: SlideMaster]
+    /// Masters in the order the presentation lists them.
+    public let masterOrder: [String]
     public let layouts: [String: SlideLayout]
     /// Layouts in the order the first master lists them, for New Slide.
     public let layoutOrder: [String]
@@ -18,8 +20,9 @@ public final class DeckResources: Equatable, Sendable {
     public init(
         masters: [String: SlideMaster], layouts: [String: SlideLayout], layoutOrder: [String],
         defaultTextStyle: ListStyle, notesMasterPath: String?, tableStyles: [String: TableStyle] = [:],
-        embeddedFonts: EmbeddedFonts = .none
+        embeddedFonts: EmbeddedFonts = .none, masterOrder: [String]? = nil
     ) {
+        self.masterOrder = masterOrder ?? masters.keys.sorted()
         self.tableStyles = tableStyles
         self.embeddedFonts = embeddedFonts
         self.masters = masters
@@ -37,6 +40,15 @@ public final class DeckResources: Equatable, Sendable {
     }
 
     public var orderedLayouts: [SlideLayout] { layoutOrder.compactMap { layouts[$0] } }
+
+    /// The same resources as another object, so whatever draws from them
+    /// knows to draw again.
+    public func copy() -> DeckResources {
+        DeckResources(
+            masters: masters, layouts: layouts, layoutOrder: layoutOrder, defaultTextStyle: defaultTextStyle,
+            notesMasterPath: notesMasterPath, tableStyles: tableStyles, embeddedFonts: embeddedFonts, masterOrder: masterOrder
+        )
+    }
 }
 
 /// A theme's colours, fonts and style matrix.
@@ -105,6 +117,8 @@ public struct Theme: Equatable, Sendable {
 /// A slide master.
 public struct SlideMaster: Equatable, Sendable {
     public var path: String
+    /// Its layouts, in the order it lists them.
+    public var layoutPaths: [String] = []
     public var theme: Theme
     /// `p:clrMap`: which theme colour each alias such as `tx1` stands for.
     public var colorMap: [String: String]

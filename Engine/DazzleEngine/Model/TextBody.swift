@@ -605,6 +605,15 @@ public struct ListStyle: Equatable, Hashable, Sendable {
         levels[min(max(index, 0), 8) + 1] ?? ParagraphProperties()
     }
 
+    /// Changes the properties at a zero-based outline level.
+    public mutating func updateLevel(_ index: Int, _ change: (inout ParagraphProperties) -> Void) {
+        var properties = level(index)
+        change(&properties)
+        // A level is its place in the list, never something it says.
+        properties.level = nil
+        levels[min(max(index, 0), 8) + 1] = properties
+    }
+
     /// Each level's values left unsaid here are taken from `base`.
     public func merged(over base: ListStyle) -> ListStyle {
         var result = ListStyle()

@@ -177,6 +177,14 @@ export class Inspector extends EventTarget {
       + (background.own && background.kind === "pattern" ? this.patternRows("bg", background) : "")
       + (background.own && background.kind === "picture" ? this.row("", this.buttons([["bgPicture", t("Fill.Picture.Change")]])) + this.row("", this.check("bgTile", t("Fill.Picture.Tile"), background.tiled)) : "")
       + this.note(t("Format.Background.Footer")));
+    // A master or layout has a name, and none of what a slide has besides.
+    const template = this.engine.state?.masterView ? this.engine.state.slides.find((entry) => entry.id === slide.id) : null;
+    if (template) {
+      if (template.role === "layout") {
+        html += this.section(t("MasterView.Section.Layout"), this.row(t("MasterView.LayoutName"), this.text("layoutName", t("MasterView.LayoutName"), template.name)));
+      }
+      return html;
+    }
     const layouts = (info.layouts ?? []).map((layout) => [layout.path, layout.name]);
     html += this.section(t("Format.Section.Slide"),
       this.row(t("Format.Slide.Layout"), this.popup("layout", t("Format.Slide.Layout"), layouts, slide.layout))
@@ -662,6 +670,7 @@ export class Inspector extends EventTarget {
       }
       case "rotation": return engine.call("setFrames", { frames: { [shape.id]: { x: shape.x, y: shape.y, w: shape.w, h: shape.h, rot: Number(value) } } });
       case "altText": return engine.call("setAltText", { text: value });
+      case "layoutName": return engine.call("renameLayout", { ids: [data.slide.id], name: value });
       // Links
       case "linkKind":
         if (value === "none") return engine.call("setLink", {});
