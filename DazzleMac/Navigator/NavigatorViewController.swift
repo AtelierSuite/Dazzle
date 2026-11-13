@@ -76,7 +76,10 @@ final class NavigatorViewController: NSViewController, NSTableViewDataSource, NS
         let ids = presentation.slides.map(\.id)
         if ids != shownIDs {
             shownIDs = ids
+            // Reloading picks a row of its own, which is not the user picking a slide.
+            isMatchingSelection = true
             tableView.reloadData()
+            isMatchingSelection = false
         } else {
             let visible = tableView.rows(in: tableView.visibleRect)
             for row in visible.lowerBound..<visible.upperBound where presentation.slides.indices.contains(row) {
