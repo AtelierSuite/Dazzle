@@ -973,6 +973,43 @@ test("draws radar, stock, bubble, of-pie, 3D and surface charts as themselves, a
   assert.equal(filled(again[4].chart).length, 30);
 });
 
+const TRENDLINE = (type, extra = "") => `<c:trendline><c:spPr><a:ln w="19050"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>`
+  + `<a:prstDash val="sysDot"/></a:ln></c:spPr><c:trendlineType val="${type}"/>${extra}<c:dispRSqr val="1"/><c:dispEq val="1"/></c:trendline>`;
+const ERROR_BARS = (valueType, extra = "") => `<c:errBars><c:errBarType val="both"/><c:errValType val="${valueType}"/><c:noEndCap val="0"/>${extra}`
+  + `<c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:ln></c:spPr></c:errBars>`;
+const ANALYSIS_CHARTS = [
+  ...[["linear"], ["exp"], ["log"], ["poly", "<c:order val=\"3\"/>"], ["power"], ["movingAvg", "<c:period val=\"2\"/>"]].map(([type, extra]) =>
+    chartPart(`<c:lineChart><c:grouping val="standard"/>${chartSeries(0, "Apples", [2, 3, 5, 4, 6], { extra: TRENDLINE(type, extra) })}<c:axId val="1"/><c:axId val="2"/></c:lineChart>`)),
+  ...[["fixedVal", "<c:val val=\"1\"/>"], ["percentage", "<c:val val=\"10\"/>"], ["stdDev", "<c:val val=\"1\"/>"], ["stdErr", ""],
+    ["cust", `<c:plus>${literal([1, 2, 1, 2, 1])}</c:plus><c:minus>${literal([0.5, 0.5, 0.5, 0.5, 0.5])}</c:minus>`]].map(([type, extra]) =>
+    chartPart(`<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>${chartSeries(0, "Apples", [4.3, 2.5, 3.5, 4.5, 3], { extra: ERROR_BARS(type, extra) })}<c:axId val="1"/><c:axId val="2"/></c:barChart>`)),
+];
+
+test("draws trendlines and error bars over a chart's series, and keeps them when saved", () => {
+  call("new", { name: "Analysis.pptx" });
+  for (let index = 0; index < ANALYSIS_CHARTS.length; index++) call("insertChart", { kind: "column" });
+  const entries = unzip(call("save", { format: "pptx", keep: true }).payload);
+  ANALYSIS_CHARTS.forEach((part, index) => entries.set(`ppt/charts/chart${index + 1}.xml`, part));
+  const check = (opened) => {
+    const charts = call("scene", { slide: opened.state.slides[0].id }).result.shapes.filter((node) => node.kind === "chart").map((node) => node.chart);
+    assert.equal(charts.length, ANALYSIS_CHARTS.length);
+    const stroked = (items, color) => items.filter((item) => item.k === "path" && !item.fill && item.stroke === color);
+    const texts = (items) => items.filter((item) => item.k === "text").map((item) => item.t);
+    charts.slice(0, 6).forEach((items, index) => {
+      assert.equal(stroked(items, "#ff0000").length, 2, `trendline ${index} is drawn, and shown in the legend`);
+    });
+    assert.ok(texts(charts[0]).includes("Linear (Apples)"), "the legend names a trendline by its kind and series");
+    assert.ok(texts(charts[0]).some((text) => text.startsWith("y = ")), "with its equation");
+    assert.ok(texts(charts[0]).some((text) => text.startsWith("R² = ")), "and R²");
+    assert.ok(texts(charts[5]).includes("2 per. Mov. Avg. (Apples)"));
+    charts.slice(6).forEach((items, index) => {
+      assert.equal(stroked(items, "#0000ff").length, 1, `error bars ${index} are drawn`);
+    });
+  };
+  check(call("open", { name: "Analysis.pptx" }, zip(entries)));
+  check(call("open", { name: "Again.pptx" }, call("save", { format: "pptx", keep: true }).payload));
+});
+
 /**
  * A Keynote deck of two tables: one of 2 × 2 cells as Keynote kept them
  * before 2019, its top row merged, and one with nothing to read its cells from.
