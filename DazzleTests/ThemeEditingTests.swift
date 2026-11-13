@@ -73,7 +73,7 @@ struct ThemeEditingTests {
         #expect(xml.contains("<a:accent1><a:srgbClr val=\"8E44AD\"/></a:accent1>"))
         // A system colour that changed becomes a plain one; one left alone stays.
         #expect(xml.contains("<a:dk1><a:srgbClr val=\"101010\"/></a:dk1>"))
-        #expect(xml.contains("<a:sysClr val=\"window\" lastClr=\"FFFFFF\"/>"))
+        #expect(xml.contains("<a:lt1><a:sysClr lastClr=\"FFFFFF\" val=\"window\"/></a:lt1>"))
         // The East Asian fonts and the format scheme are kept.
         #expect(xml.contains("<a:ea typeface=\"Meiryo UI\"/>"))
         #expect(xml.contains("fmtScheme"))
