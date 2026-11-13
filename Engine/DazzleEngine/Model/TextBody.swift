@@ -379,6 +379,9 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
     public var tabStops: [TabStop]?
     /// EMU between the default tab stops.
     public var defaultTabSize: Int?
+    /// `rtl`: whether the paragraph reads from right to left, its margin,
+    /// indent, bullet and tab stops measured from the right.
+    public var isRightToLeft: Bool?
     public var defaultRun = RunProperties()
 
     public init() {
@@ -396,6 +399,7 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
         spaceAfter = Spacing(element: element.firstChild(named: "spcAft"))
         tabStops = TabStop.list(in: element.firstChild(named: "tabLst"))
         defaultTabSize = element.attribute("defTabSz").flatMap(Int.init).flatMap { $0 > 0 ? $0 : nil }
+        isRightToLeft = element.attribute("rtl").map { $0 == "1" || $0 == "true" }
         if element.firstChild(named: "buNone") != nil {
             bullet = Bullet.none
         } else if let character = element.firstChild(named: "buChar")?.attribute("char") {
@@ -410,6 +414,12 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
         bulletSize = element.firstChild(named: "buSzPct")?.attribute("val").flatMap(Int.init).map { Double($0) / 100_000 }
         bulletFont = element.firstChild(named: "buFont")?.attribute("typeface")
         defaultRun = RunProperties(element: element.firstChild(named: "defRPr"))
+    }
+
+    /// Where the paragraph sits across its box: where it says, which is left
+    /// or right whichever way it reads, or at the side it reads from.
+    public var effectiveAlignment: ParagraphAlignment {
+        alignment ?? (isRightToLeft == true ? .right : .left)
     }
 
     /// Values left unsaid here are taken from `base`.
@@ -428,6 +438,7 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
         result.spaceAfter = spaceAfter ?? base.spaceAfter
         result.tabStops = tabStops ?? base.tabStops
         result.defaultTabSize = defaultTabSize ?? base.defaultTabSize
+        result.isRightToLeft = isRightToLeft ?? base.isRightToLeft
         result.defaultRun = defaultRun.merged(over: base.defaultRun)
         return result
     }
@@ -449,6 +460,8 @@ public struct RunProperties: Equatable, Hashable, Sendable {
     /// A typeface name, or a theme font such as `+mn-lt`.
     public var latinFont: String?
     public var eastAsianFont: String?
+    /// `a:cs`: the typeface Arabic, Hebrew and other complex scripts are set in.
+    public var complexScriptFont: String?
     /// Thousandths of a percent; positive for superscript.
     public var baseline: Int?
     /// Extra space between letters, in hundredths of a point; negative condenses.
@@ -507,6 +520,7 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         }
         latinFont = element.firstChild(named: "latin")?.attribute("typeface")
         eastAsianFont = element.firstChild(named: "ea")?.attribute("typeface")
+        complexScriptFont = element.firstChild(named: "cs")?.attribute("typeface")
         outline = element.firstChild(named: "ln").flatMap(TextOutline.init(element:))
         shadow = element.firstChild(named: "effectLst").map {
             Shadow(element: $0.firstChild(named: "outerShdw")).map(TextShadow.shadow) ?? TextShadow.none
@@ -525,6 +539,7 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         result.color = color ?? base.color
         result.latinFont = latinFont ?? base.latinFont
         result.eastAsianFont = eastAsianFont ?? base.eastAsianFont
+        result.complexScriptFont = complexScriptFont ?? base.complexScriptFont
         result.baseline = baseline ?? base.baseline
         result.spacing = spacing ?? base.spacing
         result.capitalization = capitalization ?? base.capitalization
@@ -667,6 +682,15 @@ public struct ListStyle: Equatable, Hashable, Sendable {
     /// The properties at a zero-based outline level.
     public func level(_ index: Int) -> ParagraphProperties {
         levels[min(max(index, 0), 8) + 1] ?? ParagraphProperties()
+    }
+
+    /// Changes the properties at a zero-based outline level.
+    public mutating func updateLevel(_ index: Int, _ change: (inout ParagraphProperties) -> Void) {
+        var properties = level(index)
+        change(&properties)
+        // A level is its place in the list, never something it says.
+        properties.level = nil
+        levels[min(max(index, 0), 8) + 1] = properties
     }
 
     /// Each level's values left unsaid here are taken from `base`.

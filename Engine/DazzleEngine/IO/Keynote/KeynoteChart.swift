@@ -134,7 +134,7 @@ public struct KeynoteChart {
         case .line, .radar, .stock: [48]
         case .scatter: [59, 14]
         case .bubble: [14, 59]
-        case .surface: [14]
+        case .surface, .waterfall, .funnel, .treemap, .sunburst, .histogram, .pareto, .boxWhisker: [14]
         }
         for field in fields {
             let property = generated(style, field) { $0.message(field) }

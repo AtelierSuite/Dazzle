@@ -146,6 +146,25 @@ test("adds slides, shapes, tables, charts and moves them", () => {
   assert.ok(chart.chart.some((item) => item.k === "path"), "a pie draws slices");
 });
 
+test("attaches a connector to a shape, which then takes it along", () => {
+  call("insertShape", { preset: "rect" });
+  const box = call("scene").result.shapes.at(-1);
+  call("setFrames", { frames: { [box.id]: { x: 300, y: 200, w: 100, h: 60 } } });
+  call("insertShape", { preset: "bentConnector3" });
+  const connector = call("scene").result.shapes.at(-1);
+  assert.ok(connector.ends, "a connector says where its ends are");
+  const left = call("connectionSites").result.find((site) => site.x === 300 && site.y === 230);
+  assert.ok(left, "the box has a site in the middle of its left side");
+  call("setConnectorEnd", { id: connector.id, end: "end", x: 0, y: 0, shape: left.shape, site: left.site });
+  let ends = call("scene").result.shapes.find((node) => node.id === connector.id).ends;
+  assert.ok(ends.end.attached && !ends.start.attached);
+  assert.equal(ends.end.x, 300);
+  call("setFrames", { frames: { [box.id]: { x: 340, y: 260, w: 100, h: 60 } } });
+  ends = call("scene").result.shapes.find((node) => node.id === connector.id).ends;
+  assert.equal(ends.end.x, 340);
+  assert.equal(ends.end.y, 290);
+});
+
 test("animates a shape and steps through it", () => {
   const scene = call("scene").result;
   const shape = scene.shapes.find((node) => node.kind === "shape");
@@ -342,6 +361,15 @@ function deckWithShapes() {
       <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
       <p:txBody><a:bodyPr vert="eaVert"><a:spAutoFit/></a:bodyPr><a:p><a:r><a:rPr lang="ja-JP"/><a:t>縦書きText</a:t></a:r></a:p></p:txBody>
     </p:sp>
+    <p:sp><p:nvSpPr><p:cNvPr id="933" name="RightToLeft"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>
+      <p:spPr>${frame(5029200)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
+      <p:txBody><a:bodyPr/><a:lstStyle/>
+        <a:p><a:pPr marL="342900" indent="-342900" algn="r" rtl="1"><a:buChar char="•"/></a:pPr>
+          <a:r><a:rPr lang="ar-SA"><a:latin typeface="Georgia"/><a:cs typeface="Damascus"/></a:rPr><a:t>مرحبا Dazzle</a:t></a:r>
+          <a:r><a:rPr lang="en-US"><a:latin typeface="Georgia"/><a:cs typeface="Damascus"/></a:rPr><a:t> 2024</a:t></a:r></a:p>
+        <a:p><a:pPr rtl="0"/><a:r><a:rPr lang="en-US"/><a:t>Left to right</a:t></a:r></a:p>
+      </p:txBody>
+    </p:sp>
     ${wordArtShapes(frame)}`;
   const background = '<p:bg><p:bgPr><a:pattFill prst="pct20"><a:fgClr><a:srgbClr val="333333"/></a:fgClr><a:bgClr><a:srgbClr val="EEEEEE"/></a:bgClr></a:pattFill><a:effectLst/></p:bgPr></p:bg>';
   const slide = decode("ppt/slides/slide1.xml");
@@ -399,7 +427,7 @@ const drawn = (() => {
       lined: named("Lined"), tiled: named("Tiled"), patterned: named("Patterned"), grid: named("Grid"),
       cube: named("cube"), gear: named("gear6"), braces: named("bracePair"),
       recoloured: named("Recoloured"), stylised: named("Stylised"),
-      columned: named("Columned"), tabbed: named("Tabbed"), vertical: named("Vertical"),
+      columned: named("Columned"), tabbed: named("Tabbed"), vertical: named("Vertical"), rightToLeft: named("RightToLeft"),
       arched: named("Arched"), waved: named("Waved"), unwarped: named("Unwarped"),
     };
   } catch (error) {
@@ -566,6 +594,31 @@ test("draws path gradients from fillToRect to their tile, and scaled linear ones
   assert.deepEqual([circle.focus, circle.tile], [[0, 0, 1, 1], [-1, -1, 0, 0]], "from the top-left corner");
   const scaled = fill("Scaled gradient");
   assert.deepEqual([scaled?.t, scaled?.angle, scaled?.scaled], ["linear", 45, true]);
+});
+
+test("reads right-to-left paragraphs from the right, their complex scripts in their own typeface, and saves both", () => {
+  if (drawn.error) throw drawn.error;
+  const [arabic, latin] = drawn.rightToLeft.text.paras;
+  assert.equal(arabic.rtl, true);
+  assert.equal(arabic.align, "r", "left and right stay as the file names them");
+  assert.equal(arabic.ml, 27, "the margin, measured from the right");
+  assert.equal(arabic.bullet.t, "•");
+  assert.deepEqual([arabic.runs[0].f, arabic.runs[0].cs], ["Georgia", "Damascus"], "Arabic takes the run's complex-script typeface");
+  assert.equal(arabic.runs[1].cs, undefined, "a run with no complex script says nothing");
+  assert.equal(latin.rtl, undefined);
+  assert.equal(latin.align, "l");
+
+  call("select", { slide: drawn.slide, shapes: [drawn.rightToLeft.id] });
+  call("beginText", { shape: drawn.rightToLeft.id });
+  call("setText", { paras: [
+    { src: 0, runs: [{ src: [0, 0], t: "أهلا Dazzle" }, { src: [0, 1], t: " 2024" }] },
+    { src: 1, runs: [{ src: [1, 0], t: "Left to right" }] },
+  ] });
+  call("endText");
+  const slide = new TextDecoder().decode(unzip(call("save", { format: "pptx", keep: true }).payload).get("ppt/slides/slide1.xml"));
+  assert.match(slide, /أهلا Dazzle/, "the typed text is saved");
+  assert.match(slide, /<a:pPr[^>]*rtl="1"/);
+  assert.match(slide, /<a:cs typeface="Damascus"\/>/);
 });
 
 test("sets tabbed text on its stops and the default tab size, and saves them", () => {
@@ -973,6 +1026,151 @@ test("draws radar, stock, bubble, of-pie, 3D and surface charts as themselves, a
   assert.equal(filled(again[4].chart).length, 30);
 });
 
+const TRENDLINE = (type, extra = "") => `<c:trendline><c:spPr><a:ln w="19050"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>`
+  + `<a:prstDash val="sysDot"/></a:ln></c:spPr><c:trendlineType val="${type}"/>${extra}<c:dispRSqr val="1"/><c:dispEq val="1"/></c:trendline>`;
+const ERROR_BARS = (valueType, extra = "") => `<c:errBars><c:errBarType val="both"/><c:errValType val="${valueType}"/><c:noEndCap val="0"/>${extra}`
+  + `<c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="0000FF"/></a:solidFill></a:ln></c:spPr></c:errBars>`;
+const ANALYSIS_CHARTS = [
+  ...[["linear"], ["exp"], ["log"], ["poly", "<c:order val=\"3\"/>"], ["power"], ["movingAvg", "<c:period val=\"2\"/>"]].map(([type, extra]) =>
+    chartPart(`<c:lineChart><c:grouping val="standard"/>${chartSeries(0, "Apples", [2, 3, 5, 4, 6], { extra: TRENDLINE(type, extra) })}<c:axId val="1"/><c:axId val="2"/></c:lineChart>`)),
+  ...[["fixedVal", "<c:val val=\"1\"/>"], ["percentage", "<c:val val=\"10\"/>"], ["stdDev", "<c:val val=\"1\"/>"], ["stdErr", ""],
+    ["cust", `<c:plus>${literal([1, 2, 1, 2, 1])}</c:plus><c:minus>${literal([0.5, 0.5, 0.5, 0.5, 0.5])}</c:minus>`]].map(([type, extra]) =>
+    chartPart(`<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/>${chartSeries(0, "Apples", [4.3, 2.5, 3.5, 4.5, 3], { extra: ERROR_BARS(type, extra) })}<c:axId val="1"/><c:axId val="2"/></c:barChart>`)),
+];
+
+test("draws trendlines and error bars over a chart's series, and keeps them when saved", () => {
+  call("new", { name: "Analysis.pptx" });
+  for (let index = 0; index < ANALYSIS_CHARTS.length; index++) call("insertChart", { kind: "column" });
+  const entries = unzip(call("save", { format: "pptx", keep: true }).payload);
+  ANALYSIS_CHARTS.forEach((part, index) => entries.set(`ppt/charts/chart${index + 1}.xml`, part));
+  const check = (opened) => {
+    const charts = call("scene", { slide: opened.state.slides[0].id }).result.shapes.filter((node) => node.kind === "chart").map((node) => node.chart);
+    assert.equal(charts.length, ANALYSIS_CHARTS.length);
+    const stroked = (items, color) => items.filter((item) => item.k === "path" && !item.fill && item.stroke === color);
+    const texts = (items) => items.filter((item) => item.k === "text").map((item) => item.t);
+    charts.slice(0, 6).forEach((items, index) => {
+      assert.equal(stroked(items, "#ff0000").length, 2, `trendline ${index} is drawn, and shown in the legend`);
+    });
+    assert.ok(texts(charts[0]).includes("Linear (Apples)"), "the legend names a trendline by its kind and series");
+    assert.ok(texts(charts[0]).some((text) => text.startsWith("y = ")), "with its equation");
+    assert.ok(texts(charts[0]).some((text) => text.startsWith("R² = ")), "and R²");
+    assert.ok(texts(charts[5]).includes("2 per. Mov. Avg. (Apples)"));
+    charts.slice(6).forEach((items, index) => {
+      assert.equal(stroked(items, "#0000ff").length, 1, `error bars ${index} are drawn`);
+    });
+  };
+  check(call("open", { name: "Analysis.pptx" }, zip(entries)));
+  check(call("open", { name: "Again.pptx" }, call("save", { format: "pptx", keep: true }).payload));
+});
+
+const CX = "http://schemas.microsoft.com/office/drawing/2014/chartex";
+
+/** A block of an Office 2016 chart's data: labels level by level, the innermost first, and numbers of a type. */
+function cxData(id, levels, values, type = "val") {
+  const level = (labels) => `<cx:lvl ptCount="${labels.length}">${labels.map((label, i) => (label ? `<cx:pt idx="${i}">${label}</cx:pt>` : "")).join("")}</cx:lvl>`;
+  return `<cx:data id="${id}">${levels.length ? `<cx:strDim type="cat">${levels.map(level).join("")}</cx:strDim>` : ""}`
+    + `<cx:numDim type="${type}"><cx:lvl ptCount="${values.length}">${values.map((v, i) => `<cx:pt idx="${i}">${v}</cx:pt>`).join("")}</cx:lvl></cx:numDim></cx:data>`;
+}
+
+/** A chart part of Office 2016's format, as PowerPoint writes one. */
+function cxPart(data, series, { legend = true } = {}) {
+  return new TextEncoder().encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + `<cx:chartSpace xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:cx="${CX}"><cx:chartData>${data}</cx:chartData>`
+    + `<cx:chart><cx:plotArea><cx:plotAreaRegion>${series}</cx:plotAreaRegion><cx:axis id="0"><cx:catScaling/></cx:axis>`
+    + `<cx:axis id="1"><cx:valScaling/><cx:majorGridlines/></cx:axis></cx:plotArea>${legend ? '<cx:legend pos="t"/>' : ""}</cx:chart></cx:chartSpace>`);
+}
+
+const cxSeries = (layout, name, layoutProperties = "", data = 0) => `<cx:series layoutId="${layout}"><cx:tx><cx:txData><cx:v>${name}</cx:v></cx:txData></cx:tx>`
+  + `<cx:dataId val="${data}"/>${layoutProperties ? `<cx:layoutPr>${layoutProperties}</cx:layoutPr>` : ""}</cx:series>`;
+
+const SUBJECTS = ["Maths", "Maths", "Maths", "Maths", "Maths", "Maths", "Art", "Art", "Art", "Art", "Art", "Art"];
+const OFFICE_2016_CHARTS = [
+  cxPart(cxData(0, [["Start", "Sales", "Returns", "Services", "Costs", "End"]], [120, 80, -30, 45, -60, 155]),
+    cxSeries("waterfall", "Cash", '<cx:subtotals><cx:idx val="0"/><cx:idx val="5"/></cx:subtotals>')),
+  cxPart(cxData(0, [["Leads", "Qualified", "Proposals", "Negotiation", "Won"]], [500, 420, 260, 140, 90]), cxSeries("funnel", "Pipeline"), { legend: false }),
+  cxPart(cxData(0, [["Apples", "Pears", "Plums", "Carrots", "Leeks", "Peas", "Rice", "Oats"],
+    ["Fruit", "Fruit", "Fruit", "Vegetables", "Vegetables", "Vegetables", "Grains", "Grains"]], [30, 12, 8, 25, 20, 15, 18, 6], "size"), cxSeries("treemap", "Stock")),
+  cxPart(cxData(0, [["Tokyo", "Osaka", "", "Seoul", "Busan", "Paris", "Lyon", ""], ["Japan", "Japan", "Taiwan", "Korea", "Korea", "France", "France", "Spain"],
+    ["Asia", "Asia", "Asia", "Asia", "Asia", "Europe", "Europe", "Europe"]], [40, 22, 18, 26, 9, 30, 12, 20], "size"), cxSeries("sunburst", "Visitors")),
+  cxPart(cxData(0, [], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), cxSeries("clusteredColumn", "Minutes", '<cx:binning intervalClosed="r"><cx:binSize val="3"/></cx:binning>'), { legend: false }),
+  cxPart(cxData(0, [["Late", "Damaged", "Wrong item", "Late", "Billing", "Damaged", "Late", "Other"]], [14, 9, 6, 21, 4, 8, 12, 3]),
+    cxSeries("clusteredColumn", "Complaints", "<cx:aggregation/>") + '<cx:series layoutId="paretoLine" ownerIdx="0"><cx:axisId val="2"/></cx:series>', { legend: false }),
+  cxPart(cxData(0, [SUBJECTS], [52, 61, 64, 68, 73, 98, 70, 74, 77, 80, 84, 88]) + cxData(1, [SUBJECTS], [48, 55, 60, 66, 70, 75, 62, 68, 72, 79, 85, 91]),
+    cxSeries("boxWhisker", "Class A") + cxSeries("boxWhisker", "Class B", "", 1)),
+];
+
+/**
+ * A deck of one chart of each of Office 2016's kinds: column charts inserted and saved, their parts then swapped for
+ * these, and each frame put the way PowerPoint writes one, beside a text box for readers that don't know the kind.
+ */
+function deckOfOffice2016Charts(parts = OFFICE_2016_CHARTS) {
+  call("new", { name: "Office2016.pptx" });
+  for (let index = 0; index < parts.length; index++) call("insertChart", { kind: "column" });
+  const entries = unzip(call("save", { format: "pptx", keep: true }).payload);
+  parts.forEach((part, index) => entries.set(`ppt/charts/chart${index + 1}.xml`, part));
+  const edit = (path, change) => entries.set(path, new TextEncoder().encode(change(new TextDecoder().decode(entries.get(path)))));
+  edit("ppt/slides/slide1.xml", (xml) => xml.replace(/<p:graphicFrame>.*?<\/p:graphicFrame>/gs, (frame) => {
+    if (!frame.includes("<c:chart ")) return frame;
+    const choice = frame.replace(/<a:graphicData uri="[^"]*">/, `<a:graphicData uri="${CX}">`)
+      .replace(/<c:chart xmlns:c="[^"]*"/, `<cx:chart xmlns:cx="${CX}"`);
+    return '<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+      + `<mc:Choice xmlns:cx1="http://schemas.microsoft.com/office/drawing/2015/9/8/chartex" Requires="cx1">${choice}</mc:Choice>`
+      + '<mc:Fallback><p:sp><p:nvSpPr><p:cNvPr id="99" name="Chart"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/>'
+      + '<a:ext cx="914400" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:p><a:r>'
+      + "<a:t>This chart isn't available in your version of PowerPoint.</a:t></a:r></a:p></p:txBody></p:sp></mc:Fallback></mc:AlternateContent>";
+  }));
+  edit("ppt/slides/_rels/slide1.xml.rels", (xml) => xml.replaceAll("http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart\"",
+    "http://schemas.microsoft.com/office/2014/relationships/chartEx\""));
+  return zip(entries);
+}
+
+test("draws waterfall, funnel, treemap, sunburst, histogram, Pareto and box and whisker charts as themselves", () => {
+  const opened = call("open", { name: "Office2016.pptx" }, deckOfOffice2016Charts());
+  const slide = opened.state.slides[0].id;
+  const charts = call("scene", { slide }).result.shapes.filter((node) => node.kind === "chart");
+  assert.equal(charts.length, OFFICE_2016_CHARTS.length, "each is drawn as a chart, not as the text box kept for older readers");
+  const [waterfall, funnel, treemap, sunburst, histogram, pareto, boxWhisker] = charts.map((node) => node.chart);
+  const rects = (items) => items.filter((item) => item.k === "rect");
+  const filled = (items) => items.filter((item) => item.k === "path" && item.fill);
+  const texts = (items) => items.filter((item) => item.k === "text").map((item) => item.t);
+
+  assert.equal(rects(waterfall).length, 9, "a waterfall draws a column per point, under a legend of its three kinds");
+  assert.equal(new Set(rects(waterfall).slice(3).map((item) => item.fill)).size, 3, "rises, falls and totals each in a colour");
+  assert.ok(texts(waterfall).includes(strings["Chart.Waterfall.Total"] ?? "Total"));
+  assert.equal(rects(funnel).length, 5, "a funnel draws a bar per stage");
+  assert.ok(rects(funnel).every((item, index, all) => index === 0 || item.w < all[index - 1].w), "each narrower than the last");
+  assert.equal(filled(treemap).length, 8, "a treemap draws a rectangle per leaf");
+  assert.ok(["Vegetables", "Carrots"].every((name) => texts(treemap).includes(name)), "named, under their branches");
+  assert.equal(filled(sunburst).length, 13, "a sunburst draws a piece of ring per branch and leaf");
+  assert.equal(rects(histogram).length, 3, "a histogram draws a column per bin");
+  assert.ok(texts(histogram).includes("(4, 7]"), "named by its range");
+  assert.equal(rects(pareto).length, 5, "a Pareto chart adds up each category");
+  assert.ok(texts(pareto).includes("100%"), "beside a scale of the running share");
+  assert.ok(pareto.some((item) => item.k === "path" && !item.fill && item.d.split("L").length === 5), "which a line follows");
+  assert.equal(filled(boxWhisker).filter((item) => item.stroke).length, 4, "a box per series in each category");
+  assert.ok(texts(boxWhisker).includes("Art"));
+
+  call("select", { shapes: [charts[0].id] });
+  const before = call("inspect").result.shape.chart;
+  assert.equal(before.kind, "waterfall");
+  assert.equal(before.kinds.at(-1).kind, "waterfall", "the chart's own kind is named");
+  call("chart", { set: { title: "Changed", kind: "column" } });
+  assert.equal(call("inspect").result.shape.chart.kind, "waterfall", "and it is left as it was");
+
+  const saved = call("save", { format: "pptx", keep: true }).payload;
+  const part = new TextDecoder().decode(unzip(saved).get("ppt/charts/chart1.xml"));
+  assert.ok(part.includes("<cx:chartSpace") && !part.includes("Changed"), "saving keeps the part as it was");
+  const reopened = call("open", { name: "Again.pptx" }, saved);
+  const again = call("scene", { slide: reopened.state.slides[0].id }).result.shapes.filter((node) => node.kind === "chart");
+  assert.equal(again.length, OFFICE_2016_CHARTS.length);
+  assert.equal(rects(again[1].chart).length, 5);
+
+  const map = cxPart(cxData(0, [["A", "B"]], [1, 2]), cxSeries("regionMap", "Places"));
+  const unknown = call("open", { name: "Map.pptx" }, deckOfOffice2016Charts([map]));
+  assert.ok(!call("scene", { slide: unknown.state.slides[0].id }).result.shapes.some((node) => node.kind === "chart"),
+    "a kind that isn't drawn shows what is kept for older readers");
+});
+
 /**
  * A Keynote deck of two tables: one of 2 × 2 cells as Keynote kept them
  * before 2019, its top row merged, and one with nothing to read its cells from.
@@ -1322,6 +1520,38 @@ test("plays a slide's transition as keyframes the browser animates, a cross-fade
   assert.equal(calm.layers[1].keyframes.at(-1).opacity, 1);
 });
 
+test("plays PowerPoint 2010's and 2013's own transitions as themselves", () => {
+  const vortex = call("open", { name: "Vortex.pptx" }, deckWithTransition(alternate('<p14:vortex dir="r"/>')));
+  assert.equal(vortex.result.unsupported.length, 0, "a vortex plays, so nothing is said about it");
+  const { w } = call("scene", { slide: vortex.state.slides[0].id }).result;
+  const played = call("transition", { slide: vortex.state.slides[0].id }).result;
+  assert.deepEqual(played.layers.slice(0, 2).map((layer) => layer.content), ["black", "incoming"]);
+  const tiles = played.layers.slice(2);
+  assert.equal(tiles.length, 24, "the old slide in tiles");
+  assert.ok(tiles.every((layer) => layer.content === "outgoing"));
+  assert.ok(tiles.every((layer) => layer.keyframes[0].transform === "matrix(1, 0, 0, 1, 0, 0)"), "all in place to start with");
+  assert.ok(tiles.every((layer) => layer.keyframes.at(-1).opacity === 0), "all gone by the end");
+  const flown = tiles.map((layer) => Number(layer.keyframes.at(-1).transform.match(/, (-?[\d.]+), -?[\d.]+\)$/)[1]));
+  assert.ok(flown.every((x) => x > w / 2), "each flown off to the right");
+  assert.match(tiles[0].keyframes[0].clipPath, /^path\(evenodd, "M/, "each tile cut out of the slide");
+  assert.equal(played.layers[1].keyframes.at(-1).opacity, 1);
+  const calm = call("transition", { slide: vortex.state.slides[0].id, reduceMotion: true }).result;
+  assert.deepEqual(calm.layers.map((layer) => layer.content), ["outgoing", "incoming"], "a cross-fade when motion is reduced");
+
+  const p15 = 'xmlns:p15="http://schemas.microsoft.com/office/powerpoint/2012/main"';
+  const curl = `<mc:AlternateContent ${p15}><mc:Choice Requires="p15"><p:transition spd="slow" p14:dur="1250"><p15:prstTrans prst="peelOff"/></p:transition></mc:Choice>`
+    + '<mc:Fallback><p:transition spd="slow"><p:fade/></p:transition></mc:Fallback></mc:AlternateContent>';
+  const peel = call("open", { name: "Peel.pptx" }, deckWithTransition(curl));
+  assert.equal(peel.result.unsupported.length, 0);
+  const peeled = call("transition", { slide: peel.state.slides[0].id }).result;
+  assert.equal(peeled.duration, 1.25);
+  assert.deepEqual(peeled.layers.map((layer) => layer.content), ["incoming", "black", "outgoing", "white", "outgoing"]);
+  const back = peeled.layers[4].keyframes[Math.floor(peeled.layers[4].keyframes.length / 2)];
+  const [a, b, c, d] = back.transform.match(/-?[\d.]+/g).map(Number);
+  assert.ok(a * d - b * c < 0, "the back of the page, mirrored in the fold");
+  assert.equal(peeled.layers[2].keyframes.at(-1).clipPath, "polygon(0 0, 0 0, 0 0)", "nothing of the old slide left lying");
+});
+
 test("clips patterned transitions, plays unknown ones as a fade, and saves them as they were", () => {
   const blinds = call("open", { name: "Blinds.pptx" }, deckWithTransition('<p:transition spd="med"><p:blinds dir="vert"/></p:transition>'));
   const slide = blinds.state.slides[0].id;
@@ -1331,13 +1561,13 @@ test("clips patterned transitions, plays unknown ones as a fade, and saves them 
   assert.match(middle.clipPath, /^path\(evenodd, "M/);
   assert.equal(played.layers[1].keyframes[0].clipPath, "polygon(0 0, 0 0, 0 0)", "nothing of the new slide to start with");
 
-  const vortex = call("open", { name: "Vortex.pptx" }, deckWithTransition(alternate('<p14:vortex dir="r"/>')));
-  assert.equal(vortex.result.unsupported.length, 1, "says the vortex plays as something simpler");
-  const fallback = call("transition", { slide: vortex.state.slides[0].id }).result;
+  const unknown = call("open", { name: "Unknown.pptx" }, deckWithTransition(alternate('<p14:somethingNew dir="r"/>')));
+  assert.equal(unknown.result.unsupported.length, 1, "says the effect plays as something simpler");
+  const fallback = call("transition", { slide: unknown.state.slides[0].id }).result;
   assert.deepEqual(fallback.layers.map((layer) => layer.content), ["outgoing", "incoming"]);
   assert.equal(fallback.layers[1].keyframes.at(-1).opacity, 1);
   const saved = new TextDecoder().decode(unzip(call("save", { format: "pptx", keep: true }).payload).get("ppt/slides/slide1.xml"));
-  assert.match(saved, /<p14:vortex dir="r"\/>/);
+  assert.match(saved, /<p14:somethingNew dir="r"\/>/);
   assert.match(saved, /p14:dur="1500"/);
 
   const none = call("open", { name: "None.pptx" }, deckWithTransition(""));
@@ -1455,6 +1685,69 @@ test("draws underline and strikethrough styles and colours, and keeps them throu
   assert.match(saved, /<a:uFill><a:solidFill><a:srgbClr val="FF0000"\/><\/a:solidFill><\/a:uFill>/);
   assert.match(saved, /u="wavyDbl"/);
   assert.match(saved, /u="dotDashHeavy"[^>]*strike="dblStrike"|strike="dblStrike"[^>]*u="dotDashHeavy"/);
+});
+
+test("edits masters and layouts in master view, and has slides follow them", () => {
+  const made = call("new", { name: "Untitled.pptx" });
+  assert.equal(made.result.canEditMasters, true);
+  call("addSlide", { layout: made.result.layouts.find((layout) => layout.name === "Title and Content").path });
+  const slides = call("info").state.slides.map((slide) => slide.id);
+
+  // The masters and layouts take the slides' place, opening on the slide's layout.
+  let state = call("masterView", { on: true }).state;
+  assert.equal(state.masterView, true);
+  assert.deepEqual(state.slides.map((slide) => slide.role), ["master", "layout", "layout", "layout", "layout", "layout"]);
+  const content = state.slides.find((slide) => slide.name === "Title and Content");
+  assert.equal(state.sel.slide, content.id);
+  assert.equal(content.canDelete, false, "a layout a slide is built on stays");
+
+  // Its title is moved and made bold; the layout's own scene shows both.
+  const title = call("scene", { slide: content.id }).result.shapes.find((node) => node.ph === "title");
+  call("select", { slide: content.id, shapes: [title.id] });
+  call("setFrames", { frames: { [title.id]: { x: 60, y: 300, w: 500, h: 80 } } });
+  call("format", { set: { bold: true } });
+  const moved = call("scene", { slide: content.id }).result.shapes.find((node) => node.ph === "title");
+  assert.deepEqual([moved.x, moved.y, moved.w, moved.h], [60, 300, 500, 80]);
+
+  // A layout is added, renamed and copied; one no slide uses is deleted.
+  call("select", { slide: content.id, shapes: [] });
+  state = call("addLayout").state;
+  const added = state.slides.find((slide) => slide.id === state.sel.slide);
+  assert.equal(added.name, "Custom Layout");
+  assert.equal(added.canDelete, true);
+  call("renameLayout", { ids: [added.id], name: "Quote" });
+  call("duplicateSlides", { ids: [added.id] });
+  state = call("deleteSlides", { ids: [state.slides.find((slide) => slide.name === "Blank").id] }).state;
+  assert.deepEqual(state.slides.slice(1).map((slide) => slide.name), ["Title Slide", "Title and Content", "Quote", "Quote Copy", "Section Header", "Title Only"]);
+  // The master's background is every layout's that has none of its own.
+  call("select", { slide: state.slides[0].id, shapes: [] });
+  call("setBackground", { fill: { kind: "solid", color: "#203864" } });
+  assert.equal(call("scene", { slide: content.id }).result.bg.c, call("scene", { slide: state.slides[0].id }).result.bg.c);
+
+  // Back among the slides, the one built on the layout has followed it.
+  const left = call("masterView", { on: false });
+  assert.equal(left.state.masterView, false);
+  assert.deepEqual(left.state.slides.map((slide) => slide.id), slides);
+  assert.equal(left.state.sel.slide, slides[1]);
+  assert.deepEqual(call("info").result.layouts.map((layout) => layout.name), ["Title Slide", "Title and Content", "Quote", "Quote Copy", "Section Header", "Title Only"]);
+  const followed = call("scene", { slide: slides[1], editing: true }).result;
+  const followedTitle = followed.shapes.find((node) => node.ph === "title");
+  assert.deepEqual([followedTitle.x, followedTitle.y, followedTitle.w, followedTitle.h], [60, 300, 500, 80]);
+
+  // Saved, the layouts are parts of the file, and it opens the same way.
+  const saved = call("save", { format: "pptx" }).payload;
+  const parts = unzip(saved);
+  const layout = new TextDecoder().decode(parts.get("ppt/slideLayouts/slideLayout2.xml"));
+  assert.match(layout, /<a:off x="762000" y="3810000"\/><a:ext cx="6350000" cy="1016000"\/>/);
+  assert.match(layout, /<a:lvl1pPr><a:defRPr b="1"\/><\/a:lvl1pPr>/);
+  assert.ok(!parts.has("ppt/slideLayouts/slideLayout5.xml"), "the deleted layout is gone");
+  const master = new TextDecoder().decode(parts.get("ppt/slideMasters/slideMaster1.xml"));
+  assert.equal(master.match(/<p:sldLayoutId /g).length, 6);
+  assert.match(master, /<p:bg><p:bgPr><a:solidFill><a:srgbClr val="203864"\/><\/a:solidFill>/);
+  const reopened = call("open", { name: "Masters.pptx" }, saved);
+  assert.deepEqual(reopened.result.layouts.map((entry) => entry.name), ["Title Slide", "Title and Content", "Quote", "Quote Copy", "Section Header", "Title Only"]);
+  const again = call("scene", { slide: reopened.state.slides[1].id, editing: true }).result.shapes.find((node) => node.ph === "title");
+  assert.deepEqual([again.x, again.y], [60, 300]);
 });
 
 for (const path of process.argv.slice(2)) {
