@@ -68,6 +68,14 @@ public final class ShapeParser {
         case "grpSp": return group(element)
         case "graphicFrame": return graphicFrame(element)
         case "AlternateContent":
+            // One of Office 2016's charts is drawn as itself, from the rendition
+            // that has it, rather than from the picture of it kept for older readers.
+            if let frame = element.firstChild(named: "Choice")?.children.first, frame.name == "graphicFrame",
+               extendedChartPath(in: frame).flatMap({ Chart(path: $0, data: parts[$0]) }) != nil {
+                var shape = graphicFrame(frame)
+                shape.isLocked = true
+                return shape
+            }
             // Two renditions of one thing for different readers. The fallback
             // is the one every reader understands; it is drawn, and the whole
             // is kept as it was.
@@ -243,6 +251,13 @@ public final class ShapeParser {
             shape.kind = .group(group)
         }
         return shape
+    }
+
+    /// The part of the `cx:chart` a graphic frame shows, if that is what it shows.
+    private func extendedChartPath(in frame: XMLElement) -> String? {
+        let data = frame.firstChild(named: "graphic")?.firstChild(named: "graphicData")
+        guard data?.attribute("uri")?.contains("chartex") == true else { return nil }
+        return data?.children.first { $0.name == "chart" }?.relationshipID.flatMap(target(of:))
     }
 
     private func graphicFrame(_ element: XMLElement) -> SlideShape {

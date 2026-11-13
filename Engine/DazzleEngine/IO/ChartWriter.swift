@@ -26,6 +26,8 @@ public enum ChartWriter {
     /// if there is no original. `workbookRelationship` is the id of the
     /// relationship to an embedded workbook, for a new part.
     public static func data(for chart: Chart, original: Data?, workbookRelationship: String? = nil) -> Data? {
+        // Office 2016's kinds are in a format of their own, which is left as it was.
+        guard !chart.kind.isExtended else { return nil }
         let root = original.flatMap { try? XMLLite.parse($0) } ?? fragment(skeleton(workbookRelationship: workbookRelationship))
         guard let root, let chartElement = root.firstChild(named: "chart"),
               let area = chartElement.firstChild(named: "plotArea") else { return nil }
@@ -151,6 +153,7 @@ public enum ChartWriter {
         case .stock: "stockChart"
         case .surface: "surface\(threeD)Chart"
         case .pieOfPie, .barOfPie: "ofPieChart"
+        case .waterfall, .funnel, .treemap, .sunburst, .histogram, .pareto, .boxWhisker: ""
         }
     }
 
@@ -368,6 +371,8 @@ public enum ChartWriter {
             return "<c:ofPieChart><c:ofPieType val=\"\(plot.kind == .barOfPie ? "bar" : "pie")\"/><c:varyColors val=\"1\"/>\(labels)"
                 + "<c:gapWidth val=\"\(plot.gapWidth)\"/><c:splitType val=\"\(plot.splitType.rawValue)\"/>\(split)\(custom)"
                 + "<c:secondPieSize val=\"\(plot.secondPieSize)\"/>" + (plot.hasSeriesLines ? "<c:serLines/>" : "") + "</c:ofPieChart>"
+        case .waterfall, .funnel, .treemap, .sunburst, .histogram, .pareto, .boxWhisker:
+            return ""
         }
     }
 
@@ -401,7 +406,7 @@ public enum ChartWriter {
             ["idx", "order", "tx", "spPr", "invertIfNegative", "dPt", "dLbls", "trendline", "errBars", "xVal", "yVal", "bubbleSize", "bubble3D", "extLst"]
         case .radar:
             ["idx", "order", "tx", "spPr", "marker", "dPt", "dLbls", "cat", "val", "extLst"]
-        case .surface:
+        case .surface, .waterfall, .funnel, .treemap, .sunburst, .histogram, .pareto, .boxWhisker:
             ["idx", "order", "tx", "spPr", "cat", "val", "extLst"]
         }
     }
