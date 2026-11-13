@@ -85,17 +85,22 @@ struct FloatingActionBar: View {
     private var slideGroup: some View {
         group {
             editMenu
-            panelAction("note.text", label: "ActionBar.Notes", panel: .notes)
-                .accessibilityIdentifier("notes")
-            panelAction(
-                (state.selectedSlide(in: presentation)?.comments.isEmpty ?? true) ? "text.bubble" : "text.bubble.fill",
-                label: "ActionBar.Comments", panel: .comments
-            )
-            .accessibilityIdentifier("comments")
+            // Masters and layouts have no notes, comments or animations of their own.
+            if !presentation.isInMasterView {
+                panelAction("note.text", label: "ActionBar.Notes", panel: .notes)
+                    .accessibilityIdentifier("notes")
+                panelAction(
+                    (state.selectedSlide(in: presentation)?.comments.isEmpty ?? true) ? "text.bubble" : "text.bubble.fill",
+                    label: "ActionBar.Comments", panel: .comments
+                )
+                .accessibilityIdentifier("comments")
+            }
             panelAction("paintpalette", label: "ActionBar.Format", panel: .format)
                 .accessibilityIdentifier("format")
-            panelAction("sparkles", label: "ActionBar.Animations", panel: .animations)
-                .accessibilityIdentifier("animations")
+            if !presentation.isInMasterView {
+                panelAction("sparkles", label: "ActionBar.Animations", panel: .animations)
+                    .accessibilityIdentifier("animations")
+            }
         }
     }
 
@@ -357,14 +362,12 @@ struct TableButtons: View {
             .disabled((table?.columnCount ?? 0) < 2)
         }
         Section {
-            Toggle("Table.HeaderRow", isOn: Binding(
-                get: { table?.hasHeaderRow ?? false },
-                set: { state.setTableHeaderRow($0, in: &presentation) }
-            ))
-            Toggle("Table.BandedRows", isOn: Binding(
-                get: { table?.hasBandedRows ?? false },
-                set: { state.setTableBandedRows($0, in: &presentation) }
-            ))
+            ForEach(SlideTable.StyleOption.allCases, id: \.self) { option in
+                Toggle(option.label, isOn: Binding(
+                    get: { table?[option] ?? false },
+                    set: { state.setTableOption(option, $0, in: &presentation) }
+                ))
+            }
         }
     }
 }
