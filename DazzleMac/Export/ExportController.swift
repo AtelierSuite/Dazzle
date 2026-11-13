@@ -14,7 +14,8 @@ struct ExportController {
     /// The choices made last time, offered again.
     private static var options = ExportOptions()
 
-    private var presentation: Presentation { deck.presentation }
+    /// The slides are what is exported, even while master view has them set aside.
+    private var presentation: Presentation { deck.presentation.outOfMasterView }
 
     func export(_ format: ExportOptions.Format) {
         var options = Self.options

@@ -14,7 +14,7 @@ public struct SlideStyleContext: Sendable {
     public init(presentation: Presentation, slide: Slide) {
         resources = presentation.resources
         layout = presentation.layout(for: slide)
-        master = presentation.resources.master(for: layout)
+        master = presentation.master(for: slide)
         var map = master?.colorMap ?? SlideMaster.defaultColorMap
         for (key, value) in layout?.colorMapOverride ?? [:] { map[key] = value }
         colorMap = map
