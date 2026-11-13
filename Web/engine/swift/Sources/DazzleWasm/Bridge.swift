@@ -171,6 +171,24 @@ final class Bridge {
                     if from >= target { target += 1 }
                 }
             }
+        case "masterView":
+            let isOn = r["on"] as? Bool ?? !presentation.isInMasterView
+            edit { state, presentation in
+                if isOn {
+                    state.enterMasterView(in: &presentation)
+                } else {
+                    state.leaveMasterView(in: &presentation)
+                }
+            }
+            if let message = editor.errorMessage {
+                editor.errorMessage = nil
+                throw Failure(message: message)
+            }
+        case "addLayout":
+            edit { state, presentation in state.addLayout(in: &presentation) }
+        case "renameLayout":
+            guard let id = uuids(r["ids"]).first, let name = r["name"] as? String else { throw Failure(message: "No layout was given.") }
+            edit { state, presentation in state.renameLayout(id, to: name, in: &presentation) }
         case "addSection":
             // Starts a section at a slide; the result is its id, so the page can ask for its name.
             if let id = uuid(r["slide"]) { session.select { $0.selectSlide(id) } }
@@ -310,6 +328,19 @@ final class Bridge {
                 }
                 if !plain.isEmpty { state.setFrames(plain, in: &presentation) }
             }
+        case "connectionSites":
+            // Where connectors can be attached on the slide being edited, for an end being dragged.
+            return editor.selectedSlide(in: presentation)?.connectableShapes.flatMap(\.connectionSites).map { site in
+                ["shape": site.connection.shapeID, "site": site.connection.site, "x": Double(site.point.x), "y": Double(site.point.y)]
+            } ?? []
+        case "setConnectorEnd":
+            // One end of a connector moved, and attached to a shape's site or to nothing.
+            guard let id = (r["id"] as? String).flatMap(UUID.init(uuidString:)) else { break }
+            let connection = (r["shape"] as? Int).map { SlideShape.Connection(shapeID: $0, site: r["site"] as? Int ?? 0) }
+            let point = CGPoint(x: r["x"] as? Double ?? 0, y: r["y"] as? Double ?? 0)
+            edit { state, presentation in
+                state.setConnectorEnd(r["end"] as? String == "start" ? .start : .end, of: id, to: point, connection: connection, in: &presentation)
+            }
         case "rotate":
             edit { state, presentation in state.rotateSelectedShape(clockwise: r["clockwise"] as? Bool ?? true, in: &presentation) }
         case "flip":
@@ -426,8 +457,9 @@ final class Bridge {
             default: nil
             }
             if let change { edit { state, presentation in state.changeTable(change, in: &presentation) } }
-            if let header = r["header"] as? Bool { edit { state, presentation in state.setTableHeaderRow(header, in: &presentation) } }
-            if let banded = r["banded"] as? Bool { edit { state, presentation in state.setTableBandedRows(banded, in: &presentation) } }
+            for option in SlideTable.StyleOption.allCases {
+                if let isOn = r[option.rawValue] as? Bool { edit { state, presentation in state.setTableOption(option, isOn, in: &presentation) } }
+            }
         case "setCellFill":
             let fill = try fill(r["fill"])
             edit { state, presentation in state.setCellFill(fill, in: &presentation) }
@@ -572,6 +604,8 @@ final class Bridge {
             guard let slide = editor.selectedSlide(in: presentation) else { return nil }
             let shapes = editor.selectedShapes(in: presentation)
             if shapes.isEmpty || r["slides"] != nil {
+                // Masters and layouts are not slides to paste among slides.
+                guard !presentation.isInMasterView else { return nil }
                 let ids = Set(uuids(r["slides"]).isEmpty ? [slide.id] : uuids(r["slides"]))
                 clipboard = .slides(presentation.slides.filter { ids.contains($0.id) }, presentation: presentation)
                 return ["kind": "slides", "text": presentation.slides.filter { ids.contains($0.id) }.compactMap(\.title).joined(separator: "\n")]
@@ -946,12 +980,23 @@ final class Bridge {
             "edited": session.isEdited,
             "canUndo": session.canUndo,
             "canRedo": session.canRedo,
+            "masterView": presentation.isInMasterView,
             "slides": presentation.slides.map { slide -> [String: Any] in
                 var json: [String: Any] = ["id": slide.id.uuidString, "rev": session.revisions[slide.id] ?? 0]
                 if slide.isHidden { json["hidden"] = true }
+                // In master view: which it is, what it is called, and whether it can go.
+                switch slide.role {
+                case .slide: break
+                case .master: json["role"] = "master"
+                case .layout:
+                    json["role"] = "layout"
+                    json["name"] = slide.layoutName ?? ""
+                    json["canDelete"] = editor.canDeleteLayout(slide.id, in: presentation)
+                }
                 return json
             },
-            "sections": presentation.sections.map { section -> [String: Any] in
+            // In master view the slides, and so their sections, are set aside.
+            "sections": (presentation.isInMasterView ? [] : presentation.sections).map { section -> [String: Any] in
                 ["id": section.id, "name": section.name, "slides": section.slideIDs.map(\.uuidString)]
             },
             "sel": selection,
@@ -999,6 +1044,7 @@ final class Bridge {
             "unsupported": UnsupportedFeatureReport.Feature.allCases.filter(report.features.contains).map(\.message),
             "omissions": UnsupportedFeatureReport.Omission.allCases.filter(report.omissions.contains).map(\.message),
             "keynote": presentation.keynoteSource != nil,
+            "canEditMasters": presentation.canEditMasters,
             "outline": presentation.slides.enumerated().map { index, slide -> [String: Any] in
                 [
                     "id": slide.id.uuidString, "title": slide.title ?? "", "notes": slide.notes, "number": index + 1,
@@ -1079,7 +1125,7 @@ final class Bridge {
             "bold": run.isBold ?? false, "italic": run.isItalic ?? false,
             "underline": run.isUnderlined ?? false, "strike": run.isStruckThrough ?? false,
             "baseline": run.baseline ?? 0,
-            "align": (paragraph.alignment ?? .left).rawValue,
+            "align": paragraph.effectiveAlignment.rawValue,
         ]
         json["list"] = switch editor.listStyle(in: presentation) {
         case .bullets: "bullets"
@@ -1196,7 +1242,7 @@ final class Bridge {
         }
         if case .table(let table) = shape.kind {
             var tableJSON: [String: Any] = [
-                "rows": table.rows.count, "columns": table.columnCount, "header": table.hasHeaderRow, "banded": table.hasBandedRows,
+                "rows": table.rows.count, "columns": table.columnCount, "options": Dictionary(uniqueKeysWithValues: SlideTable.StyleOption.allCases.map { ($0.rawValue, table[$0]) }),
             ]
             if let position = editor.selectedCell, let cell = table.cell(at: position) {
                 tableJSON["cell"] = ["r": position.row, "c": position.column, "fill": fillJSON(cell.fill, resolved: cell.fill, style: style, placeholder: nil)]

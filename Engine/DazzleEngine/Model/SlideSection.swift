@@ -51,7 +51,8 @@ extension Presentation {
     /// order, as many slides as possible keep their section, and the rest
     /// join the section they now sit in.
     public mutating func settleSections() {
-        guard !sections.isEmpty else { return }
+        // In master view the slides are set aside; the sections wait for them.
+        guard !sections.isEmpty, !isInMasterView else { return }
         var owner: [Slide.ID: Int] = [:]
         for (index, section) in sections.enumerated() {
             for id in section.slideIDs where owner[id] == nil { owner[id] = index }

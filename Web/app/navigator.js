@@ -115,7 +115,18 @@ export class SlideNavigator extends EventTarget {
       if (!row) row = this.makeRow(slide.id);
       place(row);
       row.hidden = Boolean(owner && this.collapsed.has(owner.id));
-      row.querySelector(".navigator__number").textContent = String(index + 1);
+      // In master view a master has no number, and its layouts count from it; each goes by its name.
+      if (slide.role) {
+        const master = slides.slice(0, index + 1).map((entry) => entry.role).lastIndexOf("master");
+        row.querySelector(".navigator__number").textContent = slide.role === "master" ? "" : String(index - master);
+        row.dataset.name = slide.role === "master" ? this.t("MasterView.Master") : slide.name ?? "";
+        row.title = row.dataset.name;
+        row.setAttribute("aria-label", row.dataset.name);
+      } else {
+        row.querySelector(".navigator__number").textContent = String(index + 1);
+        delete row.dataset.name;
+        row.removeAttribute("title");
+      }
       row.classList.toggle("is-hidden-slide", Boolean(slide.hidden));
       row.dataset.rev = slide.rev;
       const drawn = this.drawn.get(slide.id);
@@ -277,7 +288,7 @@ export class SlideNavigator extends EventTarget {
       frame.replaceChildren(slide);
       this.drawn.set(id, { rev });
       const title = this.engine.info?.outline?.find((entry) => entry.id === id)?.title;
-      row.setAttribute("aria-label", this.t("Slide.Accessibility", Number(row.querySelector(".navigator__number").textContent), title || this.t("Slide.Untitled")));
+      if (row.dataset.name === undefined) row.setAttribute("aria-label", this.t("Slide.Accessibility", Number(row.querySelector(".navigator__number").textContent), title || this.t("Slide.Untitled")));
       requestAnimationFrame(() => this.drawer.fit(slide));
     } catch {
       // The slide went away while it was being drawn.

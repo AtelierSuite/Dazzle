@@ -39,6 +39,7 @@ public enum OOXML {
     public enum ContentType {
         private static let base = "application/vnd.openxmlformats-officedocument.presentationml."
         public static let slide = base + "slide+xml"
+        public static let slideLayout = base + "slideLayout+xml"
         public static let notesSlide = base + "notesSlide+xml"
         public static let notesMaster = base + "notesMaster+xml"
         public static let theme = "application/vnd.openxmlformats-officedocument.theme+xml"

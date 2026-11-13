@@ -7,8 +7,8 @@ import Foundation
 /// the newer effects PowerPoint 2010 and later write beside it for readers
 /// that know them (`p14`, `p15`, `p159`).
 ///
-/// Effects Dazzle has no drawing of its own for are played as the nearest
-/// it has, and the ones with no near match at all as a fade.
+/// The few effects Dazzle has no drawing of its own for are played as the
+/// nearest it has, and the ones with no near match at all as a fade.
 public struct SlideTransition: Equatable, Hashable, Sendable {
     /// Which way something moves: the direction of travel, as PowerPoint
     /// spells it (`l` moves leftwards, coming in from the right).
@@ -59,6 +59,9 @@ public struct SlideTransition: Equatable, Hashable, Sendable {
         /// A pattern of the new slide filling in: blinds, a checkerboard,
         /// random bars, a dissolve, a circle, a wheel…
         case pattern(AnimationFilter)
+        /// One of PowerPoint 2010's or 2013's own: a vortex, a page curl,
+        /// curtains…
+        case preset(Preset)
         /// A different effect each time, from the ones above.
         case random
         /// Flies into a zoom's picture of the new slide, which grows to fill
@@ -90,7 +93,7 @@ public struct SlideTransition: Equatable, Hashable, Sendable {
     /// Seconds the effect takes.
     public var duration: Double
     /// The effect the file asked for, when Dazzle plays something else
-    /// because it cannot draw it (a vortex, a morph, a page curl…).
+    /// because it cannot draw it (a morph…).
     public var approximates: String?
 
     public init(effect: Effect, duration: Double? = nil, approximates: String? = nil) {
@@ -216,15 +219,12 @@ extension SlideTransition {
         // PowerPoint 2010's own (p14), as the nearest Dazzle draws.
         case "flash": return (.flash, nil)
         case "reveal": return (.fade(throughBlack: true), nil)
-        case "glitter", "honeycomb", "shred": return (pattern("dissolve"), nil)
-        case "doors", "window": return (.split(vertical: dir != "horz", outward: true), nil)
         case "warp", "flythrough": return (.zoom(outward: dir == "out"), nil)
-        case "switch", "flip", "gallery", "conveyor", "ferris":
-            // Sideways only: `l` or `r`.
-            return (.push(dir == "r" ? .right : .left), nil)
         case "pan", "prism": return (.push(side(.up)), nil)
         default:
-            // A vortex, ripple, morph, page curl and the rest of `p15:prstTrans`.
+            // A vortex, ripple, page curl and the rest, each as itself.
+            if let preset = Preset(element: element) { return (.preset(preset), nil) }
+            // A morph, and anything newer still.
             let name = element.name == "prstTrans" ? element.attribute("prst") ?? element.name : element.name
             return (.fade(throughBlack: false), name)
         }
@@ -350,6 +350,8 @@ extension SlideTransition {
             }
         case .pattern(let filter):
             layers = [Layer(content: .outgoing), Layer(content: .incoming, clip: filter.path(progress: t, frame: bounds))]
+        case .preset(let preset):
+            layers = preset.layers(progress: t, size: size)
         case .random:
             return played(reduceMotion: false).frame(progress: progress, size: size)
         case .zoomObject(let zoom, let returning):

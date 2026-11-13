@@ -93,9 +93,9 @@ struct CanvasMenuTests {
         let menu = try #require(state.canvasMenu(in: presentation, canPaste: false))
         #expect(menu.tableItems.map(\.action) == [
             .table(.rowAbove), .table(.rowBelow), .table(.columnLeft), .table(.columnRight), .table(.deleteColumn),
-            .headerRow, .bandedRows,
-        ])
-        #expect(menu.tableItems.first { $0.action == .headerRow }?.isOn != nil)
+        ] + SlideTable.StyleOption.allCases.map { .tableOption($0) })
+        #expect(menu.tableItems.first { $0.action == .tableOption(.headerRow) }?.isOn == true)
+        #expect(menu.tableItems.first { $0.action == .tableOption(.totalRow) }?.isOn == false)
 
         state.perform(.table(.rowBelow), in: &presentation)
         #expect(state.selectedTable(in: presentation)?.rows.count == 2)

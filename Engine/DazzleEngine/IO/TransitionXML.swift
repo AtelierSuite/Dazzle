@@ -4,10 +4,12 @@ import Foundation
 /// set rather than read. One it read is left exactly as the file had it.
 enum TransitionXML {
     static let p14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    static let p15 = "http://schemas.microsoft.com/office/powerpoint/2012/main"
     static let markupCompatibility = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 
     /// The effect element, as PowerPoint 2007 reads it, and as PowerPoint
-    /// 2010 and later do when that differs.
+    /// 2010 and later do when that differs (`p15:` for one only PowerPoint
+    /// 2013 and later read).
     static func elements(for effect: SlideTransition.Effect) -> (plain: String, p14: String?) {
         func dir(_ direction: SlideTransition.Direction, default fallback: SlideTransition.Direction = .left) -> String {
             direction == fallback ? "" : " dir=\"\(direction.rawValue)\""
@@ -27,6 +29,7 @@ enum TransitionXML {
         case .newsflash: return ("<p:newsflash/>", nil)
         case .comb(let vertical): return ("<p:comb\(orientation(vertical))/>", nil)
         case .random: return ("<p:random/>", nil)
+        case .preset(let preset): return ("<p:fade/>", preset.xml)
         // Only ever played, for a zoom; its slide keeps its own transition.
         case .zoomObject: return ("<p:fade/>", nil)
         case .pattern(let filter):
@@ -68,8 +71,10 @@ enum TransitionXML {
         let speed = transition.duration < 0.625 ? "fast" : transition.duration < 0.875 ? "med" : "slow"
         let (plain, newer) = elements(for: transition.effect)
         let milliseconds = Int((transition.duration * 1_000).rounded())
+        let isNewest = newer?.hasPrefix("<p15:") == true
         return """
-            <mc:AlternateContent xmlns:mc="\(markupCompatibility)" xmlns:p14="\(p14)"><mc:Choice Requires="p14">\
+            <mc:AlternateContent xmlns:mc="\(markupCompatibility)" xmlns:p14="\(p14)"\(isNewest ? " xmlns:p15=\"\(p15)\"" : "")>\
+            <mc:Choice Requires="\(isNewest ? "p15" : "p14")">\
             <p:transition spd="\(speed)" p14:dur="\(milliseconds)"\(advance)>\(newer ?? plain)</p:transition>\
             </mc:Choice><mc:Fallback><p:transition spd="\(speed)"\(advance)>\(plain)</p:transition></mc:Fallback>\
             </mc:AlternateContent>

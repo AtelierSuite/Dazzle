@@ -138,6 +138,14 @@ struct WebRenderer {
         case .shape, .connector:
             node["kind"] = "shape"
             autoShape(shape, sources: sources, frame: frame, style: style, groupFill: groupFill, into: &node)
+            if shape.kind == .connector {
+                // Where its two ends are, which are its handles, and whether each is attached to a shape.
+                let ends = shape.connectorEnds
+                node["ends"] = [
+                    "start": ["x": Double(ends.start.x), "y": Double(ends.start.y), "attached": shape.startConnection != nil],
+                    "end": ["x": Double(ends.end.x), "y": Double(ends.end.y), "attached": shape.endConnection != nil],
+                ]
+            }
         }
         return node
     }
@@ -560,8 +568,6 @@ struct WebRenderer {
         let tableStyle = table.styleID.flatMap { presentation.resources.tableStyles[$0] }
         let usesBuiltInLook = table.styleID != nil && tableStyle == nil
         let accent = style.color(.scheme("accent1"))
-        func isHeader(_ row: Int) -> Bool { table.hasHeaderRow && row == 0 }
-        func isBanded(_ row: Int) -> Bool { table.hasBandedRows && (row - (table.hasHeaderRow ? 1 : 0)).isMultiple(of: 2) }
 
         var cells: [[String: Any]] = []
         for (rowIndex, row) in table.rows.enumerated() {
@@ -569,21 +575,16 @@ struct WebRenderer {
                 var json: [String: Any] = [
                     "r": rowIndex, "c": columnIndex, "rs": max(cell.rowSpan, 1), "cs": max(cell.columnSpan, 1),
                 ]
-                var fill = cell.fill
-                if fill == nil, let tableStyle {
-                    fill = isHeader(rowIndex) ? tableStyle.headerRow.fill : (isBanded(rowIndex) ? tableStyle.bandedRow.fill : nil)
-                    fill = fill ?? tableStyle.whole.fill
-                }
-                if let fill {
+                let regions = table.regions(row: rowIndex, column: columnIndex)
+                if let fill = cell.fill ?? tableStyle?.fill(for: regions) {
                     if let paint = paint(fill, placeholder: nil, style: style) { json["fill"] = paint }
                 } else if usesBuiltInLook {
-                    let tint = isHeader(rowIndex) ? accent
-                        : accent.applying(.init(name: "tint", value: isBanded(rowIndex) ? 40_000 : 20_000))
+                    let tint = regions.builtInTint.map { accent.applying(.init(name: "tint", value: $0)) } ?? accent
                     json["fill"] = ["t": "solid", "c": css(tint)]
                 }
 
                 // A cell's text, with its margins and the style's text colour and weight.
-                let body = self.cellBody(cell, row: rowIndex, tableStyle: tableStyle, usesBuiltInLook: usesBuiltInLook, isHeader: isHeader(rowIndex))
+                let body = self.cellBody(cell, row: rowIndex, tableStyle: tableStyle, usesBuiltInLook: usesBuiltInLook, regions: regions)
                 let width = (columnIndex..<min(columnIndex + max(cell.columnSpan, 1), table.columnCount))
                     .map { CGFloat(EMU.points(table.columnWidths[$0])) }.reduce(0, +)
                 let rect = CGRect(x: 0, y: 0, width: width, height: CGFloat(EMU.points(table.rows[rowIndex].height)))
@@ -597,10 +598,7 @@ struct WebRenderer {
                     columnIndex == 0 ? "left" : "insideV", lastColumn ? "right" : "insideV",
                 ]
                 func styleBorder(_ name: String) -> LineStyle? {
-                    if let tableStyle {
-                        let part = isHeader(rowIndex) ? tableStyle.headerRow : (isBanded(rowIndex) ? tableStyle.bandedRow : nil)
-                        return part?.borders[name] ?? tableStyle.whole.borders[name]
-                    }
+                    if let tableStyle { return tableStyle.border(name, for: regions) }
                     return usesBuiltInLook ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
                 }
                 var borders: [String: Any] = [:]
@@ -623,7 +621,7 @@ struct WebRenderer {
         ]
     }
 
-    private func cellBody(_ cell: SlideTable.Cell, row: Int, tableStyle: TableStyle?, usesBuiltInLook: Bool, isHeader: Bool) -> TextBody {
+    private func cellBody(_ cell: SlideTable.Cell, row: Int, tableStyle: TableStyle?, usesBuiltInLook: Bool, regions: SlideTable.CellRegions) -> TextBody {
         var body = cell.text ?? TextBody(paragraphs: [Paragraph(runs: [])])
         body.properties.leftInset = cell.marginLeft ?? 91_440
         body.properties.rightInset = cell.marginRight ?? 91_440
@@ -635,10 +633,9 @@ struct WebRenderer {
         var color: DrawingColor?
         var bold: Bool?
         if let tableStyle {
-            let part = isHeader ? tableStyle.headerRow : tableStyle.whole
-            color = part.textColor ?? tableStyle.whole.textColor
-            bold = part.isBold
-        } else if usesBuiltInLook, isHeader, cell.fill == nil {
+            color = tableStyle.textColor(for: regions)
+            bold = tableStyle.isBold(for: regions)
+        } else if usesBuiltInLook, regions.isEmphasised, cell.fill == nil {
             color = .scheme("lt1")
             bold = true
         }
@@ -734,7 +731,9 @@ struct WebRenderer {
             let baseSize = Double(firstRun.size ?? 1_800) / 100
 
             var json: [String: Any] = ["i": index, "lvl": level]
-            json["align"] = (properties.alignment ?? .left).rawValue
+            json["align"] = properties.effectiveAlignment.rawValue
+            // A right-to-left paragraph: its margin, indent, bullet and tabs are measured from the right.
+            if properties.isRightToLeft == true { json["rtl"] = true }
             json["ml"] = n(CGFloat(EMU.points(properties.marginLeft ?? 0)))
             json["ind"] = n(CGFloat(EMU.points(properties.indent ?? 0)))
             switch properties.lineSpacing {
@@ -806,6 +805,11 @@ struct WebRenderer {
                 }
                 var json = run(runProperties, style: style)
                 json["r"] = runIndex
+                // The typeface for the run's Arabic, Hebrew or other complex-script text, when it has any.
+                if textRun.kind == .text, let script = ComplexScript.stretches(in: textRun.text).first?.script,
+                   let complex = style.complexScriptTypeface(for: runProperties, script: script) {
+                    json["cs"] = complex
+                }
                 switch textRun.kind {
                 case .lineBreak:
                     json["br"] = true

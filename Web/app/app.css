@@ -641,6 +641,38 @@ body {
   cursor: grab;
 }
 
+.canvas__handle--end {
+  cursor: crosshair;
+}
+
+.canvas__handle--end.is-attached {
+  background: var(--ds-interactive);
+  border-color: var(--ds-background);
+}
+
+.canvas__connector {
+  position: absolute;
+  height: 1px;
+  background: var(--ds-interactive);
+  transform-origin: 0 0;
+}
+
+.canvas__site {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  background: var(--ds-background);
+  border: 1px solid var(--ds-interactive);
+}
+
+.canvas__site.is-settled {
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  background: var(--ds-interactive);
+}
+
 .canvas__marquee {
   position: absolute;
   background: color-mix(in srgb, var(--ds-interactive) 12%, transparent);
