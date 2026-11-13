@@ -24,6 +24,8 @@ public struct SlideShape: Identifiable, Equatable, Hashable, Sendable {
         case effects
         /// Where clicking it goes.
         case link
+        /// The text styles a layout's or master's placeholder hands down.
+        case listStyle
         /// Which preset it is drawn as, and its adjust values.
         case geometry
         /// The shapes a connector's ends are attached to.

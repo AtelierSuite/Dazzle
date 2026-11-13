@@ -52,7 +52,7 @@ extension EditorState {
         let indices = toAll ? Array(presentation.slides.indices) : [selectedIndex(in: presentation)]
         for index in indices where presentation.slides.indices.contains(index) && presentation.slides[index].canEditShapes {
             let layout = presentation.layout(for: presentation.slides[index])
-            let master = presentation.resources.master(for: layout)
+            let master = presentation.master(for: presentation.slides[index])
             let isTitleSlide = layout?.shapes.contains { $0.placeholder?.type == "ctrTitle" } ?? false
             let hidden = settings.hidesOnTitleSlide && isTitleSlide
             var slide = presentation.slides[index]

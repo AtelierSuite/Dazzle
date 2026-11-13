@@ -40,6 +40,9 @@ public struct ShapeWriter {
         if edits.contains(.text), let text = shape.text {
             writeText(text, into: element)
         }
+        if shape.edits.contains(.listStyle), let text = shape.text {
+            writeListStyle(text.listStyle, into: element)
+        }
         if edits.contains(.table), case .table(let table) = shape.kind {
             writeTable(table, into: element)
         }
@@ -426,6 +429,46 @@ public struct ShapeWriter {
         }
     }
 
+    /// Writes the text styles a placeholder hands down into its `a:lstStyle`,
+    /// over what each level said already.
+    private mutating func writeListStyle(_ style: ListStyle, into element: XMLElement) {
+        guard let body = element.firstChild(named: "txBody") else { return }
+        let list: XMLElement
+        if let existing = body.firstChild(named: "lstStyle") {
+            list = existing
+        } else {
+            guard let created = fragment("<a:lstStyle/>") else { return }
+            body.insertChild(created, at: body.firstChild(named: "bodyPr") == nil ? 0 : 1)
+            list = created
+        }
+        for number in style.levels.keys.sorted() {
+            guard let properties = style.levels[number] else { continue }
+            let name = "lvl\(number)pPr"
+            guard let level = list.firstChild(named: name) ?? fragment("<a:\(name)/>") else { continue }
+            apply(properties, to: level)
+            let existing = level.firstChild(named: "defRPr")
+            if existing != nil || properties.defaultRun != RunProperties() {
+                let source = existing.flatMap { XMLLite.serialize($0, inheritedNamespaces: fragmentNamespaces) } ?? "<a:defRPr/>"
+                if let run = fragment(runPropertiesXML(properties.defaultRun, source: source, name: "defRPr")) {
+                    if let existing {
+                        level.replaceChild(existing, with: run)
+                    } else {
+                        let before = level.children.firstIndex { $0.name == "extLst" }
+                        level.insertChild(run, at: before ?? level.children.count)
+                    }
+                }
+            }
+            guard level.parent == nil, !level.attributes.isEmpty || !level.children.isEmpty else { continue }
+            // Levels go in order, after `defPPr` and before any extensions.
+            let before = list.children.firstIndex { child in
+                if child.name == "extLst" { return true }
+                guard child.name.hasPrefix("lvl"), let other = Int(child.name.dropFirst(3).prefix(1)) else { return false }
+                return other > number
+            }
+            list.insertChild(level, at: before ?? list.children.count)
+        }
+    }
+
     /// Says in `a:bodyPr` how far its text is shrunk to fit, so other apps
     /// set it the same size, in place of how it was fitted before.
     private func writeShrink(_ scale: Double, _ reduction: Double, into properties: XMLElement) {
@@ -616,7 +659,13 @@ public struct ShapeWriter {
     private func paragraphPropertiesXML(_ paragraph: Paragraph) -> String? {
         let element = paragraph.sourceProperties.flatMap(fragment) ?? fragment("<a:pPr/>")
         guard let element else { return nil }
-        let properties = paragraph.properties
+        apply(paragraph.properties, to: element)
+        guard !element.attributes.isEmpty || !element.children.isEmpty else { return nil }
+        return XMLLite.serialize(element, inheritedNamespaces: fragmentNamespaces)
+    }
+
+    /// Lays paragraph properties over an `a:pPr`, or a list style's level.
+    private func apply(_ properties: ParagraphProperties, to element: XMLElement) {
         if let alignment = properties.alignment {
             element.setAttribute("algn", alignment.rawValue)
         }
@@ -657,8 +706,6 @@ public struct ShapeWriter {
             place("<a:buAutoNum type=\"\(XMLLite.escape(scheme))\"\(startAt)/>", replacing: bullets)
         case nil: break
         }
-        guard !element.attributes.isEmpty || !element.children.isEmpty else { return nil }
-        return XMLLite.serialize(element, inheritedNamespaces: fragmentNamespaces)
     }
 
     /// Where a child of `a:pPr` goes among its siblings.

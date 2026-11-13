@@ -121,6 +121,10 @@ public struct Chart: Equatable, Hashable, Sendable {
         public var color: DrawingColor?
         /// Colours given to single points, by index: a pie's slices.
         public var pointColors: [Int: DrawingColor] = [:]
+        /// Lines fitted to its points.
+        public var trendlines: [Trendline] = []
+        /// Bars showing each point's margin of error, at most one a direction.
+        public var errorBars: [ErrorBars] = []
         /// The series' `c:ser` as the file wrote it.
         public var source: String?
 
@@ -386,6 +390,8 @@ extension Chart {
                 series.pointColors[index] = color
             }
         }
+        series.trendlines = element.children(named: "trendline").map(Trendline.init(element:))
+        series.errorBars = element.children(named: "errBars").map { ErrorBars(element: $0, numbers: numbers) }
         series.source = XMLLite.serialize(element)
         return series
     }

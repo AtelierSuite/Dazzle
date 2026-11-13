@@ -86,6 +86,13 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private func updateToolbar() {
         fontSubstitutions = deck.presentation.fontSubstitutions
         unsupportedItem?.isHidden = deck.presentation.unsupportedFeatures.isEmpty && fontSubstitutions.isEmpty
+        // Says the masters and layouts are what is being edited, and which.
+        if deck.presentation.isInMasterView {
+            let name = deck.selectedSlide.flatMap { $0.role == .master ? nil : $0.layoutName }
+            window?.subtitle = [String(localized: "MasterView.Title"), name].compactMap(\.self).joined(separator: " — ")
+        } else {
+            window?.subtitle = ""
+        }
     }
 
     /// The deck's fonts this Mac draws in others, as of the last change.
