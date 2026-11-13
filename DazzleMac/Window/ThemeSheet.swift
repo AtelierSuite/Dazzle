@@ -43,7 +43,11 @@ final class ThemeSheet: NSObject {
         let note = NSTextField(wrappingLabelWithString: String(localized: "Theme.Footer"))
         note.textColor = .secondaryLabelColor
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        note.preferredMaxLayoutWidth = 340
+        // As wide as the grids above it, so it wraps inside the sheet in any language.
+        let width = max(colors.fittingSize.width, fonts.fittingSize.width)
+        note.preferredMaxLayoutWidth = width
+        note.translatesAutoresizingMaskIntoConstraints = false
+        note.widthAnchor.constraint(equalToConstant: width).isActive = true
         let cancel = NSButton(title: String(localized: "Common.Cancel"), target: self, action: #selector(cancel(_:)))
         cancel.keyEquivalent = "\u{1b}"
         let apply = NSButton(title: String(localized: "Common.OK"), target: self, action: #selector(apply(_:)))
