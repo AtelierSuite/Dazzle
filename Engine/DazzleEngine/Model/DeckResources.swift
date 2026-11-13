@@ -47,6 +47,13 @@ public struct Theme: Equatable, Sendable {
     public var minorFont: String
     public var majorEastAsianFont: String?
     public var minorEastAsianFont: String?
+    /// `a:cs`: what Arabic, Hebrew and other complex scripts are set in.
+    public var majorComplexScriptFont: String?
+    public var minorComplexScriptFont: String?
+    /// `a:font`: the typeface for each script the theme names one for, by
+    /// the script's code, such as `Arab` or `Hebr`.
+    public var majorScriptFonts: [String: String] = [:]
+    public var minorScriptFonts: [String: String] = [:]
     /// `fillStyleLst`, used by shape style references 1…3.
     public var fillStyles: [Fill]
     /// `bgFillStyleLst`, used by background references 1001…1003.
@@ -63,7 +70,22 @@ public struct Theme: Equatable, Sendable {
         case "+mn-lt": minorFont
         case "+mj-ea": majorEastAsianFont ?? majorFont
         case "+mn-ea": minorEastAsianFont ?? minorFont
+        case "+mj-cs": majorComplexScriptFont ?? majorFont
+        case "+mn-cs": minorComplexScriptFont ?? minorFont
         default: name.hasPrefix("+") ? minorFont : name
+        }
+    }
+
+    /// The typeface text in a complex `script` is set in when its run asks
+    /// for `name`: the theme's complex-script font for `+mj-cs` and `+mn-cs`,
+    /// or the one it names for that script when it has none. Nil when
+    /// nothing names one, leaving the text in its Latin typeface.
+    public func complexScriptTypeface(_ name: String?, script: String) -> String? {
+        guard let name, !name.isEmpty else { return nil }
+        switch name {
+        case "+mj-cs": return majorComplexScriptFont ?? majorScriptFonts[script]
+        case "+mn-cs": return minorComplexScriptFont ?? minorScriptFonts[script]
+        default: return typeface(name)
         }
     }
 

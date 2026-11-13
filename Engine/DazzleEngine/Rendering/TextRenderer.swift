@@ -537,7 +537,7 @@ public struct TextRenderer {
                 var ascent: CGFloat = 0
                 var descent: CGFloat = 0
                 let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), &ascent, &descent, nil)
-                let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
+                let start = Self.leftEdge(of: run, width: width, in: line)
                 areas.append((CGRect(
                     x: column.origin.x + origin.x + start, y: column.origin.y + column.height - origin.y - ascent,
                     width: width, height: ascent + descent
@@ -737,8 +737,8 @@ public struct TextRenderer {
                 }
                 if let color = properties.bulletColor { bulletRun.color = color }
                 let bulletScale = scale * (properties.bulletSize ?? 1)
-                result.append(NSAttributedString(
-                    string: Self.displayable(bulletText) + "\t",
+                result.append(string(
+                    Self.displayable(bulletText) + "\t", run: bulletRun,
                     attributes: attributes(for: bulletRun, scale: bulletScale, colorOverride: colorOverride)
                 ))
             }
@@ -762,7 +762,7 @@ public struct TextRenderer {
                 text = Self.symbolsMapped(text)
                 var runAttributes = attributes(for: runProperties, scale: scale, colorOverride: textColor)
                 if let link = run.properties.link { runAttributes[Self.linkKey] = LinkBox(link, tooltip: run.properties.linkTooltip) }
-                result.append(NSAttributedString(string: text, attributes: runAttributes))
+                result.append(string(text, run: runProperties, attributes: runAttributes))
             }
 
             // A paragraph break, or for the last paragraph a zero-width space
@@ -804,6 +804,25 @@ public struct TextRenderer {
                     range: range
                 )
             }
+        }
+        return result
+    }
+
+    /// `text` in `attributes`, with what is in Arabic, Hebrew or another
+    /// complex script set in `run`'s complex-script typeface, at the same
+    /// size and weight.
+    private func string(_ text: String, run: RunProperties, attributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
+        let stretches = ComplexScript.stretches(in: text)
+        guard !stretches.isEmpty, let latin = attributes[Self.fontKey] else { return NSAttributedString(string: text, attributes: attributes) }
+        let result = NSMutableAttributedString(string: text, attributes: attributes)
+        let size = CTFontGetSize(latin as! CTFont) // swiftlint:disable:this force_cast
+        for stretch in stretches {
+            guard let family = style.complexScriptTypeface(for: run, script: stretch.script) else { continue }
+            let font = FontResolver.shared.font(
+                family: family, size: size, bold: run.isBold ?? false, italic: run.isItalic ?? false,
+                embedded: style.resources.embeddedFonts
+            )
+            result.addAttribute(Self.fontKey, value: font, range: NSRange(location: stretch.range.lowerBound, length: stretch.range.count))
         }
         return result
     }
@@ -851,7 +870,13 @@ public struct TextRenderer {
     ) -> CTParagraphStyle {
         let marginLeft = CGFloat(EMU.points(properties.marginLeft ?? 0))
         let indent = CGFloat(EMU.points(properties.indent ?? 0))
-        var alignment: CTTextAlignment = switch properties.alignment ?? .left {
+        // A right-to-left paragraph reads from the right: its margin, indent,
+        // bullet and tab stops are measured from there, and it sits at the
+        // right unless it says where. Alignment itself stays left and right
+        // as the file names them, whichever way the paragraph reads.
+        let rightToLeft = properties.isRightToLeft ?? false
+        var direction: CTWritingDirection = rightToLeft ? .rightToLeft : .leftToRight
+        var alignment: CTTextAlignment = switch properties.effectiveAlignment {
         case .left: .left
         case .center: .center
         case .right: .right
@@ -863,7 +888,8 @@ public struct TextRenderer {
         // every default tab size.
         var firstLine = max(marginLeft + indent, 0)
         var head = marginLeft
-        var tabs = TabLayout.stops(properties, fontSize: Double(fontSize), hasBullet: hasBullet).map(Self.textTab) as CFArray
+        var tabs = TabLayout.stops(properties, fontSize: Double(fontSize), hasBullet: hasBullet)
+            .map { Self.textTab($0, rightToLeft: rightToLeft) } as CFArray
         var defaultTab = CGFloat(TabLayout.defaultInterval(properties))
 
         var lineMultiple: CGFloat = 1
@@ -899,6 +925,7 @@ public struct TextRenderer {
         }
         var settings = [
             setting(.alignment, &alignment),
+            setting(.baseWritingDirection, &direction),
             setting(.firstLineHeadIndent, &firstLine),
             setting(.headIndent, &head),
             setting(.tabStops, &tabs),
@@ -917,11 +944,14 @@ public struct TextRenderer {
 
     /// A stop as CoreText takes it. A decimal stop is a right-aligned one that
     /// ends its column at the decimal point.
-    private static func textTab(_ stop: TabLayout.Stop) -> CTTextTab {
+    /// In a right-to-left paragraph the stops are measured from the right,
+    /// and text starts at a left stop and ends at a right one as it reads,
+    /// the other way round from how CoreText names them.
+    private static func textTab(_ stop: TabLayout.Stop, rightToLeft: Bool) -> CTTextTab {
         let alignment: CTTextAlignment = switch stop.alignment {
-        case .left: .left
+        case .left: rightToLeft ? .right : .left
         case .center: .center
-        case .right, .decimal: .right
+        case .right, .decimal: rightToLeft ? .left : .right
         }
         var options: CFDictionary?
         if stop.alignment == .decimal {
@@ -931,6 +961,13 @@ public struct TextRenderer {
         return CTTextTabCreate(alignment, stop.location, options)
     }
 
+    /// Where a run's letters start at the left, from its line's origin. A
+    /// run read from right to left has its first character at its right.
+    private static func leftEdge(of run: CTRun, width: Double, in line: CTLine) -> CGFloat {
+        let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
+        return CTRunGetStatus(run).contains(.rightToLeft) ? start - CGFloat(width) : start
+    }
+
     /// Strikethrough is a TextKit attribute that CoreText does not draw.
     private func drawStrikethroughs(in line: CTLine, origin: CGPoint, context: CGContext) {
         for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
@@ -938,8 +975,8 @@ public struct TextRenderer {
             guard attributes[Self.strikeKey.rawValue] != nil else { continue }
             let font = attributes[kCTFontAttributeName as String].map { $0 as! CTFont } // swiftlint:disable:this force_cast
             let height = font.map { CTFontGetXHeight($0) / 2 } ?? 4
-            let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
             let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), nil, nil, nil)
+            let start = Self.leftEdge(of: run, width: width, in: line)
             if let color = attributes[kCTForegroundColorAttributeName as String] {
                 context.setStrokeColor(color as! CGColor) // swiftlint:disable:this force_cast
             }

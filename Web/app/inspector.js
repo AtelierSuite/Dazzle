@@ -35,6 +35,12 @@ const SYSTEM_COLORS = [
 
 const LINE_SPACINGS = [0.9, 1, 1.15, 1.5, 2, 2.5, 3];
 
+/** A table style's options, as the engine names them, in the order they are offered. */
+const TABLE_OPTIONS = [
+  ["headerRow", "Table.HeaderRow"], ["totalRow", "Table.TotalRow"], ["bandedRows", "Table.BandedRows"],
+  ["firstColumn", "Table.FirstColumn"], ["lastColumn", "Table.LastColumn"], ["bandedColumns", "Table.BandedColumns"],
+];
+
 export class Inspector extends EventTarget {
   /**
    * @param {HTMLElement} element
@@ -306,8 +312,7 @@ export class Inspector extends EventTarget {
 
   tableSection(table) {
     const t = this.t;
-    let body = this.row("", this.check("tableHeader", t("Table.HeaderRow"), table.header))
-      + this.row("", this.check("tableBanded", t("Table.BandedRows"), table.banded));
+    let body = TABLE_OPTIONS.map(([option, key]) => this.row("", this.check(`tableOption:${option}`, t(key), table.options[option]))).join("");
     if (table.cell) {
       body += this.row(t("Mac.Inspector.Table.RowsAndColumns"), this.buttons([
         ["rowAbove", t("Table.RowAbove")], ["rowBelow", t("Table.RowBelow")], ["columnLeft", t("Table.ColumnLeft")], ["columnRight", t("Table.ColumnRight")],
@@ -567,6 +572,7 @@ export class Inspector extends EventTarget {
       }
       return value;
     };
+    if (name.startsWith("tableOption:")) return engine.call("table", { [name.slice("tableOption:".length)]: value });
     switch (name) {
       // Text
       case "font": return format({ font: value });
@@ -636,8 +642,6 @@ export class Inspector extends EventTarget {
       case "shadow": return value !== "custom" && engine.call("setShadow", { id: value });
       case "reflection": return value !== "custom" && engine.call("setReflection", { id: value });
       // Table
-      case "tableHeader": return engine.call("table", { header: value });
-      case "tableBanded": return engine.call("table", { banded: value });
       case "cellFill": {
         if (value === "none") return engine.call("setCellFill", { fill: { kind: "none" } });
         const color = colorValue();

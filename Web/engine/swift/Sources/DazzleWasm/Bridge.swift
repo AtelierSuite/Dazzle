@@ -288,6 +288,19 @@ final class Bridge {
                 }
                 if !plain.isEmpty { state.setFrames(plain, in: &presentation) }
             }
+        case "connectionSites":
+            // Where connectors can be attached on the slide being edited, for an end being dragged.
+            return editor.selectedSlide(in: presentation)?.connectableShapes.flatMap(\.connectionSites).map { site in
+                ["shape": site.connection.shapeID, "site": site.connection.site, "x": Double(site.point.x), "y": Double(site.point.y)]
+            } ?? []
+        case "setConnectorEnd":
+            // One end of a connector moved, and attached to a shape's site or to nothing.
+            guard let id = (r["id"] as? String).flatMap(UUID.init(uuidString:)) else { break }
+            let connection = (r["shape"] as? Int).map { SlideShape.Connection(shapeID: $0, site: r["site"] as? Int ?? 0) }
+            let point = CGPoint(x: r["x"] as? Double ?? 0, y: r["y"] as? Double ?? 0)
+            edit { state, presentation in
+                state.setConnectorEnd(r["end"] as? String == "start" ? .start : .end, of: id, to: point, connection: connection, in: &presentation)
+            }
         case "rotate":
             edit { state, presentation in state.rotateSelectedShape(clockwise: r["clockwise"] as? Bool ?? true, in: &presentation) }
         case "flip":
@@ -413,8 +426,9 @@ final class Bridge {
             default: nil
             }
             if let change { edit { state, presentation in state.changeTable(change, in: &presentation) } }
-            if let header = r["header"] as? Bool { edit { state, presentation in state.setTableHeaderRow(header, in: &presentation) } }
-            if let banded = r["banded"] as? Bool { edit { state, presentation in state.setTableBandedRows(banded, in: &presentation) } }
+            for option in SlideTable.StyleOption.allCases {
+                if let isOn = r[option.rawValue] as? Bool { edit { state, presentation in state.setTableOption(option, isOn, in: &presentation) } }
+            }
         case "setCellFill":
             let fill = try fill(r["fill"])
             edit { state, presentation in state.setCellFill(fill, in: &presentation) }
@@ -1054,7 +1068,7 @@ final class Bridge {
             "bold": run.isBold ?? false, "italic": run.isItalic ?? false,
             "underline": run.isUnderlined ?? false, "strike": run.isStruckThrough ?? false,
             "baseline": run.baseline ?? 0,
-            "align": (paragraph.alignment ?? .left).rawValue,
+            "align": paragraph.effectiveAlignment.rawValue,
         ]
         json["list"] = switch editor.listStyle(in: presentation) {
         case .bullets: "bullets"
@@ -1171,7 +1185,7 @@ final class Bridge {
         }
         if case .table(let table) = shape.kind {
             var tableJSON: [String: Any] = [
-                "rows": table.rows.count, "columns": table.columnCount, "header": table.hasHeaderRow, "banded": table.hasBandedRows,
+                "rows": table.rows.count, "columns": table.columnCount, "options": Dictionary(uniqueKeysWithValues: SlideTable.StyleOption.allCases.map { ($0.rawValue, table[$0]) }),
             ]
             if let position = editor.selectedCell, let cell = table.cell(at: position) {
                 tableJSON["cell"] = ["r": position.row, "c": position.column, "fill": fillJSON(cell.fill, resolved: cell.fill, style: style, placeholder: nil)]
