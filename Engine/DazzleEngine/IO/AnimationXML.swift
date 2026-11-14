@@ -482,7 +482,7 @@ public enum AnimationXML {
 
     // MARK: - Helpers
 
-    private static let emptyTiming = """
+    static let emptyTiming = """
         <p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst/>\
         </p:cTn></p:par></p:tnLst></p:timing>
         """
@@ -510,7 +510,7 @@ public enum AnimationXML {
         return result
     }
 
-    private static func allNodeIDs(in element: XMLElement) -> [Int] {
+    static func allNodeIDs(in element: XMLElement) -> [Int] {
         var result: [Int] = []
         func visit(_ element: XMLElement) {
             if element.name == "cTn", let id = element.attribute("id").flatMap(Int.init) { result.append(id) }
