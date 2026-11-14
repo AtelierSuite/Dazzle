@@ -19,7 +19,10 @@ extension InspectorViewController {
         }
         if case .table(let table) = shape.kind { buildTable(table) }
         if case .chart(let chart?) = shape.kind, !state.hasMultipleSelection { buildChart(chart) }
-        if case .picture = shape.kind, !state.hasMultipleSelection { buildPicture() }
+        if case .picture(let picture) = shape.kind, !state.hasMultipleSelection {
+            buildPicture()
+            if let media = picture.media { buildPlayback(kind: media.kind) }
+        }
         switch shape.kind {
         case .shape, .connector, .picture:
             buildOutline(of: shape)
@@ -59,12 +62,15 @@ extension InspectorViewController {
         tooltip: @escaping () -> String?, setTooltip: @escaping (String) -> Void
     ) {
         form.section(String(localized: "Format.Section.Link"))
-        let kinds: [(String.LocalizationValue, (Presentation) -> Hyperlink?)] = [
+        var kinds: [(String.LocalizationValue, (Presentation) -> Hyperlink?)] = [
             ("Link.None", { _ in nil }), ("Link.URL", { _ in .url("https://") }),
             ("Link.Slide", { $0.slides.first.map { .slide($0.id) } }), ("Link.Next", { _ in .nextSlide }),
             ("Link.Previous", { _ in .previousSlide }), ("Link.First", { _ in .firstSlide }),
             ("Link.Last", { _ in .lastSlide }), ("Link.End", { _ in .endShow }),
         ]
+        if !deck.presentation.customShows.isEmpty || get()?.isCustomShow == true {
+            kinds.append(("Link.CustomShow", { $0.customShows.first.map { .customShow($0.id, returns: true) } }))
+        }
         func index(of link: Hyperlink?) -> Int? {
             switch link {
             case nil: 0
@@ -75,6 +81,7 @@ extension InspectorViewController {
             case .firstSlide?: 5
             case .lastSlide?: 6
             case .endShow?: 7
+            case .customShow?: 8
             case .other?: nil
             }
         }
@@ -102,17 +109,52 @@ extension InspectorViewController {
         slides.action = #selector(ActionTarget.run(_:))
         form.row(nil, slides)
 
+        let shows = NSPopUpButton()
+        shows.setAccessibilityIdentifier("linkCustomShow")
+        let showTarget = ActionTarget { [unowned self] in
+            guard case .customShow(_, let returns)? = get(), let id = shows.selectedItem?.tag else { return }
+            set(.customShow(id, returns: returns))
+        }
+        shows.target = showTarget
+        shows.action = #selector(ActionTarget.run(_:))
+        form.row(nil, shows)
+        let returns = form.checkbox(String(localized: "Link.CustomShow.Return"), get: {
+            if case .customShow(_, true)? = get() { return true }
+            return false
+        }, set: { isOn in
+            guard case .customShow(let id, _)? = get() else { return }
+            set(.customShow(id, returns: isOn))
+        })
+        form.row(nil, returns)
         let tip = form.text(placeholder: String(localized: "Link.Tooltip.Placeholder"), get: { tooltip() ?? "" }, set: setTooltip)
         form.row(String(localized: "Link.Tooltip.Placeholder"), tip)
         form.note(footer)
         form.onUpdate { [unowned self] in
             _ = slideTarget
+            _ = showTarget
             let link = get()
             if case .url? = link { address.isHidden = false } else { address.isHidden = true }
             // The ScreenTip's row, label and all, shows only for a link it can be written to.
             switch link {
             case nil, .other?: tip.superview?.isHidden = true
             default: tip.superview?.isHidden = false
+            }
+            if case .customShow(let id, _)? = link {
+                shows.isHidden = false
+                returns.isHidden = false
+                shows.removeAllItems()
+                for show in deck.presentation.customShows {
+                    shows.addItem(withTitle: show.name)
+                    shows.lastItem?.tag = show.id
+                }
+                if deck.presentation.customShow(withID: id) == nil {
+                    shows.addItem(withTitle: String(localized: "Link.CustomShow.Missing"))
+                    shows.lastItem?.tag = id
+                }
+                shows.selectItem(withTag: id)
+            } else {
+                shows.isHidden = true
+                returns.isHidden = true
             }
             guard case .slide(let id)? = link else {
                 slides.isHidden = true
@@ -455,6 +497,50 @@ extension InspectorViewController {
         form.row(nil, buttons)
     }
 
+    /// How a video or sound plays in the slideshow.
+    private func buildPlayback(kind: SlideShape.Media.Kind) {
+        form.section(String(localized: "Format.Section.Playback"))
+        let seconds = String(format: String(localized: "Media.Seconds"), "").trimmingCharacters(in: .whitespaces)
+        var media: SlideShape.Media? {
+            guard case .picture(let picture)? = deck.selectedShape?.kind else { return nil }
+            return picture.media
+        }
+        func change(_ apply: @escaping (inout SlideShape.Media) -> Void) {
+            edit { state.setMedia(in: &$0, apply) }
+        }
+        let times: [(String.LocalizationValue, KeyPath<SlideShape.Media, Double>, WritableKeyPath<SlideShape.Media, Double>)] = [
+            ("Media.TrimStart", \.trimStart, \.trimStart), ("Media.TrimEnd", \.trimEnd, \.trimEnd),
+            ("Media.FadeIn", \.fadeIn, \.fadeIn), ("Media.FadeOut", \.fadeOut, \.fadeOut),
+        ]
+        for (title, read, write) in times {
+            form.row(String(localized: title), form.number(
+                get: { media?[keyPath: read] ?? 0 },
+                set: { value in change { $0[keyPath: write] = value } },
+                range: 0...3_600, step: 0.5, unit: seconds
+            ))
+        }
+        form.row(String(localized: "Media.Volume"), form.number(
+            get: { ((media?.volume ?? 1) * 100).rounded() },
+            set: { value in change { $0.volume = value / 100 } },
+            range: 0...100, step: 10, unit: "%"
+        ))
+        var toggles: [(String.LocalizationValue, WritableKeyPath<SlideShape.Media, Bool>)] = [
+            ("Media.Mute", \.isMuted), ("Media.Loop", \.loops), ("Media.Rewind", \.rewinds),
+        ]
+        if kind == .video {
+            toggles += [("Media.FullScreen", \.playsFullScreen)]
+        } else {
+            toggles += [("Media.AcrossSlides", \.playsAcrossSlides)]
+        }
+        toggles += [("Media.HideWhenStopped", \.hidesWhenNotPlaying)]
+        for (title, path) in toggles {
+            form.row(nil, form.checkbox(String(localized: title), get: { media?[keyPath: path] ?? false }, set: { isOn in
+                change { $0[keyPath: path] = isOn }
+            }))
+        }
+        form.note(String(localized: "Format.Playback.Footer"))
+    }
+
     // MARK: - Arranging
 
     private func buildArrange(_ shape: SlideShape) {
@@ -603,9 +689,109 @@ extension InspectorViewController {
                 askToResize(to: presets[index])
             }
         ))
-        form.row(nil, form.checkbox(String(localized: "Format.LoopSlideshow"), get: { [unowned self] in
-            deck.presentation.loopsSlideshow
-        }, set: { [unowned self] isOn in edit { state.setLoopsSlideshow(isOn, in: &$0) } }))
+        buildSlideshowSettings()
+    }
+
+    /// How every slideshow of the presentation plays: PowerPoint's Set Up Slide Show.
+    private func buildSlideshowSettings() {
+        form.section(String(localized: "Show.Title"))
+        let settings = { [unowned self] in deck.presentation.showSettings }
+        let update = { [unowned self] (change: @escaping (inout SlideshowSettings) -> Void) in
+            edit { state.updateShowSettings(in: &$0, change) }
+        }
+        let hasShows = !deck.presentation.customShows.isEmpty
+        var ranges = [String(localized: "Show.Range.All"), String(localized: "Show.Range.Slides")]
+        if hasShows || { if case .customShow = settings().range { true } else { false } }() {
+            ranges.append(String(localized: "Show.Range.CustomShow"))
+        }
+        form.row(String(localized: "Show.Range"), form.popup(ranges, get: {
+            switch settings().range {
+            case .all: 0
+            case .slides: 1
+            case .customShow: 2
+            }
+        }, set: { [unowned self] index in
+            let count = max(deck.presentation.slides.count, 1)
+            let first = deck.presentation.customShows.first?.id
+            update { settings in
+                switch index {
+                case 1: settings.range = .slides(from: 1, to: count)
+                case 2: settings.range = first.map(SlideshowSettings.Range.customShow) ?? .all
+                default: settings.range = .all
+                }
+            }
+        }))
+        let maximum = Double(max(deck.presentation.slides.count, 1))
+        let from = form.number(get: {
+            if case .slides(let from, _) = settings().range { return Double(from) }
+            return 1
+        }, set: { value in
+            update { settings in
+                guard case .slides(_, let to) = settings.range else { return }
+                settings.range = .slides(from: Int(value), to: max(Int(value), to))
+            }
+        }, range: 1...maximum, step: 1)
+        let to = form.number(get: {
+            if case .slides(_, let to) = settings().range { return Double(to) }
+            return maximum
+        }, set: { value in
+            update { settings in
+                guard case .slides(let from, _) = settings.range else { return }
+                settings.range = .slides(from: min(from, Int(value)), to: Int(value))
+            }
+        }, range: 1...maximum, step: 1)
+        form.pair(nil, (String(localized: "Show.From"), from), (String(localized: "Show.To"), to))
+        let shows = deck.presentation.customShows
+        let showPopup = form.popup(shows.map(\.name), get: {
+            if case .customShow(let id) = settings().range { return shows.firstIndex { $0.id == id } }
+            return nil
+        }, set: { index in
+            guard shows.indices.contains(index) else { return }
+            update { $0.range = .customShow(shows[index].id) }
+        })
+        form.row(nil, showPopup)
+        form.row(nil, form.checkbox(String(localized: "Show.Kiosk"), get: { settings().isKiosk }, set: { isOn in
+            update { $0.isKiosk = isOn }
+        }))
+        let restart = form.number(get: { settings().kioskRestartAfter / 60 }, set: { minutes in
+            update { $0.kioskRestartAfter = max(minutes, 1) * 60 }
+        }, range: 1...60, step: 1, unit: String(localized: "Show.Minutes"))
+        form.row(String(localized: "Show.KioskRestart"), restart)
+        let loop = form.checkbox(String(localized: "Format.LoopSlideshow"), get: { settings().loops || settings().isKiosk }, set: { [unowned self] isOn in
+            edit { state.setLoopsSlideshow(isOn, in: &$0) }
+        })
+        form.row(nil, loop)
+        let timings = form.checkbox(String(localized: "Show.UseTimings"), get: { settings().usesTimings || settings().isKiosk }, set: { isOn in
+            update { $0.usesTimings = isOn }
+        })
+        form.row(nil, timings)
+        form.row(nil, form.checkbox(String(localized: "Show.ShowAnimations"), get: { settings().showsAnimations }, set: { isOn in
+            update { $0.showsAnimations = isOn }
+        }))
+        form.row(nil, form.checkbox(String(localized: "Show.PlayNarration"), get: { settings().playsNarration }, set: { isOn in
+            update { $0.playsNarration = isOn }
+        }))
+        // What the settings do: a kiosk show's explanation while it is one.
+        let note = NSTextField(wrappingLabelWithString: String(localized: "Show.Footer"))
+        note.textColor = .secondaryLabelColor
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        form.add(note, fill: true)
+        form.onUpdate {
+            let current = settings()
+            var isSlides = false
+            if case .slides = current.range { isSlides = true }
+            var isShow = false
+            if case .customShow = current.range { isShow = true }
+            from.superview?.isHidden = !isSlides
+            showPopup.isHidden = !isShow
+            restart.superview?.isHidden = !current.isKiosk
+            loop.isEnabled = !current.isKiosk
+            timings.isEnabled = !current.isKiosk
+            note.stringValue = String(localized: current.isKiosk ? "Show.Kiosk.Footer" : "Show.Footer")
+        }
+        form.row(nil, form.button(String(localized: "Menu.Play.CustomShows")) { [unowned self] in
+            (view.window?.windowController as? DocumentWindowController)?.showCustomShows(nil)
+        })
     }
 
     /// The preset a slide size is, or has the shape of: a 16:9 deck made 10

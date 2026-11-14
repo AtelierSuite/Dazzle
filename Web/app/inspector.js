@@ -201,8 +201,36 @@ export class Inspector extends EventTarget {
     if (!info.sizePreset) sizes.push(["custom", t("SlideSize.Custom")]);
     html += this.section(t("Format.Section.Presentation"),
       this.row(t("Format.SlideSize"), this.popup("slideSize", t("Format.SlideSize"), sizes, info.sizePreset ?? "custom"))
-      + this.row("", this.check("loop", t("Format.LoopSlideshow"), info.loop)));
+      + this.row("", this.buttons([["customShows", t("Menu.Play.CustomShows")]])));
+    html += this.showSection(info);
     return html;
+  }
+
+  /** How every slideshow of the presentation plays: PowerPoint's Set Up Slide Show. */
+  showSection(info) {
+    const t = this.t;
+    const show = info.show ?? {};
+    const shows = (info.customShows ?? []).map((entry) => [entry.id, entry.name]);
+    const ranges = [["all", t("Show.Range.All")], ["slides", t("Show.Range.Slides")]];
+    if (shows.length || show.range === "customShow") ranges.push(["customShow", t("Show.Range.CustomShow")]);
+    if (show.range === "customShow" && !shows.some(([id]) => id === show.show)) shows.push([show.show, t("Link.CustomShow.Missing")]);
+    const count = info.outline?.length ?? 1;
+    let body = this.row(t("Show.Range"), this.popup("showRange", t("Show.Range"), ranges, show.range ?? "all"));
+    if (show.range === "slides") {
+      body += this.row(t("Show.From"), this.stepper("showFrom", t("Show.From"), show.from, { min: 1, max: count }))
+        + this.row(t("Show.To"), this.stepper("showTo", t("Show.To"), show.to, { min: 1, max: count }));
+    }
+    if (show.range === "customShow") body += this.row("", this.popup("showCustomShow", t("Show.Range.CustomShow"), shows, show.show));
+    body += this.row("", this.check("showKiosk", t("Show.Kiosk"), show.kiosk));
+    if (show.kiosk) {
+      body += this.row(t("Show.KioskRestart"), this.stepper("showRestart", t("Show.KioskRestart"), (show.restart ?? 300) / 60, { min: 1, max: 60, unit: t("Show.Minutes") }));
+    }
+    body += this.row("", this.check("loop", t("Format.LoopSlideshow"), show.loop))
+      + this.row("", this.check("showTimings", t("Show.UseTimings"), show.timings))
+      + this.row("", this.check("showAnimations", t("Show.ShowAnimations"), show.animations !== false))
+      + this.row("", this.check("showNarration", t("Show.PlayNarration"), show.narration))
+      + this.note(t(show.kiosk ? "Show.Kiosk.Footer" : "Show.Footer"));
+    return this.section(t("Show.Title"), body);
   }
 
   gradientRows(prefix, fill) {
@@ -378,15 +406,20 @@ export class Inspector extends EventTarget {
   linkSection(shape) {
     const t = this.t;
     const link = shape.link;
-    const kind = !link ? "none" : link.url ? "url" : link.slide ? "slide" : link.action;
+    const kind = !link ? "none" : link.url ? "url" : link.slide ? "slide" : link.customShow != null ? "customShow" : link.action;
     const slides = (this.engine.info?.outline ?? []).map((slide) => [slide.id, `${slide.number}. ${slide.title || t("Slide.Untitled")}`]);
+    const shows = (this.engine.info?.customShows ?? []).map((show) => [show.id, show.name]);
+    if (kind === "customShow" && !shows.some(([id]) => id === link.customShow)) shows.push([link.customShow, t("Link.CustomShow.Missing")]);
     return this.section(t("Format.Section.Link"),
       this.row(t("Link.Kind"), this.popup("linkKind", t("Link.Kind"), [
         ["none", t("Link.None")], ["url", t("Link.URL")], ["slide", t("Link.Slide")], ["next", t("Link.Next")],
         ["previous", t("Link.Previous")], ["first", t("Link.First")], ["last", t("Link.Last")], ["end", t("Link.End")],
+        ...(shows.length ? [["customShow", t("Link.CustomShow")]] : []),
       ], kind))
       + (kind === "url" ? this.row("", this.text("linkURL", t("Link.URL"), link.url, { placeholder: t("Link.URL.Placeholder") })) : "")
       + (kind === "slide" ? this.row("", this.popup("linkSlide", t("Link.Slide"), slides, link.slide)) : "")
+      + (kind === "customShow" ? this.row("", this.popup("linkCustomShow", t("Link.CustomShow"), shows, link.customShow))
+        + this.row("", this.check("linkCustomShowReturn", t("Link.CustomShow.Return"), link.return)) : "")
       + (link ? this.row(t("Link.Tooltip.Placeholder"), this.text("linkTooltip", t("Link.Tooltip.Placeholder"), link.tooltip ?? "", { placeholder: t("Link.Tooltip.Placeholder") })) : "")
       + this.note(t("Format.Link.Footer")), { open: Boolean(link) });
   }
@@ -531,7 +564,7 @@ export class Inspector extends EventTarget {
       case "ungroup": return engine.call("ungroup");
       case "rowAbove": case "rowBelow": case "columnLeft": case "columnRight": case "deleteRow": case "deleteColumn":
         return engine.call("table", { op: action });
-      case "headerFooter": case "chartData": case "crop": case "resetCrop": case "replacePicture": case "previewAnimations":
+      case "headerFooter": case "customShows": case "chartData": case "crop": case "resetCrop": case "replacePicture": case "previewAnimations":
         return this.run(action);
       case "fillPicture":
         return this.run("fillPicture");
@@ -677,10 +710,13 @@ export class Inspector extends EventTarget {
         if (value === "none") return engine.call("setLink", {});
         if (value === "url") return engine.call("setLink", { link: { url: shape.link?.url || "https://" } });
         if (value === "slide") return engine.call("setLink", { link: { slide: this.engine.info?.outline?.[0]?.id } });
+        if (value === "customShow") return engine.call("setLink", { link: { customShow: this.engine.info?.customShows?.[0]?.id, return: true } });
         return engine.call("setLink", { link: { action: value } });
       case "linkURL": return engine.call("setLink", { link: { url: value } });
       case "linkSlide": return engine.call("setLink", { link: { slide: value } });
       case "linkTooltip": return engine.call("setLinkTooltip", { tooltip: value });
+      case "linkCustomShow": return engine.call("setLink", { link: { customShow: Number(value), return: shape.link?.return ?? true } });
+      case "linkCustomShowReturn": return engine.call("setLink", { link: { customShow: shape.link?.customShow, return: value } });
       // Slide
       case "layout": return engine.call("setLayout", { layout: value });
       case "hidden": return engine.call("toggleHidden", { ids: [data.slide.id] });
@@ -694,6 +730,15 @@ export class Inspector extends EventTarget {
         return engine.call("setSlideSize", { preset: value, scaling });
       }
       case "loop": return engine.call("loop", { on: value });
+      case "showRange": return engine.call("showSettings", { range: value });
+      case "showFrom": return engine.call("showSettings", { range: "slides", from: Number(value), to: Math.max(Number(value), this.engine.info?.show?.to ?? 1) });
+      case "showTo": return engine.call("showSettings", { range: "slides", from: Math.min(Number(value), this.engine.info?.show?.from ?? 1), to: Number(value) });
+      case "showCustomShow": return engine.call("showSettings", { range: "customShow", show: Number(value) });
+      case "showKiosk": return engine.call("showSettings", { kiosk: value });
+      case "showRestart": return Number(value) > 0 && engine.call("showSettings", { restart: Number(value) * 60 });
+      case "showTimings": return engine.call("showSettings", { timings: value });
+      case "showAnimations": return engine.call("showSettings", { animations: value });
+      case "showNarration": return engine.call("showSettings", { narration: value });
       // Animations
       case "addAnimation": {
         if (!value) return null;

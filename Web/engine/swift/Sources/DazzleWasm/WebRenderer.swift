@@ -536,7 +536,10 @@ struct WebRenderer {
         if let media = picture.media {
             node["media"] = [
                 "kind": media.kind == .video ? "video" : "audio", "path": media.path as Any, "url": media.url as Any,
-                "auto": media.playsAutomatically,
+                "auto": media.playsAutomatically, "narration": media.isNarration,
+                "trim": [media.trimStart, media.trimEnd], "fade": [media.fadeIn, media.fadeOut],
+                "volume": media.effectiveVolume, "loop": media.loops, "rewind": media.rewinds,
+                "full": media.kind == .video && media.playsFullScreen, "hide": media.hidesWhenNotPlaying,
             ]
         }
         if let crop = Optional(picture), crop.cropLeft != 0 || crop.cropTop != 0 || crop.cropRight != 0 || crop.cropBottom != 0 {
@@ -853,6 +856,7 @@ struct WebRenderer {
         case .firstSlide: json = ["action": "first"]
         case .lastSlide: json = ["action": "last"]
         case .endShow: json = ["action": "end"]
+        case .customShow(let id, let returns): json = ["customShow": id, "return": returns]
         case .slidePart, .other: return nil
         }
         if let tooltip = tooltip?.nilIfEmpty { json["tooltip"] = tooltip }

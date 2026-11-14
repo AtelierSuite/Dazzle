@@ -13,6 +13,7 @@ enum EditorPanel: String, Identifiable, Hashable {
     case comments
     case headerFooter
     case animations
+    case properties
 
     var id: String { rawValue }
 
@@ -23,6 +24,7 @@ enum EditorPanel: String, Identifiable, Hashable {
         case .comments: String(localized: "Panel.Comments.Title")
         case .headerFooter: String(localized: "Panel.HeaderFooter.Title")
         case .animations: String(localized: "Panel.Animations.Title")
+        case .properties: String(localized: "Panel.Properties.Title")
         case .text: String(localized: "Panel.Text.Title")
         case .format: String(localized: "Panel.Format.Title")
         case .notes: String(localized: "Panel.Notes.Title")
@@ -521,6 +523,18 @@ final class EditorState {
         presentation.isShowSettingsModified = true
     }
 
+    /// Changes how every slideshow of the presentation plays.
+    func updateShowSettings(in presentation: inout Presentation, _ change: (inout SlideshowSettings) -> Void) {
+        change(&presentation.showSettings)
+        presentation.isShowSettingsModified = true
+    }
+
+    func setProperty(_ field: DocumentProperties.Field, to value: String, in presentation: inout Presentation) {
+        guard presentation.properties[field] != value else { return }
+        presentation.properties[field] = value
+        presentation.arePropertiesModified = true
+    }
+
     func setBackground(_ fill: Fill?, in presentation: inout Presentation) {
         let index = selectedIndex(in: presentation)
         guard presentation.slides.indices.contains(index) else { return }
@@ -857,6 +871,22 @@ final class EditorState {
     /// The ScreenTip shown when pointing at the selected text's link.
     func setTextLinkTooltip(_ tooltip: String, in presentation: inout Presentation) {
         updateRuns(in: &presentation) { $0.linkTooltip = tooltip.nilIfEmpty }
+    }
+
+    /// Changes how the selected video or sound plays.
+    func setMedia(in presentation: inout Presentation, _ change: (inout SlideShape.Media) -> Void) {
+        updateShape(selectedShapeID, edits: [.media], in: &presentation) { shape in
+            guard case .picture(var picture) = shape.kind, var media = picture.media else { return }
+            change(&media)
+            media.trimStart = max(media.trimStart, 0)
+            media.trimEnd = max(media.trimEnd, 0)
+            media.fadeIn = max(media.fadeIn, 0)
+            media.fadeOut = max(media.fadeOut, 0)
+            media.volume = min(max(media.volume, 0), 1)
+            if media.kind == .audio { media.playsFullScreen = false } else { media.playsAcrossSlides = false }
+            picture.media = media
+            shape.kind = .picture(picture)
+        }
     }
 
     func setAltText(_ text: String, in presentation: inout Presentation) {
