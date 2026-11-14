@@ -89,7 +89,7 @@ struct WebRenderer {
             ]
         }
         if let effects = effects(shape.effects, size: frame.size, style: style) { node["effects"] = effects }
-        if let link = shape.link, var json = Self.link(link) {
+        if let link = shape.link, var json = Self.link(link, tooltip: shape.linkTooltip) {
             // A zoom flies out of where it sits, and back into it.
             if case .zoom = link { json["frame"] = [n(frame.minX), n(frame.minY), n(frame.width), n(frame.height)] }
             node["link"] = json
@@ -554,7 +554,10 @@ struct WebRenderer {
         if let media = picture.media {
             node["media"] = [
                 "kind": media.kind == .video ? "video" : "audio", "path": media.path as Any, "url": media.url as Any,
-                "auto": media.playsAutomatically,
+                "auto": media.playsAutomatically, "narration": media.isNarration,
+                "trim": [media.trimStart, media.trimEnd], "fade": [media.fadeIn, media.fadeOut],
+                "volume": media.effectiveVolume, "loop": media.loops, "rewind": media.rewinds,
+                "full": media.kind == .video && media.playsFullScreen, "hide": media.hidesWhenNotPlaying,
             ]
         }
         if let crop = Optional(picture), crop.cropLeft != 0 || crop.cropTop != 0 || crop.cropRight != 0 || crop.cropBottom != 0 {
@@ -599,11 +602,13 @@ struct WebRenderer {
                 ]
                 func styleBorder(_ name: String) -> LineStyle? {
                     if let tableStyle { return tableStyle.border(name, for: regions) }
-                    return usesBuiltInLook ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
+                    return usesBuiltInLook && !["tl2br", "tr2bl"].contains(name)
+                        ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
                 }
                 var borders: [String: Any] = [:]
                 for (key, border, name) in [("t", cell.borderTop, edgeNames[0]), ("b", cell.borderBottom, edgeNames[1]),
-                                            ("l", cell.borderLeft, edgeNames[2]), ("r", cell.borderRight, edgeNames[3])] {
+                                            ("l", cell.borderLeft, edgeNames[2]), ("r", cell.borderRight, edgeNames[3]),
+                                            ("d", cell.borderDiagonalDown, "tl2br"), ("u", cell.borderDiagonalUp, "tr2bl")] {
                     let fallback = styleBorder(name)
                     guard let line = border.map({ $0.merged(over: fallback) }) ?? fallback,
                           let stroke = stroke(line, path: [], placeholder: nil, style: style) else { continue }
@@ -756,7 +761,7 @@ struct WebRenderer {
             if paragraph.runs.contains(where: { $0.kind == .text && $0.text.contains("\t") }) {
                 let hasBullet = !paragraph.plainText.isEmpty && {
                     switch properties.bullet {
-                    case .character?, .autoNumber?: true
+                    case .character?, .autoNumber?, .picture?: true
                     default: false
                     }
                 }()
@@ -769,9 +774,13 @@ struct WebRenderer {
             for deeper in counters.keys where deeper > level { counters[deeper] = nil }
             if !paragraph.plainText.isEmpty {
                 var bulletText: String?
+                var bulletPicture: String?
                 switch properties.bullet {
                 case .character(let character):
                     bulletText = character
+                case .picture(let path):
+                    counters[level] = nil
+                    if presentation.data(at: path) != nil { bulletPicture = path }
                 case .autoNumber(let scheme, let startAt):
                     let number = (counters[level] ?? (startAt - 1)) + 1
                     counters[level] = number
@@ -779,7 +788,14 @@ struct WebRenderer {
                 default:
                     counters[level] = nil
                 }
-                if let bulletText {
+                if let bulletPicture {
+                    // As tall as the text, centred on its capitals.
+                    var bullet = run(firstRun, style: style)
+                    bullet["t"] = ""
+                    bullet["img"] = bulletPicture
+                    bullet["sz"] = (bullet["sz"] as? Double ?? 18) * (properties.bulletSize ?? 1)
+                    json["bullet"] = bullet
+                } else if let bulletText {
                     var bulletRun = firstRun
                     bulletRun.isUnderlined = false
                     if let font = properties.bulletFont, !font.hasPrefix("+"), !["Arial", "Wingdings", "Symbol"].contains(font) {
@@ -830,7 +846,7 @@ struct WebRenderer {
                     if runProperties.capitalization == "all" { text = text.uppercased() }
                     json["t"] = TextLabels.symbolsMapped(text)
                 }
-                if let link = textRun.properties.link, let linkJSON = Self.link(link) { json["link"] = linkJSON }
+                if let link = textRun.properties.link, let linkJSON = Self.link(link, tooltip: textRun.properties.linkTooltip) { json["link"] = linkJSON }
                 runs.append(json)
             }
             json["runs"] = runs
@@ -847,8 +863,11 @@ struct WebRenderer {
         if let eastAsian = style.typeface(run.eastAsianFont, eastAsian: true) ?? style.theme.minorEastAsianFont { json["ea"] = eastAsian }
         if run.isBold == true { json["b"] = true }
         if run.isItalic == true { json["i"] = true }
-        if run.isUnderlined == true { json["u"] = true }
-        if run.isStruckThrough == true { json["s"] = true }
+        if let underline = run.underline, underline != .none {
+            json["u"] = underline.rawValue
+            if let color = run.underlineColor { json["uc"] = css(style.color(color)) }
+        }
+        if let strike = run.strike, strike != .none { json["s"] = strike == .double ? 2 : 1 }
         if let baseline = run.baseline, baseline != 0 { json["base"] = baseline > 0 ? 1 : -1 }
         // Character spacing, in points (`spc` is hundredths of a point).
         if let spacing = run.spacing, spacing != 0 { json["sp"] = Double(spacing) / 100 }
@@ -857,21 +876,29 @@ struct WebRenderer {
             json["outline"] = ["w": EMU.points(width), "c": css(style.color(color))]
         }
         if case .shadow(let shadow) = run.shadow { json["shadow"] = self.shadow(shadow, style: style) }
+        if let highlight = run.highlight?.color { json["hl"] = css(style.color(highlight)) }
         return json
     }
 
-    static func link(_ link: Hyperlink) -> [String: Any]? {
+    /// Where a link goes, with the ScreenTip pointing at it shows.
+    static func link(_ link: Hyperlink, tooltip: String? = nil) -> [String: Any]? {
+        var json: [String: Any]
         switch link {
-        case .url(let address): ["url": address]
-        case .slide(let id): ["slide": id.uuidString]
-        case .nextSlide: ["action": "next"]
-        case .previousSlide: ["action": "previous"]
-        case .firstSlide: ["action": "first"]
-        case .lastSlide: ["action": "last"]
-        case .endShow: ["action": "end"]
-        case .zoom(let zoom): zoomLink(zoom)
-        case .slidePart, .other: nil
+        case .url(let address): json = ["url": address]
+        case .slide(let id): json = ["slide": id.uuidString]
+        case .nextSlide: json = ["action": "next"]
+        case .previousSlide: json = ["action": "previous"]
+        case .firstSlide: json = ["action": "first"]
+        case .lastSlide: json = ["action": "last"]
+        case .endShow: json = ["action": "end"]
+        case .customShow(let id, let returns): json = ["customShow": id, "return": returns]
+        case .zoom(let zoom):
+            guard let zoomJSON = zoomLink(zoom) else { return nil }
+            json = zoomJSON
+        case .slidePart, .other: return nil
         }
+        if let tooltip = tooltip?.nilIfEmpty { json["tooltip"] = tooltip }
+        return json
     }
 
     /// Where a zoom leads, for the slideshow page to follow: the slide or

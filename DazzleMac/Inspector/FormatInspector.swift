@@ -19,11 +19,14 @@ extension InspectorViewController {
         }
         if case .table(let table) = shape.kind { buildTable(table) }
         if case .chart(let chart?) = shape.kind, !state.hasMultipleSelection { buildChart(chart) }
-        if case .picture = shape.kind, !state.hasMultipleSelection { buildPicture() }
+        if case .picture(let picture) = shape.kind, !state.hasMultipleSelection {
+            buildPicture()
+            if let media = picture.media { buildPlayback(kind: media.kind) }
+        }
         switch shape.kind {
         case .shape, .connector, .picture:
             buildOutline(of: shape)
-            buildEffects()
+            buildEffects(of: shape)
         default:
             break
         }
@@ -33,13 +36,17 @@ extension InspectorViewController {
                 buildLink(
                     footer: String(localized: (state.textSelection?.length ?? 0) > 0 ? "Format.Link.Selection" : "Format.Link.AllText"),
                     get: { [unowned self] in run.link },
-                    set: { [unowned self] link in edit { state.setTextLink(link, in: &$0) } }
+                    set: { [unowned self] link in edit { state.setTextLink(link, in: &$0) } },
+                    tooltip: { [unowned self] in run.linkTooltip },
+                    setTooltip: { [unowned self] text in edit { state.setTextLinkTooltip(text, in: &$0) } }
                 )
             } else {
                 buildLink(
                     footer: String(localized: "Format.Link.Footer"),
                     get: { [unowned self] in deck.selectedShape?.link },
-                    set: { [unowned self] link in edit { state.setShapeLink(link, in: &$0) } }
+                    set: { [unowned self] link in edit { state.setShapeLink(link, in: &$0) } },
+                    tooltip: { [unowned self] in deck.selectedShape?.linkTooltip },
+                    setTooltip: { [unowned self] text in edit { state.setShapeLinkTooltip(text, in: &$0) } }
                 )
             }
             buildDescription()
@@ -48,15 +55,22 @@ extension InspectorViewController {
 
     // MARK: - Links
 
-    /// Where a link goes: a web address, a slide, or a step through the show.
-    private func buildLink(footer: String, get: @escaping () -> Hyperlink?, set: @escaping (Hyperlink?) -> Void) {
+    /// Where a link goes: a web address, a slide, or a step through the
+    /// show, and the ScreenTip pointing at it shows.
+    private func buildLink(
+        footer: String, get: @escaping () -> Hyperlink?, set: @escaping (Hyperlink?) -> Void,
+        tooltip: @escaping () -> String?, setTooltip: @escaping (String) -> Void
+    ) {
         form.section(String(localized: "Format.Section.Link"))
-        let kinds: [(String.LocalizationValue, (Presentation) -> Hyperlink?)] = [
+        var kinds: [(String.LocalizationValue, (Presentation) -> Hyperlink?)] = [
             ("Link.None", { _ in nil }), ("Link.URL", { _ in .url("https://") }),
             ("Link.Slide", { $0.slides.first.map { .slide($0.id) } }), ("Link.Next", { _ in .nextSlide }),
             ("Link.Previous", { _ in .previousSlide }), ("Link.First", { _ in .firstSlide }),
             ("Link.Last", { _ in .lastSlide }), ("Link.End", { _ in .endShow }),
         ]
+        if !deck.presentation.customShows.isEmpty || get()?.isCustomShow == true {
+            kinds.append(("Link.CustomShow", { $0.customShows.first.map { .customShow($0.id, returns: true) } }))
+        }
         func index(of link: Hyperlink?) -> Int? {
             switch link {
             case nil: 0
@@ -67,6 +81,7 @@ extension InspectorViewController {
             case .firstSlide?: 5
             case .lastSlide?: 6
             case .endShow?: 7
+            case .customShow?: 8
             case .zoom?, .other?: nil
             }
         }
@@ -93,11 +108,54 @@ extension InspectorViewController {
         slides.target = slideTarget
         slides.action = #selector(ActionTarget.run(_:))
         form.row(nil, slides)
+
+        let shows = NSPopUpButton()
+        shows.setAccessibilityIdentifier("linkCustomShow")
+        let showTarget = ActionTarget { [unowned self] in
+            guard case .customShow(_, let returns)? = get(), let id = shows.selectedItem?.tag else { return }
+            set(.customShow(id, returns: returns))
+        }
+        shows.target = showTarget
+        shows.action = #selector(ActionTarget.run(_:))
+        form.row(nil, shows)
+        let returns = form.checkbox(String(localized: "Link.CustomShow.Return"), get: {
+            if case .customShow(_, true)? = get() { return true }
+            return false
+        }, set: { isOn in
+            guard case .customShow(let id, _)? = get() else { return }
+            set(.customShow(id, returns: isOn))
+        })
+        form.row(nil, returns)
+        let tip = form.text(placeholder: String(localized: "Link.Tooltip.Placeholder"), get: { tooltip() ?? "" }, set: setTooltip)
+        form.row(String(localized: "Link.Tooltip.Placeholder"), tip)
         form.note(footer)
         form.onUpdate { [unowned self] in
             _ = slideTarget
+            _ = showTarget
             let link = get()
             if case .url? = link { address.isHidden = false } else { address.isHidden = true }
+            // The ScreenTip's row, label and all, shows only for a link it can be written to.
+            switch link {
+            case nil, .other?: tip.superview?.isHidden = true
+            default: tip.superview?.isHidden = false
+            }
+            if case .customShow(let id, _)? = link {
+                shows.isHidden = false
+                returns.isHidden = false
+                shows.removeAllItems()
+                for show in deck.presentation.customShows {
+                    shows.addItem(withTitle: show.name)
+                    shows.lastItem?.tag = show.id
+                }
+                if deck.presentation.customShow(withID: id) == nil {
+                    shows.addItem(withTitle: String(localized: "Link.CustomShow.Missing"))
+                    shows.lastItem?.tag = id
+                }
+                shows.selectItem(withTag: id)
+            } else {
+                shows.isHidden = true
+                returns.isHidden = true
+            }
             guard case .slide(let id)? = link else {
                 slides.isHidden = true
                 return
@@ -169,6 +227,12 @@ extension InspectorViewController {
             set: { [unowned self] color in if let color { edit { state.setTextColor(color, in: &$0) } } }
         ))
 
+        form.row(String(localized: "Format.Section.Highlight"), form.color(
+            choices: colorChoices, noneTitle: String(localized: "Fill.None"), resolve: { [unowned self] in resolve($0) },
+            get: { [unowned self] in (run.highlight?.color, run.highlight?.color == nil) },
+            set: { [unowned self] color in edit { state.setTextHighlight(color, in: &$0) } }
+        ))
+
         let alignments = ParagraphAlignment.allCases
         form.row(nil, form.choice([
             ("text.alignleft", String(localized: "Menu.Format.AlignLeft")), ("text.aligncenter", String(localized: "Menu.Format.Centre")),
@@ -219,12 +283,87 @@ extension InspectorViewController {
                 guard let shape = deck.selectedShape else { return (nil, false) }
                 switch shape.fill ?? inheritedFill(of: shape) {
                 case .solid(let color): return (color, false)
+                case .pattern(let pattern): return (pattern.foreground, false)
                 case Fill.none?: return (nil, true)
                 default: return (nil, false)
                 }
             },
-            set: { [unowned self] color in edit { state.setFill(color.map(Fill.solid) ?? Fill.none, in: &$0) } }
+            set: { [unowned self] color in
+                // A pattern keeps its cells, in the colour picked.
+                if case .pattern(var pattern)? = deck.selectedShape?.fill, let color {
+                    pattern.foreground = color
+                    return edit { state.setFill(.pattern(pattern), in: &$0) }
+                }
+                edit { state.setFill(color.map(Fill.solid) ?? Fill.none, in: &$0) }
+            }
         ))
+        // The patterns, after a first item for none.
+        let patterns = FormatChoices.patterns
+        let current: String? = if case .pattern(let pattern)? = shape.fill { pattern.preset } else { nil }
+        let extra = current.flatMap { preset in patterns.contains { $0.0 == preset } ? nil : preset }
+        let presets = [nil] + patterns.map { Optional($0.0) } + (extra.map { [$0] } ?? [])
+        let popup = form.popup(
+            [String(localized: "Effect.None")] + patterns.map(\.1) + (extra.map { [FormatChoices.patternLabel($0)] } ?? []),
+            get: { [unowned self] in
+                guard case .pattern(let pattern)? = deck.selectedShape?.fill else { return 0 }
+                return presets.firstIndex(of: pattern.preset)
+            },
+            set: { [unowned self] index in
+                guard let shape = deck.selectedShape else { return }
+                let fill = shape.fill ?? inheritedFill(of: shape)
+                guard let preset = presets[index] else {
+                    // Back to a plain fill, in the pattern's colour.
+                    if case .pattern(let pattern)? = fill { edit { state.setFill(.solid(pattern.foreground), in: &$0) } }
+                    return
+                }
+                var pattern = Fill.Pattern(preset: preset, foreground: .scheme("accent1"), background: .scheme("bg1"))
+                switch fill {
+                case .pattern(let old)?:
+                    pattern.foreground = old.foreground
+                    pattern.background = old.background
+                case .solid(let color)? where color.base != .scheme("phClr"):
+                    pattern.foreground = color
+                default: break
+                }
+                edit { state.setFill(.pattern(pattern), in: &$0) }
+            }
+        )
+        for (index, item) in popup.itemArray.enumerated() where index > 0 {
+            if let preset = presets[index] { item.image = Self.patternSwatch(Fill.Pattern(preset: preset)) }
+        }
+        form.row(String(localized: "Fill.Pattern"), popup)
+        if current != nil {
+            form.row(String(localized: "Fill.Pattern.Background"), form.color(
+                choices: colorChoices, resolve: { [unowned self] in resolve($0) },
+                get: { [unowned self] in
+                    guard case .pattern(let pattern)? = deck.selectedShape?.fill else { return (nil, false) }
+                    return (pattern.background, false)
+                },
+                set: { [unowned self] color in
+                    guard case .pattern(var pattern)? = deck.selectedShape?.fill, let color else { return }
+                    pattern.background = color
+                    edit { state.setFill(.pattern(pattern), in: &$0) }
+                }
+            ))
+        }
+    }
+
+    /// A pattern's cells, black on white, for its menu item.
+    private static func patternSwatch(_ pattern: Fill.Pattern) -> NSImage {
+        NSImage(size: NSSize(width: 16, height: 16), flipped: true) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            NSColor.black.setFill()
+            let cell = rect.width / 8
+            for row in 0..<8 {
+                for column in 0..<8 where pattern.isForeground(column: column, row: row) {
+                    NSRect(x: CGFloat(column) * cell, y: CGFloat(row) * cell, width: cell, height: cell).fill()
+                }
+            }
+            NSColor.tertiaryLabelColor.setStroke()
+            NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5)).stroke()
+            return true
+        }
     }
 
     /// The fill a shape with none of its own gets from its style or layout.
@@ -275,7 +414,7 @@ extension InspectorViewController {
         }))
     }
 
-    private func buildEffects() {
+    private func buildEffects(of shape: SlideShape) {
         form.section(String(localized: "Mac.Inspector.Effects"))
         let shadows = FormatChoices.shadows
         form.row(String(localized: "Format.Shadow"), form.popup(
@@ -299,6 +438,117 @@ extension InspectorViewController {
             set: { [unowned self] index in
                 guard reflections.indices.contains(index) else { return }
                 edit { state.setReflection(reflections[index].reflection, in: &$0) }
+            }
+        ))
+        buildGlowAndEdges()
+        switch shape.kind {
+        case .shape, .picture: build3D()
+        default: break
+        }
+        if case .shape = shape.kind, shape.text != nil {
+            let warps = [("textNoShape", String(localized: "Effect.None"))] + FormatChoices.textWarps
+            form.row(String(localized: "Format.TextWarp"), form.popup(warps.map(\.1), get: { [unowned self] in
+                warps.firstIndex { $0.0 == (deck.selectedShape?.text?.properties.warp?.preset ?? "textNoShape") }
+            }, set: { [unowned self] index in
+                let preset = warps[index].0
+                edit { state.setTextWarp(preset == "textNoShape" ? nil : TextWarp(preset: preset), in: &$0) }
+            }))
+        }
+    }
+
+    private static func points(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1))) + " pt"
+    }
+
+    /// Glow, its colour, soft edges and inner shadow.
+    private func buildGlowAndEdges() {
+        let glows = [0.0] + FormatChoices.glowSizes
+        form.row(String(localized: "Format.Glow"), form.popup(
+            [String(localized: "Effect.None")] + FormatChoices.glowSizes.map(Self.points) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                guard let glow = deck.selectedShape?.effects.glow else { return 0 }
+                return glows.firstIndex(of: EMU.points(glow.radius)) ?? glows.count
+            },
+            set: { [unowned self] index in
+                guard glows.indices.contains(index) else { return }
+                let color = deck.selectedShape?.effects.glow?.color ?? FormatChoices.glowColor(.scheme("accent1"))
+                let glow = index == 0 ? nil : Glow(radius: EMU.from(points: glows[index]), color: color)
+                edit { state.setGlow(glow, in: &$0) }
+            }
+        ))
+        form.row(String(localized: "Format.Glow.Color"), form.color(
+            choices: colorChoices, resolve: { [unowned self] in resolve($0) },
+            get: { [unowned self] in
+                guard var color = deck.selectedShape?.effects.glow?.color else { return (nil, false) }
+                color.transforms.removeAll { $0.name == "alpha" }
+                return (color, false)
+            },
+            set: { [unowned self] color in
+                guard let color else { return }
+                // A colour picked with no glow yet gives the shape one of PowerPoint's usual size.
+                if deck.selectedShape?.effects.glow == nil {
+                    let glow = Glow(radius: EMU.from(points: 8), color: FormatChoices.glowColor(color))
+                    return edit { state.setGlow(glow, in: &$0) }
+                }
+                edit { state.setGlowColor(color, in: &$0) }
+            }
+        ))
+        let edges = [0.0] + FormatChoices.softEdgeSizes
+        form.row(String(localized: "Format.SoftEdges"), form.popup(
+            [String(localized: "Effect.None")] + FormatChoices.softEdgeSizes.map(Self.points) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                guard let softEdge = deck.selectedShape?.effects.softEdge else { return 0 }
+                return edges.firstIndex(of: EMU.points(softEdge)) ?? edges.count
+            },
+            set: { [unowned self] index in
+                guard edges.indices.contains(index) else { return }
+                edit { state.setSoftEdge(index == 0 ? nil : EMU.from(points: edges[index]), in: &$0) }
+            }
+        ))
+        let inner = FormatChoices.innerShadows
+        form.row(String(localized: "Format.InnerShadow"), form.popup(
+            inner.map(\.label) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                let shadow = deck.selectedShape?.effects.innerShadow
+                return inner.firstIndex { $0.shadow == shadow } ?? (shadow == nil ? 0 : inner.count)
+            },
+            set: { [unowned self] index in
+                guard inner.indices.contains(index) else { return }
+                edit { state.setInnerShadow(inner[index].shadow, in: &$0) }
+            }
+        ))
+    }
+
+    /// Bevel, depth and the camera that shows the depth.
+    private func build3D() {
+        let bevels = [("none", String(localized: "Effect.None"))] + FormatChoices.bevels
+        form.row(String(localized: "Format.Bevel"), form.popup(
+            bevels.map(\.1) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                guard let preset = deck.selectedShape?.shape3D?.topBevel?.preset else { return 0 }
+                return bevels.firstIndex { $0.0 == preset } ?? bevels.count
+            },
+            set: { [unowned self] index in
+                guard bevels.indices.contains(index) else { return }
+                let bevel = index == 0 ? nil : Shape3D.Bevel(preset: bevels[index].0)
+                edit { state.setBevel(bevel, in: &$0) }
+            }
+        ))
+        form.row(String(localized: "Format.Depth"), form.number(get: { [unowned self] in
+            EMU.points(deck.selectedShape?.shape3D?.extrusionHeight ?? 0)
+        }, set: { [unowned self] value in
+            edit { state.setDepth(EMU.from(points: value), in: &$0) }
+        }, range: FormatChoices.depthRange, step: 6, unit: "pt"))
+        let cameras = FormatChoices.cameras
+        form.row(String(localized: "Format.Camera"), form.popup(
+            cameras.map(\.1) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                let camera = deck.selectedShape?.scene3D?.camera ?? "orthographicFront"
+                return cameras.firstIndex { $0.0 == camera } ?? cameras.count
+            },
+            set: { [unowned self] index in
+                guard cameras.indices.contains(index) else { return }
+                edit { state.setCamera(cameras[index].0, in: &$0) }
             }
         ))
     }
@@ -437,6 +687,50 @@ extension InspectorViewController {
         buttons.spacing = 6
         form.row(nil, replace)
         form.row(nil, buttons)
+    }
+
+    /// How a video or sound plays in the slideshow.
+    private func buildPlayback(kind: SlideShape.Media.Kind) {
+        form.section(String(localized: "Format.Section.Playback"))
+        let seconds = String(format: String(localized: "Media.Seconds"), "").trimmingCharacters(in: .whitespaces)
+        var media: SlideShape.Media? {
+            guard case .picture(let picture)? = deck.selectedShape?.kind else { return nil }
+            return picture.media
+        }
+        func change(_ apply: @escaping (inout SlideShape.Media) -> Void) {
+            edit { state.setMedia(in: &$0, apply) }
+        }
+        let times: [(String.LocalizationValue, KeyPath<SlideShape.Media, Double>, WritableKeyPath<SlideShape.Media, Double>)] = [
+            ("Media.TrimStart", \.trimStart, \.trimStart), ("Media.TrimEnd", \.trimEnd, \.trimEnd),
+            ("Media.FadeIn", \.fadeIn, \.fadeIn), ("Media.FadeOut", \.fadeOut, \.fadeOut),
+        ]
+        for (title, read, write) in times {
+            form.row(String(localized: title), form.number(
+                get: { media?[keyPath: read] ?? 0 },
+                set: { value in change { $0[keyPath: write] = value } },
+                range: 0...3_600, step: 0.5, unit: seconds
+            ))
+        }
+        form.row(String(localized: "Media.Volume"), form.number(
+            get: { ((media?.volume ?? 1) * 100).rounded() },
+            set: { value in change { $0.volume = value / 100 } },
+            range: 0...100, step: 10, unit: "%"
+        ))
+        var toggles: [(String.LocalizationValue, WritableKeyPath<SlideShape.Media, Bool>)] = [
+            ("Media.Mute", \.isMuted), ("Media.Loop", \.loops), ("Media.Rewind", \.rewinds),
+        ]
+        if kind == .video {
+            toggles += [("Media.FullScreen", \.playsFullScreen)]
+        } else {
+            toggles += [("Media.AcrossSlides", \.playsAcrossSlides)]
+        }
+        toggles += [("Media.HideWhenStopped", \.hidesWhenNotPlaying)]
+        for (title, path) in toggles {
+            form.row(nil, form.checkbox(String(localized: title), get: { media?[keyPath: path] ?? false }, set: { isOn in
+                change { $0[keyPath: path] = isOn }
+            }))
+        }
+        form.note(String(localized: "Format.Playback.Footer"))
     }
 
     // MARK: - Arranging
@@ -587,9 +881,109 @@ extension InspectorViewController {
                 askToResize(to: presets[index])
             }
         ))
-        form.row(nil, form.checkbox(String(localized: "Format.LoopSlideshow"), get: { [unowned self] in
-            deck.presentation.loopsSlideshow
-        }, set: { [unowned self] isOn in edit { state.setLoopsSlideshow(isOn, in: &$0) } }))
+        buildSlideshowSettings()
+    }
+
+    /// How every slideshow of the presentation plays: PowerPoint's Set Up Slide Show.
+    private func buildSlideshowSettings() {
+        form.section(String(localized: "Show.Title"))
+        let settings = { [unowned self] in deck.presentation.showSettings }
+        let update = { [unowned self] (change: @escaping (inout SlideshowSettings) -> Void) in
+            edit { state.updateShowSettings(in: &$0, change) }
+        }
+        let hasShows = !deck.presentation.customShows.isEmpty
+        var ranges = [String(localized: "Show.Range.All"), String(localized: "Show.Range.Slides")]
+        if hasShows || { if case .customShow = settings().range { true } else { false } }() {
+            ranges.append(String(localized: "Show.Range.CustomShow"))
+        }
+        form.row(String(localized: "Show.Range"), form.popup(ranges, get: {
+            switch settings().range {
+            case .all: 0
+            case .slides: 1
+            case .customShow: 2
+            }
+        }, set: { [unowned self] index in
+            let count = max(deck.presentation.slides.count, 1)
+            let first = deck.presentation.customShows.first?.id
+            update { settings in
+                switch index {
+                case 1: settings.range = .slides(from: 1, to: count)
+                case 2: settings.range = first.map(SlideshowSettings.Range.customShow) ?? .all
+                default: settings.range = .all
+                }
+            }
+        }))
+        let maximum = Double(max(deck.presentation.slides.count, 1))
+        let from = form.number(get: {
+            if case .slides(let from, _) = settings().range { return Double(from) }
+            return 1
+        }, set: { value in
+            update { settings in
+                guard case .slides(_, let to) = settings.range else { return }
+                settings.range = .slides(from: Int(value), to: max(Int(value), to))
+            }
+        }, range: 1...maximum, step: 1)
+        let to = form.number(get: {
+            if case .slides(_, let to) = settings().range { return Double(to) }
+            return maximum
+        }, set: { value in
+            update { settings in
+                guard case .slides(let from, _) = settings.range else { return }
+                settings.range = .slides(from: min(from, Int(value)), to: Int(value))
+            }
+        }, range: 1...maximum, step: 1)
+        form.pair(nil, (String(localized: "Show.From"), from), (String(localized: "Show.To"), to))
+        let shows = deck.presentation.customShows
+        let showPopup = form.popup(shows.map(\.name), get: {
+            if case .customShow(let id) = settings().range { return shows.firstIndex { $0.id == id } }
+            return nil
+        }, set: { index in
+            guard shows.indices.contains(index) else { return }
+            update { $0.range = .customShow(shows[index].id) }
+        })
+        form.row(nil, showPopup)
+        form.row(nil, form.checkbox(String(localized: "Show.Kiosk"), get: { settings().isKiosk }, set: { isOn in
+            update { $0.isKiosk = isOn }
+        }))
+        let restart = form.number(get: { settings().kioskRestartAfter / 60 }, set: { minutes in
+            update { $0.kioskRestartAfter = max(minutes, 1) * 60 }
+        }, range: 1...60, step: 1, unit: String(localized: "Show.Minutes"))
+        form.row(String(localized: "Show.KioskRestart"), restart)
+        let loop = form.checkbox(String(localized: "Format.LoopSlideshow"), get: { settings().loops || settings().isKiosk }, set: { [unowned self] isOn in
+            edit { state.setLoopsSlideshow(isOn, in: &$0) }
+        })
+        form.row(nil, loop)
+        let timings = form.checkbox(String(localized: "Show.UseTimings"), get: { settings().usesTimings || settings().isKiosk }, set: { isOn in
+            update { $0.usesTimings = isOn }
+        })
+        form.row(nil, timings)
+        form.row(nil, form.checkbox(String(localized: "Show.ShowAnimations"), get: { settings().showsAnimations }, set: { isOn in
+            update { $0.showsAnimations = isOn }
+        }))
+        form.row(nil, form.checkbox(String(localized: "Show.PlayNarration"), get: { settings().playsNarration }, set: { isOn in
+            update { $0.playsNarration = isOn }
+        }))
+        // What the settings do: a kiosk show's explanation while it is one.
+        let note = NSTextField(wrappingLabelWithString: String(localized: "Show.Footer"))
+        note.textColor = .secondaryLabelColor
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        form.add(note, fill: true)
+        form.onUpdate {
+            let current = settings()
+            var isSlides = false
+            if case .slides = current.range { isSlides = true }
+            var isShow = false
+            if case .customShow = current.range { isShow = true }
+            from.superview?.isHidden = !isSlides
+            showPopup.isHidden = !isShow
+            restart.superview?.isHidden = !current.isKiosk
+            loop.isEnabled = !current.isKiosk
+            timings.isEnabled = !current.isKiosk
+            note.stringValue = String(localized: current.isKiosk ? "Show.Kiosk.Footer" : "Show.Footer")
+        }
+        form.row(nil, form.button(String(localized: "Menu.Play.CustomShows")) { [unowned self] in
+            (view.window?.windowController as? DocumentWindowController)?.showCustomShows(nil)
+        })
     }
 
     /// The preset a slide size is, or has the shape of: a 16:9 deck made 10

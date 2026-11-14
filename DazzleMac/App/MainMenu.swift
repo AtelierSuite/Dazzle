@@ -60,6 +60,8 @@ enum MainMenu {
         export.addItem(item(String(localized: "Menu.File.Export.PowerPoint"), #selector(Commands.exportPowerPoint(_:))))
         menu.addItem(submenu(export))
         menu.addItem(.separator())
+        menu.addItem(item(String(localized: "Mac.Menu.File.Properties"), #selector(Commands.showProperties(_:))))
+        menu.addItem(.separator())
         menu.addItem(item(String(localized: "Menu.File.PageSetup"), #selector(NSDocument.runPageLayout(_:)), "p", [.command, .shift]))
         menu.addItem(item(String(localized: "Menu.File.Print"), #selector(NSDocument.printDocument(_:)), "p"))
         return menu
@@ -178,6 +180,8 @@ enum MainMenu {
         menu.addItem(item(String(localized: "Picture.Crop"), #selector(Commands.toggleCropping(_:))))
         menu.addItem(item(String(localized: "Picture.ResetCrop"), #selector(Commands.resetCrop(_:))))
         menu.addItem(item(String(localized: "Picture.Replace"), #selector(Commands.replacePicture(_:))))
+        menu.addItem(.separator())
+        menu.addItem(item(String(localized: "Mac.Menu.Format.Theme"), #selector(Commands.showTheme(_:))))
         return menu
     }
 
@@ -240,6 +244,8 @@ enum MainMenu {
         let menu = NSMenu(title: String(localized: "Menu.Play"))
         menu.addItem(item(String(localized: "Toolbar.PlayFromCurrent"), #selector(Commands.playSlideshow(_:)), "p", [.command, .option]))
         menu.addItem(item(String(localized: "Toolbar.PlayFromStart"), #selector(Commands.playFromBeginning(_:))))
+        menu.addItem(CustomShowMenuFiller.item())
+        menu.addItem(item(String(localized: "Menu.Play.CustomShows"), #selector(Commands.showCustomShows(_:))))
         menu.addItem(.separator())
         menu.addItem(item(String(localized: "Menu.Play.PreviewAnimations"), #selector(Commands.previewAnimations(_:))))
         return menu
@@ -276,6 +282,38 @@ enum MainMenu {
         let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: "")
         item.submenu = menu
         return item
+    }
+}
+
+/// Fills Play ▸ Play Custom Show with the front presentation's custom
+/// shows each time it opens.
+@MainActor
+final class CustomShowMenuFiller: NSObject, NSMenuDelegate {
+    static let shared = CustomShowMenuFiller()
+
+    /// "Play Custom Show", with a submenu of the front presentation's shows.
+    static func item() -> NSMenuItem {
+        let menu = NSMenu(title: String(localized: "Toolbar.PlayCustomShow"))
+        menu.delegate = shared
+        let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: "")
+        item.submenu = menu
+        return item
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let deck = (NSApp.mainWindow?.windowController as? DocumentWindowController)?.deck
+        let shows = deck?.presentation.customShows ?? []
+        for show in shows {
+            let item = NSMenuItem(title: show.name, action: #selector(DocumentWindowController.playCustomShow(_:)), keyEquivalent: "")
+            item.tag = show.id
+            menu.addItem(item)
+        }
+        if shows.isEmpty {
+            let none = NSMenuItem(title: String(localized: "CustomShow.None"), action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+        }
     }
 }
 

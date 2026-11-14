@@ -9,7 +9,7 @@ import * as storage from "./storage.js";
 import { attachMenuBar, attachToolbarOverflow, openMenu } from "../design/menus.js";
 import { dismissSheet } from "../design/sheets.js";
 import { MediaStore, SlideDrawer, applyFrame, substituteFor } from "./slide.js";
-import { isInstalled } from "./fonts.js";
+import { installedFamilies, isInstalled } from "./fonts.js";
 import { SlideCanvas } from "./canvas.js";
 import { SlideNavigator } from "./navigator.js";
 import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js";
@@ -279,6 +279,13 @@ export class PresentationWindow {
     return this.chartItems();
   }
 
+  /** Play ▸ Play Custom Show: each of the presentation's custom shows. */
+  customShowItems() {
+    const shows = this.engine.info?.customShows ?? [];
+    if (!shows.length) return [{ label: t("CustomShow.None"), disabled: true }];
+    return shows.map((show) => ({ label: show.name, disabled: !show.slides.length, action: () => this.play(null, { customShow: show.id }) }));
+  }
+
   layoutItems() {
     // In master view, what is added is a layout.
     if (this.engine.state?.masterView) return [this.item("newSlide")];
@@ -400,6 +407,7 @@ export class PresentationWindow {
       save: { label: t("Menu.File.Save"), shortcut: shortcut("S"), enabled: has, run: () => this.save() },
       saveAs: { label: t("Web.Menu.SaveAs"), shortcut: shortcut("S", { shift: true }), enabled: has, run: () => this.saveAs() },
       rename: { label: t("Menu.File.Rename"), enabled: has, run: () => this.renameDocument() },
+      properties: { label: t("Mac.Menu.File.Properties"), enabled: has, run: () => this.showProperties() },
       exportPowerPoint: { label: t("Menu.File.Export.PowerPoint"), enabled: has, run: () => this.exportAs({ key: "pptx", extension: "pptx", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }) },
       exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.print() },
       print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has && !master, run: () => this.print() },
@@ -438,6 +446,7 @@ export class PresentationWindow {
       previousSlide: { label: t("Menu.Slide.Previous"), enabled: has, run: () => this.stepSlide(-1) },
       nextSlide: { label: t("Menu.Slide.Next"), enabled: has, run: () => this.stepSlide(1) },
       headerFooter: { label: t("Mac.Menu.Slide.HeaderFooter"), enabled: has && !master, run: () => this.showHeaderFooter() },
+      theme: { label: t("Mac.Menu.Format.Theme"), enabled: has && !master && this.engine.info?.canEditTheme !== false, run: () => this.showTheme() },
       insertTextBox: { label: t("Menu.Insert.TextBox"), enabled: has, run: () => this.insert("insertTextBox") },
       insertTable: { label: t("Menu.Insert.Table"), enabled: has, run: () => this.insertTable() },
       insertPicture: { label: t("Menu.Insert.Choose"), shortcut: shortcut("I", { shift: true }), enabled: has, run: () => this.insertPicture() },
@@ -474,6 +483,7 @@ export class PresentationWindow {
       playHere: { label: t("Web.Play.ThisWindow"), enabled: has && !master, run: () => this.play(this.selection.slide, { presenter: false }) },
       playPresenter: { label: t("Web.Play.PresenterView"), enabled: has && !master, run: () => this.play(this.selection.slide, { presenter: true }) },
       previewAnimations: { label: t("Menu.Play.PreviewAnimations"), enabled: has, run: () => this.previewAnimations() },
+      customShows: { label: t("Menu.Play.CustomShows"), enabled: has, run: () => this.showCustomShows() },
       zoomIn: { label: t("Menu.View.ZoomIn"), shortcut: shortcut("="), enabled: has, run: () => this.stepZoom(1) },
       zoomOut: { label: t("Menu.View.ZoomOut"), shortcut: shortcut("-", { alt: true }), enabled: has, run: () => this.stepZoom(-1) },
       zoomToFit: { label: t("Menu.View.ZoomToFit"), shortcut: shortcut("9"), enabled: has, run: () => this.setZoom("fit") },
@@ -559,6 +569,8 @@ export class PresentationWindow {
           { label: t("Format.Section.Font"), submenu: self.items("bold", "italic", "underline", "strike", "-", "bigger", "smaller", "-", "superscript", "subscript") },
           { label: t("Format.Alignment"), submenu: self.items("alignLeft", "alignCenter", "alignRight", "alignJustify") },
           { label: t("Format.List"), submenu: self.items("bullets", "numbers", "-", "indent", "outdent") },
+          { separator: true },
+          ...self.items("theme"),
         ];
       } },
       { label: t("ActionBar.Arrange"), get items() {
@@ -588,7 +600,13 @@ export class PresentationWindow {
           self.item("fullScreen"),
         ];
       } },
-      { label: t("Menu.Play"), get items() { return self.items("playFromStart", "playFromCurrent", "-", "playPresenter", "playHere", "-", "previewAnimations"); } },
+      { label: t("Menu.Play"), get items() {
+        return [
+          ...self.items("playFromStart", "playFromCurrent"),
+          { label: t("Toolbar.PlayCustomShow"), disabled: !self.hasDocument, submenu: self.customShowItems() },
+          ...self.items("customShows", "-", "playPresenter", "playHere", "-", "previewAnimations"),
+        ];
+      } },
       { label: t("Menu.Window"), get items() {
         return self.document ? [{ label: self.document.name, checked: true, action: () => self.canvas.element.focus() }] : [{ label: "Dazzle", disabled: true }];
       } },
@@ -620,6 +638,8 @@ export class PresentationWindow {
         this.item("exportPDF"), this.item("exportPowerPoint"),
         ...(keynote ? [{ label: t("Web.Export.Keynote"), action: () => this.exportAs(keynote) }] : []),
       ] },
+      { separator: true },
+      this.item("properties"),
       { separator: true },
       this.item("unsupported"),
       this.item("print"),
@@ -985,7 +1005,7 @@ export class PresentationWindow {
     await this.canvas.endEditing();
     await this.flushNotes();
     const presenter = options.presenter ?? hasSecondDisplay();
-    await this.slideshow.start(slideID ?? this.engine.state.slides[0]?.id, { presenter });
+    await this.slideshow.start(slideID ?? this.engine.state.slides[0]?.id, { presenter, customShow: options.customShow });
     if (presenter && this.slideshow.mode !== "presenter") this.showMessage(t("Web.Play.PopupBlocked"), "info");
   }
 
@@ -1492,6 +1512,116 @@ export class PresentationWindow {
     backdrop.querySelector("[data-cancel]").focus();
   }
 
+  /**
+   * Custom Shows: the presentation's named selections of slides. Shows are made,
+   * renamed and removed on the left; on the right, a show's slides are picked and
+   * put in order. Each change is made at once, and can be undone.
+   */
+  showCustomShows() {
+    let selected = this.engine.info?.customShows?.[0]?.id ?? null;
+    const backdrop = this.sheet(`
+      <form class="ds-sheet app__custom-shows-sheet" role="dialog" aria-labelledby="cs-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="cs-title">${escapeHTML(t("CustomShow.Title"))}</h2>
+          <div class="app__custom-shows"></div>
+          <p class="ds-caption app__note">${escapeHTML(t("CustomShow.Footer"))}</p>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-play>${escapeHTML(t("CustomShow.Play"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Web.Common.Done"))}</button>
+        </div>
+      </form>`);
+    const body = backdrop.querySelector(".app__custom-shows");
+    const slideLabel = (id) => {
+      const slide = (this.engine.info?.outline ?? []).find((entry) => entry.id === id);
+      return slide ? `${slide.number}. ${slide.title || t("Slide.Untitled")}` : "";
+    };
+    const render = () => {
+      const shows = this.engine.info?.customShows ?? [];
+      if (!shows.some((show) => show.id === selected)) selected = shows[0]?.id ?? null;
+      const show = shows.find((entry) => entry.id === selected);
+      const outline = this.engine.info?.outline ?? [];
+      body.innerHTML = `
+        <div class="app__custom-shows-list">
+          <nav class="ds-source-list" aria-label="${escapeHTML(t("CustomShow.Title"))}">${shows.map((entry) => `
+            <button class="ds-source-list__item" type="button" data-show="${entry.id}" aria-selected="${entry.id === selected}">${escapeHTML(entry.name)}<span class="ds-source-list__count">${entry.slides.length}</span></button>`).join("")}
+          </nav>
+          <span class="app__inspector-buttons">
+            <button class="ds-button ds-button--bordered ds-button--xs" type="button" data-op="new">${escapeHTML(t("CustomShow.New"))}</button>
+            <button class="ds-button ds-button--bordered ds-button--xs" type="button" data-op="duplicate"${show ? "" : " disabled"}>${escapeHTML(t("CustomShow.Duplicate"))}</button>
+            <button class="ds-button ds-button--bordered ds-button--xs" type="button" data-op="delete"${show ? "" : " disabled"}>${escapeHTML(t("CustomShow.Delete"))}</button>
+          </span>
+        </div>
+        ${show ? `<div class="app__custom-show">
+          <label class="ds-form app__custom-show-name"><span class="ds-form__label">${escapeHTML(t("CustomShow.Name"))}</span><span class="ds-form__control"><input class="ds-text-input ds-text-input--xs" name="name" value="${escapeHTML(show.name)}"></span></label>
+          <div class="app__custom-show-columns">
+            <div class="app__custom-show-table"><table class="ds-table"><thead><tr><th>${escapeHTML(t("CustomShow.AllSlides"))}</th></tr></thead><tbody>${outline.map((slide) => `
+              <tr><td><label class="ds-check"><input type="checkbox" data-include="${slide.id}"${show.slides.includes(slide.id) ? " checked" : ""}>${escapeHTML(slideLabel(slide.id))}</label></td></tr>`).join("")}
+            </tbody></table></div>
+            <div class="app__custom-show-table"><table class="ds-table"><thead><tr><th colspan="2">${escapeHTML(t("CustomShow.InShow"))}</th></tr></thead><tbody>${show.slides.length ? show.slides.map((id, index) => `
+              <tr><td>${escapeHTML(slideLabel(id))}</td><td class="app__custom-show-moves">
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-move="${index}:-1"${index ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveUp"))}" title="${escapeHTML(t("CustomShow.MoveUp"))}">${icon("chevronUp")}</button>
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-move="${index}:1"${index < show.slides.length - 1 ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveDown"))}" title="${escapeHTML(t("CustomShow.MoveDown"))}">${icon("chevronDown")}</button>
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-remove="${index}" aria-label="${escapeHTML(t("CustomShow.Remove"))}" title="${escapeHTML(t("CustomShow.Remove"))}">${icon("close")}</button>
+              </td></tr>`).join("") : `<tr><td class="ds-caption">${escapeHTML(t("CustomShow.Empty"))}</td></tr>`}
+            </tbody></table></div>
+          </div>
+        </div>` : ""}`;
+      backdrop.querySelector("[data-play]").disabled = !show?.slides.length;
+      const setSlides = (slides) => this.engine.call("setCustomShowSlides", { id: selected, slides }).then(render);
+      for (const button of body.querySelectorAll("[data-show]")) {
+        button.addEventListener("click", () => {
+          selected = Number(button.dataset.show);
+          render();
+        });
+      }
+      body.querySelector('[data-op="new"]').addEventListener("click", async () => {
+        const first = this.selection.slide ? [this.selection.slide] : [];
+        selected = await this.engine.call("addCustomShow", { slides: first });
+        render();
+        body.querySelector('input[name="name"]')?.select();
+      });
+      body.querySelector('[data-op="duplicate"]').addEventListener("click", async () => {
+        await this.engine.call("duplicateCustomShow", { id: selected });
+        selected = (this.engine.info?.customShows ?? []).at(-1)?.id ?? selected;
+        render();
+      });
+      body.querySelector('[data-op="delete"]').addEventListener("click", () => this.engine.call("deleteCustomShow", { id: selected }).then(render));
+      body.querySelector('input[name="name"]')?.addEventListener("change", (event) => {
+        this.engine.call("renameCustomShow", { id: selected, name: event.target.value }).then(render);
+      });
+      for (const box of body.querySelectorAll("[data-include]")) {
+        box.addEventListener("change", () => {
+          const id = box.dataset.include;
+          setSlides(box.checked ? [...show.slides, id] : show.slides.filter((entry) => entry !== id));
+        });
+      }
+      for (const button of body.querySelectorAll("[data-move]")) {
+        button.addEventListener("click", () => {
+          const [index, step] = button.dataset.move.split(":").map(Number);
+          const slides = [...show.slides];
+          const [moving] = slides.splice(index, 1);
+          slides.splice(index + step, 0, moving);
+          setSlides(slides);
+        });
+      }
+      for (const button of body.querySelectorAll("[data-remove]")) {
+        button.addEventListener("click", () => setSlides(show.slides.filter((_, index) => index !== Number(button.dataset.remove))));
+      }
+    };
+    render();
+    backdrop.querySelector("[data-play]").addEventListener("click", async () => {
+      document.activeElement?.blur();
+      await dismissSheet(backdrop);
+      if (selected != null) this.play(null, { customShow: selected });
+    });
+    backdrop.querySelector("form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      document.activeElement?.blur();
+      dismissSheet(backdrop);
+    });
+  }
+
   /** The date, slide number and footer, on this slide or every slide. */
   async showHeaderFooter() {
     const data = await this.engine.call("inspect");
@@ -1529,6 +1659,92 @@ export class PresentationWindow {
         fixedDate: values.get("fixedDate") ?? "", number: values.get("number") === "on", footer: values.get("footer") === "on",
         footerText: values.get("footerText") ?? "", hideOnTitle: values.get("hideOnTitle") === "on", toAll: event.submitter?.value === "all",
       });
+    });
+  }
+
+  /** Theme Colours & Fonts: the theme's twelve colours and its heading and body fonts, which every slide follows. */
+  async showTheme() {
+    const data = await this.engine.call("inspect");
+    const theme = data?.themeSettings;
+    if (!theme?.canEdit) return;
+    const families = [...new Set([...(this.engine.info?.fonts ?? []), ...installedFamilies()])].sort((a, b) => a.localeCompare(b, language));
+    const fontPopup = (name, label, selected) => {
+      const choices = families.includes(selected) ? families : [selected, ...families];
+      return `<span class="ds-popup ds-popup--xs"><select class="ds-popup__select" name="${name}" aria-label="${escapeHTML(label)}">${
+        choices.map((family) => `<option value="${escapeHTML(family)}"${family === selected ? " selected" : ""}>${escapeHTML(family)}</option>`).join("")
+      }</select>${icon("chevronDown", "ds-popup__chevron")}</span>`;
+    };
+    const backdrop = this.sheet(`
+      <form class="ds-sheet" role="dialog" aria-labelledby="theme-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="theme-title">${escapeHTML(t("Panel.Theme.Title"))}</h2>
+          <div class="ds-form app__theme">
+            <span class="ds-form__label"><strong>${escapeHTML(t("Theme.Colors"))}</strong></span><span class="ds-form__control"></span>
+            ${theme.colors.map((color) => `<span class="ds-form__label">${escapeHTML(color.label)}</span><span class="ds-form__control"><input type="color" class="ds-color-well" name="color.${color.slot}" value="${color.color}" aria-label="${escapeHTML(color.label)}"></span>`).join("")}
+            <span class="ds-form__label"><strong>${escapeHTML(t("Theme.Fonts"))}</strong></span><span class="ds-form__control"></span>
+            <span class="ds-form__label">${escapeHTML(t("Theme.HeadingFont"))}</span><span class="ds-form__control">${fontPopup("heading", t("Theme.HeadingFont"), theme.heading)}</span>
+            <span class="ds-form__label">${escapeHTML(t("Theme.BodyFont"))}</span><span class="ds-form__control">${fontPopup("body", t("Theme.BodyFont"), theme.body)}</span>
+          </div>
+          <p class="ds-sheet__message">${escapeHTML(t("Theme.Footer"))}</p>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Common.OK"))}</button>
+        </div>
+      </form>`);
+    const form = backdrop.querySelector("form");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = new FormData(form);
+      dismissSheet(backdrop);
+      // Only what was changed, so a colour left alone keeps its exact value.
+      const colors = {};
+      for (const color of theme.colors) {
+        const value = values.get(`color.${color.slot}`);
+        if (value && value.toLowerCase() !== color.color.toLowerCase()) colors[color.slot] = value;
+      }
+      await this.engine.call("setTheme", { colors, heading: values.get("heading"), body: values.get("body") });
+    });
+  }
+
+  /** The presentation's title, author and the rest, and when it was created and last saved. */
+  async showProperties() {
+    const properties = await this.engine.call("properties");
+    if (!properties) return;
+    const fields = [
+      ["title", "Properties.Title"], ["subject", "Properties.Subject"], ["author", "Properties.Author"], ["company", "Properties.Company"],
+      ["keywords", "Properties.Keywords"], ["category", "Properties.Category"],
+    ];
+    const row = (label, control) => `<span class="ds-form__label">${escapeHTML(label)}</span><span class="ds-form__control">${control}</span>`;
+    const when = (value) => value ? new Date(value).toLocaleString(language, { dateStyle: "medium", timeStyle: "short" }) : "—";
+    const history = [
+      ["Properties.Created", when(properties.created)], ["Properties.Modified", when(properties.modified)],
+      ["Properties.LastModifiedBy", properties.lastModifiedBy || "—"],
+      ...(properties.revision != null ? [["Properties.Revision", String(properties.revision)]] : []),
+      ...(properties.application ? [["Properties.Application", properties.application]] : []),
+    ];
+    const backdrop = this.sheet(`
+      <form class="ds-sheet" role="dialog" aria-labelledby="properties-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="properties-title">${escapeHTML(t("Panel.Properties.Title"))}</h2>
+          <div class="ds-form app__properties">
+            ${fields.map(([key, label]) => row(t(label), `<input class="ds-text-input ds-text-input--xs" name="${key}" value="${escapeHTML(properties[key] ?? "")}" aria-label="${escapeHTML(t(label))}">`)).join("")}
+            ${row(t("Properties.Comments"), `<textarea class="ds-text-input" name="comments" rows="3" aria-label="${escapeHTML(t("Properties.Comments"))}">${escapeHTML(properties.comments ?? "")}</textarea>`)}
+            ${history.map(([label, value]) => row(t(label), `<span>${escapeHTML(value)}</span>`)).join("")}
+          </div>
+          ${properties.keynote ? `<p class="ds-caption">${escapeHTML(t("Properties.Keynote.Footer"))}</p>` : ""}
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Common.OK"))}</button>
+        </div>
+      </form>`);
+    const form = backdrop.querySelector("form");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = Object.fromEntries([...fields.map(([key]) => key), "comments"].map((key) => [key, String(new FormData(form).get(key) ?? "")]));
+      dismissSheet(backdrop);
+      await this.engine.call("setProperties", values);
     });
   }
 
@@ -1880,7 +2096,7 @@ export class PresentationWindow {
     if (!this.hasUnkeptChanges) return;
     const version = this.engine.state.version;
     try {
-      const { result, payload } = await this.engine.call("save", { keep: true });
+      const { result, payload } = await this.engine.call("save", { keep: true, draft: true });
       if (await storage.writeDraft(record.id, payload)) {
         record.draftAt = Date.now();
         record.draftName = result.fileName;
@@ -1908,7 +2124,7 @@ export class PresentationWindow {
     const sameKind = record.handle && record.handle.name === format.fileName;
     if (!sameKind) return this.saveAs();
     try {
-      const { payload } = await this.engine.call("save", { format: format.key });
+      const { payload } = await this.engine.call("save", { format: format.key, author: readSetting("author", "") });
       if (!(await files.writeHandle(record.handle, payload))) return;
       await this.saved(record);
     } catch (error) {
@@ -1921,11 +2137,11 @@ export class PresentationWindow {
     if (!record) return;
     await this.flushEdits();
     try {
-      const { result, payload } = await this.engine.call("save", { format: format.key, keep: true });
+      const { result, payload } = await this.engine.call("save", { format: format.key, author: readSetting("author", ""), keep: true });
       const saved = await files.saveFileAs(payload, result.fileName, { ...format, description: this.formatLabel(format.key) });
       if (!saved) return;
       await this.engine.call("rename", { name: saved.name });
-      await this.engine.call("save", { format: format.key, keep: false }).catch(() => {});
+      await this.engine.call("save", { format: format.key, author: readSetting("author", ""), keep: false }).catch(() => {});
       record.name = saved.name;
       if (saved.handle) record.handle = saved.handle;
       await this.saved(record);
@@ -1939,7 +2155,7 @@ export class PresentationWindow {
     if (!this.document) return;
     await this.flushEdits();
     try {
-      const { result, payload } = await this.engine.call("save", { format: format.key, keep: true });
+      const { result, payload } = await this.engine.call("save", { format: format.key, author: readSetting("author", ""), keep: true });
       await files.saveFileAs(payload, result.fileName, { ...format, description: this.formatLabel(format.key) });
     } catch (error) {
       this.showMessage(error.message, "error");

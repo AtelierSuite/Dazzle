@@ -22,6 +22,8 @@ final class SlideshowView: NSView {
     private var playerViews: [SlideShape.ID: PlayerView] = [:]
     /// Pictures of the two slides of the transition playing, at the size shown.
     private var transitionPictures: (id: UUID, width: Int, outgoing: CGImage?, incoming: CGImage?)?
+    /// The ScreenTip of each link on the slide, by the tooltip rectangle over it.
+    private var linkTooltips: [NSView.ToolTipTag: String] = [:]
 
     init(session: PresentationSession, role: Role) {
         self.session = session
@@ -72,6 +74,7 @@ final class SlideshowView: NSView {
             displayLink = nil
         }
         updatePlayers()
+        updateLinkTooltips()
         setAccessibilityLabel(session.currentSlide?.title ?? String(localized: "Slide.Untitled"))
         needsDisplay = true
     }
@@ -83,6 +86,21 @@ final class SlideshowView: NSView {
     override func layout() {
         super.layout()
         updatePlayers()
+        updateLinkTooltips()
+    }
+
+    /// Pointing at a link with a ScreenTip shows it, the topmost link's
+    /// where they overlap.
+    private func updateLinkTooltips() {
+        removeAllToolTips()
+        linkTooltips = [:]
+        let rect = slideRect
+        let scale = rect.width / max(slideSize.width, 1)
+        for (area, tooltip) in session.linkTooltips().reversed() {
+            let frame = CGRect(x: rect.minX + area.minX * scale, y: rect.minY + area.minY * scale,
+                               width: area.width * scale, height: area.height * scale)
+            linkTooltips[addToolTip(frame, owner: self, userData: nil)] = tooltip
+        }
     }
 
     /// A view for each video on the slide, over its picture once it has played.
@@ -106,9 +124,16 @@ final class SlideshowView: NSView {
                 return view
             }()
             let frame = shape.frame.points
-            view.frame = CGRect(x: rect.minX + frame.minX * scale, y: rect.minY + frame.minY * scale,
-                                width: frame.width * scale, height: frame.height * scale)
+            // A video set to play full screen fills the screen, on black, while it plays.
+            let isFullScreen = media.fullScreenVideo == shape.id
+            view.frame = isFullScreen ? bounds : CGRect(
+                x: rect.minX + frame.minX * scale, y: rect.minY + frame.minY * scale,
+                width: frame.width * scale, height: frame.height * scale
+            )
+            view.layer?.backgroundColor = isFullScreen ? NSColor.black.cgColor : nil
+            if isFullScreen, subviews.last !== view { addSubview(view, positioned: .above, relativeTo: nil) }
             view.isHidden = !media.started.contains(shape.id)
+            view.alphaValue = media.opacity(of: shape.id)
         }
     }
 
@@ -126,7 +151,7 @@ final class SlideshowView: NSView {
         if let showing = session.transition {
             drawTransition(showing, to: slide, in: presentation, rect: rect, context: context)
         } else {
-            var options = SlideRenderer.Options.presentation
+            var options = SlideRenderer.Options.slideshow
             options.animation = session.animationFrame(at: Date())
             context.saveGState()
             context.translateBy(x: rect.minX, y: rect.minY)
@@ -146,7 +171,7 @@ final class SlideshowView: NSView {
         let pixels = Int((rect.width * (window?.backingScaleFactor ?? 2)).rounded())
         if transitionPictures?.id != showing.id || transitionPictures?.width != pixels {
             func picture(_ slide: Slide, _ frame: AnimationFrame?) -> CGImage? {
-                var options = SlideRenderer.Options.presentation
+                var options = SlideRenderer.Options.slideshow
                 options.animation = frame
                 return SlideExporter.cgImage(of: slide, in: presentation, width: pixels, options: options)
             }
@@ -172,7 +197,8 @@ final class SlideshowView: NSView {
     /// A play button over each paused video or sound, for the presenter to click.
     private func drawMediaButtons(on slide: Slide, in rect: CGRect) {
         let scale = rect.width / max(slideSize.width, 1)
-        for (shape, media) in MediaPlayback.media(on: slide) where !session.media.isPlaying(shape.id) {
+        for (shape, media) in MediaPlayback.media(on: slide)
+        where !session.media.isPlaying(shape.id) && !media.hidesWhenNotPlaying {
             let frame = shape.frame.points
             let side = min(max(min(frame.width, frame.height) * scale * 0.3, 24), 64)
             let symbol = media.kind == .video ? "play.circle.fill" : "speaker.wave.2.circle.fill"
@@ -212,12 +238,18 @@ final class SlideshowView: NSView {
             }
         }
         guard role == .audience else { return }
-        if session.advancesOnTap { session.next() }
+        if session.advancesOnTap { session.next() } else { session.noteActivity() }
     }
 
     override func rightMouseUp(with event: NSEvent) {
         guard role == .audience else { return super.rightMouseUp(with: event) }
         session.previous()
+    }
+}
+
+extension SlideshowView: NSViewToolTipOwner {
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        linkTooltips[tag] ?? ""
     }
 }
 

@@ -32,9 +32,14 @@ public struct SlideRenderer {
         /// Zooms show the slide they lead to as it is now. Off inside such a
         /// picture, so a zoom to its own slide does not go on forever.
         public var drawsZoomPreviews = true
+        /// Leave out videos and sounds set to be hidden while not playing, as
+        /// a slideshow does; its player shows them while they play.
+        public var hidesStoppedMedia = false
 
         public static let presentation = Options()
         public static let editing = Options(showsPlaceholderPrompts: true)
+        /// The slide as the audience sees it during a show.
+        public static let slideshow = Options(hidesStoppedMedia: true)
     }
 
     public let presentation: Presentation
@@ -91,9 +96,19 @@ public struct SlideRenderer {
     /// topmost first. A shape's link covers it; a link in its text covers
     /// that text, and is found before the shape's.
     public func linkAreas() -> [(CGRect, Hyperlink)] {
+        linkAreasWithTooltips().map { ($0.0, $0.1) }
+    }
+
+    /// Where pointing at a link on the slide shows its ScreenTip, in slide
+    /// points, topmost first, as `linkAreas` finds them.
+    public func linkTooltips() -> [(CGRect, String)] {
+        linkAreasWithTooltips().compactMap { area in area.2.map { (area.0, $0) } }
+    }
+
+    private func linkAreasWithTooltips() -> [(CGRect, Hyperlink, String?)] {
         let style = style
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
-        var areas: [(CGRect, Hyperlink)] = []
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
+        var areas: [(CGRect, Hyperlink, String?)] = []
         for shape in slide.shapes.reversed() where !shape.isHidden && shape.rotation == 0 {
             let sources = style.sources(for: shape)
             if let text = shape.text, case .shape = shape.kind {
@@ -102,12 +117,12 @@ public struct SlideRenderer {
                 } ?? shape.frame.points
                 areas += renderer.linkAreas(text, shape: shape, sources: sources, in: textFrame)
             }
-            if let link = shape.link { areas.append((shape.frame.points, link)) }
+            if let link = shape.link { areas.append((shape.frame.points, link, shape.linkTooltip)) }
             // Each picture of a summary zoom leads to its own section.
             if case .group(let group) = shape.kind {
                 for member in group.children.reversed() where !member.isHidden {
                     if case .zoom? = member.link, let link = member.link {
-                        areas.insert((Self.placed(member, from: group.childFrame, into: shape.frame).frame.points, link), at: 0)
+                        areas.insert((Self.placed(member, from: group.childFrame, into: shape.frame).frame.points, link, member.linkTooltip), at: 0)
                     }
                 }
             }
@@ -123,6 +138,10 @@ public struct SlideRenderer {
         paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
         guard !shape.isHidden else { return }
+        // In a show, a video or sound hidden while not playing is left to the player.
+        if options.hidesStoppedMedia, case .picture(let picture) = shape.kind, picture.media?.hidesWhenNotPlaying == true {
+            return
+        }
         // Effects its style gives it, drawn as though its own.
         let shape = style.resolvingEffects(of: shape, sources: sources)
         if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
@@ -590,7 +609,7 @@ public struct SlideRenderer {
         let textFrame = shape.textFrame?.points ?? shape.geometry.presetName.map {
             PresetGeometry.textRect($0, adjustments: shape.geometry.adjustments, in: frame)
         } ?? frame
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         let bulletsOnly = shape.id == options.bulletsOnlyShapeID
         if let text = shape.text, !text.isEmpty {
             renderer.draw(
@@ -1056,7 +1075,7 @@ public struct SlideRenderer {
     // MARK: - Tables
 
     private func drawTable(_ table: SlideTable, shape: SlideShape, frame: CGRect, style: SlideStyleContext, context: CGContext) {
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         let layout = TableLayout(table: table, frame: frame, style: style, presentation: presentation, slideNumber: slideNumber)
         let accent = style.color(.scheme("accent1"))
 
@@ -1091,13 +1110,16 @@ public struct SlideRenderer {
                 ]
                 func styleBorder(_ name: String) -> LineStyle? {
                     if let tableStyle = layout.tableStyle { return tableStyle.border(name, for: regions) }
-                    return layout.usesBuiltInLook ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
+                    return layout.usesBuiltInLook && !["tl2br", "tr2bl"].contains(name)
+                        ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
                 }
                 let edges: [(LineStyle?, String, CGPoint, CGPoint)] = [
                     (cell.borderTop, edgeNames[0], CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY)),
                     (cell.borderBottom, edgeNames[1], CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)),
                     (cell.borderLeft, edgeNames[2], CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.minX, y: rect.maxY)),
                     (cell.borderRight, edgeNames[3], CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)),
+                    (cell.borderDiagonalDown, "tl2br", CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)),
+                    (cell.borderDiagonalUp, "tr2bl", CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.minY)),
                 ]
                 for (border, name, start, end) in edges {
                     let fallback = styleBorder(name)
@@ -1200,7 +1222,7 @@ public struct TableLayout {
         for width in table.columnWidths { columns.append((columns.last ?? frame.minX) + CGFloat(EMU.points(width))) }
         columnStarts = columns
 
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         var heights = table.rows.map { CGFloat(EMU.points($0.height)) }
         for (rowIndex, row) in table.rows.enumerated() {
             for (columnIndex, cell) in row.cells.enumerated()

@@ -338,6 +338,8 @@ public enum Bullet: Equatable, Hashable, Sendable {
     case none
     case character(String)
     case autoNumber(scheme: String, startAt: Int)
+    /// A picture from the package, `a:buBlip`, drawn as tall as the text.
+    case picture(path: String)
 }
 
 /// Line or paragraph spacing.
@@ -388,7 +390,8 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
         // Every property unsaid: inherited.
     }
 
-    public init(element: XMLElement?) {
+    /// `image` gives the package path a relationship id points to, for picture bullets.
+    public init(element: XMLElement?, image: (String) -> String? = { _ in nil }) {
         guard let element else { return }
         level = element.attribute("lvl").flatMap(Int.init)
         alignment = ParagraphAlignment(attribute: element.attribute("algn"))
@@ -409,6 +412,9 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
                 scheme: number.attribute("type") ?? "arabicPeriod",
                 startAt: number.attribute("startAt").flatMap(Int.init) ?? 1
             )
+        } else if let reference = element.firstChild(named: "buBlip")?.firstChild(named: "blip")?.attribute("embed"),
+                  let path = image(reference) {
+            bullet = .picture(path: path)
         }
         bulletColor = DrawingColor.first(in: element.firstChild(named: "buClr"))
         bulletSize = element.firstChild(named: "buSzPct")?.attribute("val").flatMap(Int.init).map { Double($0) / 100_000 }
@@ -450,8 +456,12 @@ public struct RunProperties: Equatable, Hashable, Sendable {
     public var size: Int?
     public var isBold: Bool?
     public var isItalic: Bool?
-    public var isUnderlined: Bool?
-    public var isStruckThrough: Bool?
+    /// `u`: how the text is underlined, `none` taking away an inherited one.
+    public var underline: UnderlineStyle?
+    /// `strike`: how the text is struck through, `none` taking away an inherited one.
+    public var strike: StrikeStyle?
+    /// `a:uFill`, or failing that `a:uLn`'s fill: the underline's own colour, where it isn't the text's.
+    public var underlineColor: DrawingColor?
     public var color: DrawingColor?
     /// A typeface name, or a theme font such as `+mn-lt`.
     public var latinFont: String?
@@ -468,11 +478,29 @@ public struct RunProperties: Equatable, Hashable, Sendable {
     public var outline: TextOutline?
     /// A shadow each letter casts.
     public var shadow: TextShadow?
+    /// A colour drawn behind the letters.
+    public var highlight: TextHighlight?
     /// Where clicking the text goes. Never inherited.
     public var link: Hyperlink?
+    /// The ScreenTip shown when pointing at the text's link. Never inherited.
+    public var linkTooltip: String?
 
     public init() {
         // Every property unsaid: inherited.
+    }
+
+    /// Whether the text is underlined. Turning it on keeps the style the text
+    /// already has, or underlines it with a single line.
+    public var isUnderlined: Bool? {
+        get { underline.map { $0 != .none } }
+        set { underline = newValue.map { $0 ? (underline.flatMap { $0 == .none ? nil : $0 } ?? .single) : UnderlineStyle.none } }
+    }
+
+    /// Whether the text is struck through. Turning it on keeps the style the
+    /// text already has, or strikes it with a single line.
+    public var isStruckThrough: Bool? {
+        get { strike.map { $0 != .none } }
+        set { strike = newValue.map { $0 ? (strike.flatMap { $0 == .none ? nil : $0 } ?? .single) : StrikeStyle.none } }
     }
 
     public init(element: XMLElement?) {
@@ -483,8 +511,14 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         size = element.attribute("sz").flatMap(Int.init)
         isBold = flag("b")
         isItalic = flag("i")
-        isUnderlined = element.attribute("u").map { $0 != "none" }
-        isStruckThrough = element.attribute("strike").map { $0 != "noStrike" }
+        // A style Dazzle doesn't know is still a line under the text.
+        underline = element.attribute("u").map { UnderlineStyle(rawValue: $0) ?? .single }
+        strike = element.attribute("strike").map { StrikeStyle(rawValue: $0) ?? .single }
+        if let fill = element.firstChild(named: "uFill")?.firstChild(named: "solidFill") {
+            underlineColor = DrawingColor.first(in: fill)
+        } else if let fill = element.firstChild(named: "uLn")?.firstChild(named: "solidFill") {
+            underlineColor = DrawingColor.first(in: fill)
+        }
         baseline = element.attribute("baseline").flatMap(Int.init)
         spacing = element.attribute("spc").flatMap(Int.init)
         capitalization = element.attribute("cap").flatMap { $0 == "none" ? nil : $0 }
@@ -501,6 +535,7 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         shadow = element.firstChild(named: "effectLst").map {
             Shadow(element: $0.firstChild(named: "outerShdw")).map(TextShadow.shadow) ?? TextShadow.none
         }
+        highlight = DrawingColor.first(in: element.firstChild(named: "highlight")).map(TextHighlight.color)
     }
 
     /// Values left unsaid here are taken from `base`.
@@ -509,8 +544,9 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         result.size = size ?? base.size
         result.isBold = isBold ?? base.isBold
         result.isItalic = isItalic ?? base.isItalic
-        result.isUnderlined = isUnderlined ?? base.isUnderlined
-        result.isStruckThrough = isStruckThrough ?? base.isStruckThrough
+        result.underline = underline ?? base.underline
+        result.strike = strike ?? base.strike
+        result.underlineColor = underlineColor ?? base.underlineColor
         result.color = color ?? base.color
         result.latinFont = latinFont ?? base.latinFont
         result.eastAsianFont = eastAsianFont ?? base.eastAsianFont
@@ -520,8 +556,63 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         result.capitalization = capitalization ?? base.capitalization
         result.outline = outline ?? base.outline
         result.shadow = shadow ?? base.shadow
+        result.highlight = highlight ?? base.highlight
         return result
     }
+}
+
+/// `u` in run properties: the line drawn under the text.
+public enum UnderlineStyle: String, CaseIterable, Hashable, Sendable {
+    case none
+    /// A single line under the words, leaving the spaces between them bare.
+    case words
+    case single = "sng"
+    case double = "dbl"
+    case heavy
+    case dotted
+    case dottedHeavy
+    case dash
+    case dashHeavy
+    case dashLong
+    case dashLongHeavy
+    case dotDash
+    case dotDashHeavy
+    case dotDotDash
+    case dotDotDashHeavy
+    case wavy
+    case wavyHeavy
+    case wavyDouble = "wavyDbl"
+
+    /// Drawn twice as thick as the font's own underline.
+    public var isHeavy: Bool {
+        switch self {
+        case .heavy, .dottedHeavy, .dashHeavy, .dashLongHeavy, .dotDashHeavy, .dotDotDashHeavy, .wavyHeavy: true
+        default: false
+        }
+    }
+
+    public var isDouble: Bool { self == .double || self == .wavyDouble }
+
+    public var isWavy: Bool { self == .wavy || self == .wavyHeavy || self == .wavyDouble }
+
+    /// Dashes and gaps along the line, in multiples of its thickness; empty for a solid line.
+    public var dashPattern: [Double] {
+        switch self {
+        case .dotted, .dottedHeavy: [1, 1]
+        case .dash, .dashHeavy: [4, 2]
+        case .dashLong, .dashLongHeavy: [8, 3]
+        case .dotDash, .dotDashHeavy: [4, 2, 1, 2]
+        case .dotDotDash, .dotDotDashHeavy: [4, 2, 1, 2, 1, 2]
+        default: []
+        }
+    }
+}
+
+/// `strike` in run properties: the line drawn through the text.
+public enum StrikeStyle: String, CaseIterable, Hashable, Sendable {
+    case none = "noStrike"
+    case single = "sngStrike"
+    case double = "dblStrike"
 }
 
 /// `a:ln` in run properties: a line around each letter, or none, which
@@ -575,6 +666,17 @@ public enum TextShadow: Equatable, Hashable, Sendable {
     }
 }
 
+/// `a:highlight` in run properties: a colour behind the letters, or none,
+/// which takes away one the text would inherit.
+public enum TextHighlight: Equatable, Hashable, Sendable {
+    case none
+    case color(DrawingColor)
+
+    public var color: DrawingColor? {
+        if case .color(let color) = self { color } else { nil }
+    }
+}
+
 /// `a:lstStyle` and the master's text styles: paragraph properties per
 /// outline level, 1 through 9.
 public struct ListStyle: Equatable, Hashable, Sendable {
@@ -584,16 +686,17 @@ public struct ListStyle: Equatable, Hashable, Sendable {
         // No levels: everything inherited.
     }
 
-    public init(element: XMLElement?) {
+    /// `image` gives the package path a relationship id points to, for picture bullets.
+    public init(element: XMLElement?, image: (String) -> String? = { _ in nil }) {
         guard let element else { return }
         for level in 1...9 {
             if let properties = element.firstChild(named: "lvl\(level)pPr") {
-                levels[level] = ParagraphProperties(element: properties)
+                levels[level] = ParagraphProperties(element: properties, image: image)
             }
         }
         // `defPPr` applies beneath every level.
         if let defaults = element.firstChild(named: "defPPr") {
-            let base = ParagraphProperties(element: defaults)
+            let base = ParagraphProperties(element: defaults, image: image)
             for level in 1...9 {
                 levels[level] = (levels[level] ?? ParagraphProperties()).merged(over: base)
             }

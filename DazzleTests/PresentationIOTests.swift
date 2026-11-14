@@ -1236,6 +1236,45 @@ struct HyperlinkTests {
         #expect(run.properties.link == .slide(copy.slides[1].id))
     }
 
+    @Test("ScreenTips on shape and text links are written and read back, and show where the link is")
+    func screenTips() throws {
+        var presentation = Presentation.blank
+        let state = EditorState()
+        state.selectSlide(presentation.slides[0].id)
+        state.insertShape("rect", in: &presentation)
+        state.setShapeLink(.url("https://example.com"), in: &presentation)
+        state.setShapeLinkTooltip("Visit \"Example\" & more", in: &presentation)
+        state.insertTextBox(in: &presentation)
+        state.setText("Next", in: &presentation)
+        state.endEditingText()
+        state.setTextLink(.nextSlide, in: &presentation)
+        state.setTextLinkTooltip("Onward", in: &presentation)
+
+        let copy = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        let shapes = copy.slides[0].shapes
+        #expect(shapes[shapes.count - 2].linkTooltip == "Visit \"Example\" & more")
+        let run = try #require(shapes.last?.text?.paragraphs.first?.runs.first)
+        #expect(run.properties.link == .nextSlide)
+        #expect(run.properties.linkTooltip == "Onward")
+        let tips = SlideRenderer(presentation: copy, slide: copy.slides[0]).linkTooltips().map(\.1)
+        #expect(tips == ["Onward", "Visit \"Example\" & more"])
+
+        // Taking the link away takes its ScreenTip too.
+        state.setTextLink(nil, in: &presentation)
+        let unlinked = try #require(presentation.slides[0].shapes.last?.text?.paragraphs.first?.runs.first)
+        #expect(unlinked.properties.linkTooltip == nil)
+    }
+
+    @Test("A ScreenTip is read from a link's tooltip")
+    func screenTipXML() throws {
+        let element = try XMLLite.parse(Data(
+            "<a:hlinkClick xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" action=\"ppaction://hlinkshowjump?jump=endshow\" tooltip=\"The end\"/>".utf8
+        ))
+        #expect(Hyperlink.tooltip(of: element) == "The end")
+        #expect(Hyperlink.endShow.xml(relationshipID: nil, tooltip: "A & B")?.contains("tooltip=\"A &amp; B\"") == true)
+        #expect(Hyperlink.endShow.xml(relationshipID: nil, tooltip: "")?.contains("tooltip") == false)
+    }
+
     @Test("Linked text can be found where it is drawn, and a session follows it")
     func follow() throws {
         var presentation = Presentation.blank

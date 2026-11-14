@@ -1,7 +1,8 @@
 import Foundation
 
 /// The theme, masters and layouts a presentation's slides are built on.
-/// Read with the file, and never changed: master view's changes make another.
+/// Read with the file, and never changed: master view's changes and theme
+/// edits make another.
 public final class DeckResources: Equatable, Sendable {
     public let masters: [String: SlideMaster]
     /// Masters in the order the presentation lists them.

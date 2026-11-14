@@ -736,6 +736,8 @@ export class SlideDrawer {
     if (node.line) this.stroke(node.path, node.line, geometry, context, node);
     if (node.media) {
       parent.dataset.media = JSON.stringify(node.media);
+      // A slideshow leaves it out until it plays.
+      if (node.media.hide) parent.dataset.mediaHide = "1";
       if (context.editing) {
         // A video or sound is marked as one.
         const size = Math.min(Math.max(Math.min(node.w, node.h) * 0.18, 10), 28);
@@ -887,7 +889,16 @@ export class SlideDrawer {
     if (paragraph.bullet && !prompt) {
       const bullet = html("span", "text__bullet", element);
       bullet.contentEditable = "false";
-      bullet.textContent = paragraph.bullet.t;
+      if (paragraph.bullet.img) {
+        const picture = html("img", "text__bullet-picture", bullet);
+        picture.alt = "";
+        const show = (url) => { if (url) picture.src = url; };
+        const known = this.media.peek(paragraph.bullet.img);
+        if (known) show(known);
+        else this.media.url(paragraph.bullet.img).then(show);
+      } else {
+        bullet.textContent = paragraph.bullet.t;
+      }
       runStyle(bullet, paragraph.bullet, scale);
       // The tab after the bullet lands on the margin, or past the bullet when it hangs into nothing.
       const size = (paragraph.runs[0]?.sz ?? paragraph.end.sz) * scale;
@@ -1122,6 +1133,20 @@ export class SlideDrawer {
   }
 }
 
+/** The CSS text-decoration styles for each OOXML underline. */
+const underlineStyles = { dbl: "double", wavyDbl: "double", dotted: "dotted", dottedHeavy: "dotted", wavy: "wavy", wavyHeavy: "wavy" };
+
+/** Puts `lines` on `element` in the style `kind` gives: an underline style, or 2 for a double strikethrough. */
+function decorate(element, lines, kind, color) {
+  element.style.textDecorationLine = lines;
+  if (kind === 2) element.style.textDecorationStyle = "double";
+  else if (typeof kind === "string") {
+    element.style.textDecorationStyle = underlineStyles[kind] ?? (/^d(ash|ot)/.test(kind) ? "dashed" : "solid");
+    if (/Heavy$/.test(kind) || kind === "heavy") element.style.textDecorationThickness = "0.12em";
+  }
+  if (color) element.style.textDecorationColor = color;
+}
+
 /** A run's look, as CSS. */
 export function runStyle(element, run, scale = 1) {
   const size = run.sz * scale * (run.base ? 2 / 3 : 1);
@@ -1130,8 +1155,9 @@ export function runStyle(element, run, scale = 1) {
   element.style.color = run.c;
   if (run.b) element.style.fontWeight = "700";
   if (run.i) element.style.fontStyle = "italic";
+  // CSS gives one style to all of an element's lines; an underline's style wins over a strikethrough's.
   const lines = [run.u && "underline", run.s && "line-through"].filter(Boolean);
-  if (lines.length) element.style.textDecoration = lines.join(" ");
+  if (lines.length) decorate(element, lines.join(" "), run.u ?? run.s, run.uc);
   if (run.base) element.style.verticalAlign = run.base > 0 ? "super" : "sub";
   // Spacing shrinks with text fitted to its box, as Apple platforms kern it, but not with superscript.
   if (run.sp) element.style.letterSpacing = `${run.sp * scale}px`; // design-lint-allow (document content)
@@ -1139,6 +1165,7 @@ export function runStyle(element, run, scale = 1) {
     element.style.webkitTextStroke = `${run.outline.w}px ${run.outline.c}`;
     element.style.paintOrder = "stroke fill";
   }
+  if (run.hl) element.style.backgroundColor = run.hl;
   if (run.shadow) element.style.textShadow = `${run.shadow.dx}px ${run.shadow.dy}px ${run.shadow.blur / 2}px ${run.shadow.c}`;
 }
 
@@ -1402,7 +1429,7 @@ export function drawTableBorders(grid) {
     const y = cell.offsetTop;
     const w = cell.offsetWidth;
     const h = cell.offsetHeight;
-    const edges = { t: [x, y, x + w, y], b: [x, y + h, x + w, y + h], l: [x, y, x, y + h], r: [x + w, y, x + w, y + h] };
+    const edges = { t: [x, y, x + w, y], b: [x, y + h, x + w, y + h], l: [x, y, x, y + h], r: [x + w, y, x + w, y + h], d: [x, y, x + w, y + h], u: [x, y + h, x + w, y] };
     for (const [key, line] of Object.entries(borders)) {
       const [x1, y1, x2, y2] = edges[key];
       svg("line", { x1, y1, x2, y2, stroke: line.c, "stroke-width": line.w, "stroke-dasharray": line.dash?.join(" ") }, lines);

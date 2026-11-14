@@ -8,8 +8,8 @@ import Foundation
 public struct Presentation: Equatable, Sendable {
     public var slideSize: EMUSize
     public var slides: [Slide]
-    /// Theme, masters and layouts. Read with the file, and read again once
-    /// master view has changed them.
+    /// Theme, masters and layouts. Read with the file, read again once
+    /// master view has changed them, and remade when the theme is edited.
     public var resources: DeckResources
     /// Every part of the file as it was read.
     public let package: Package
@@ -34,10 +34,23 @@ public struct Presentation: Equatable, Sendable {
     /// Everyone who has commented, in each of PowerPoint's two formats.
     public var commentAuthors: [CommentAuthor] = []
     public var modernCommentAuthors: [ModernCommentAuthor] = []
+    /// How every slideshow of the presentation plays.
+    public var showSettings = SlideshowSettings()
     /// Whether the slideshow starts again from the first slide after the
     /// last, until stopped.
-    public var loopsSlideshow = false
+    public var loopsSlideshow: Bool {
+        get { showSettings.loops }
+        set { showSettings.loops = newValue }
+    }
     public var isShowSettingsModified = false
+    /// Named selections of the slides, each played in its own order.
+    public var customShows: [CustomShow] = []
+    /// Whether the custom shows must be written again.
+    public var areCustomShowsModified = false
+    /// Title, author, dates and the rest of `docProps`.
+    public var properties = DocumentProperties()
+    /// Whether `properties` must be written over the file's own.
+    public var arePropertiesModified = false
     /// The Keynote document the presentation was converted from, if it was.
     public var keynoteSource: KeynoteSource?
 
