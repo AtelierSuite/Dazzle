@@ -1725,6 +1725,57 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
+/** A deck whose first slide holds an equation as PowerPoint writes one: the Office Math, with a picture of it to fall back on. */
+function deckWithEquation() {
+  call("new", { name: "Equation.pptx" });
+  const entries = unzip(call("save", { format: "pptx" }).payload);
+  const decode = (name) => new TextDecoder().decode(entries.get(name));
+  const encode = (name, text) => entries.set(name, new TextEncoder().encode(text));
+  const run = (text, color = "") => `<m:r><a:rPr lang="en-US" sz="2400" i="1">${color}<a:latin typeface="Cambria Math"/></a:rPr><m:t>${text}</m:t></m:r>`;
+  const non = `<p:nvSpPr><p:cNvPr id="951" name="Equation"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>`;
+  const frame = `<a:xfrm><a:off x="914400" y="914400"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>`;
+  const math = `<a14:m><m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath>
+    ${run("x=")}<m:f><m:num>${run("-b±")}<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/><m:e>
+      <m:sSup><m:e>${run("b")}</m:e><m:sup>${run("2")}</m:sup></m:sSup>${run("-4ac", `<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>`)}</m:e></m:rad></m:num>
+    <m:den>${run("2a")}</m:den></m:f>
+    <m:nary><m:naryPr><m:chr m:val="∑"/><m:limLoc m:val="undOvr"/></m:naryPr><m:sub>${run("i=1")}</m:sub><m:sup>${run("n")}</m:sup><m:e>
+      <m:d><m:dPr><m:begChr m:val="["/><m:endChr m:val="]"/></m:dPr><m:e><m:m><m:mr><m:e>${run("1")}</m:e><m:e>${run("0")}</m:e></m:mr>
+      <m:mr><m:e>${run("0")}</m:e><m:e>${run("1")}</m:e></m:mr></m:m></m:e></m:d></m:e></m:nary>
+    </m:oMath></m:oMathPara></a14:m>`;
+  const shape = `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main"><mc:Choice Requires="a14">
+    <p:sp>${non}<p:spPr>${frame}<a:noFill/></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p>${math}</a:p></p:txBody></p:sp></mc:Choice>
+    <mc:Fallback><p:sp>${non}<p:spPr>${frame}<a:solidFill><a:srgbClr val="00FF00"/></a:solidFill></p:spPr>
+    <p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"><a:noFill/></a:rPr><a:t> </a:t></a:r></a:p></p:txBody></p:sp></mc:Fallback>
+    </mc:AlternateContent>`;
+  encode("ppt/slides/slide1.xml", decode("ppt/slides/slide1.xml").replace("</p:spTree>", `${shape}</p:spTree>`));
+  return zip(entries);
+}
+
+test("reads an equation rather than its fallback picture, hands the page MathML, and keeps it on save", () => {
+  const opened = call("open", { name: "Equation.pptx" }, deckWithEquation());
+  const slide = opened.state.slides[0].id;
+  const shape = call("scene", { slide }).result.shapes.find((node) => node.name === "Equation");
+  assert.equal(shape.fill, undefined, "the fallback's fill is not drawn");
+  const paragraph = shape.text.paras[0];
+  assert.equal(paragraph.align, "ctr", "a math paragraph is centred");
+  const run = paragraph.runs[0];
+  assert.equal(run.sz, 24);
+  assert.equal(run.t, "x=(-b±√(b^2-4ac))/2a∑_(i=1)^n [[1 0; 0 1]]", "its text reads along a line");
+  assert.match(run.math, /^<math [^>]*displaystyle="true">/);
+  assert.match(run.math, /<mi>𝑥<\/mi><mo stretchy="false">=<\/mo><mfrac>/, "letters are math italic, a fraction a fraction");
+  assert.match(run.math, /<msqrt><mrow><msup><mrow><mi>𝑏<\/mi><\/mrow><mrow><mn>2<\/mn><\/mrow><\/msup>/);
+  assert.match(run.math, /<mo stretchy="false" style="color:#ff0000">−<\/mo><mn style="color:#ff0000">4<\/mn>/, "a run keeps its colour, a hyphen is a minus");
+  assert.match(run.math, /<munderover><mo largeop="true" movablelimits="false">∑<\/mo>/);
+  assert.match(run.math, /<mo fence="true" stretchy="true">\[<\/mo><mrow><mtable><mtr><mtd [^>]*><mrow><mn>1<\/mn>/);
+
+  const saved = call("save", { format: "pptx" }).payload;
+  const xml = new TextDecoder().decode(unzip(saved).get("ppt/slides/slide1.xml"));
+  assert.match(xml, /<mc:Choice Requires="a14">/, "written back as it was read");
+  assert.match(xml, /<m:nary><m:naryPr><m:chr m:val="∑"\/>/);
+  assert.match(xml, /<mc:Fallback>/);
+});
+
 test("edits glow, soft edges, inner shadow, bevel, depth, text warp and pattern fills, and saves them", () => {
   call("new", { name: "Untitled.pptx" });
   const opened = call("open", { name: "Effects.pptx" }, deckWithShapes());

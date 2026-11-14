@@ -300,6 +300,7 @@ public struct TextRenderer {
                 context.textPosition = origin
                 CTLineDraw(line, context)
                 drawStackedLetters(in: line, at: origin, context: context)
+                drawEquations(in: line, at: origin, context: context)
                 drawPictureBullets(in: line, at: origin, context: context)
                 drawDecorations(in: line, origin: origin, context: context)
             }
@@ -420,6 +421,7 @@ public struct TextRenderer {
                 context.textPosition = .zero
                 CTLineDraw(entry.line, context)
                 drawStackedLetters(in: entry.line, at: .zero, context: context)
+                drawEquations(in: entry.line, at: .zero, context: context)
                 drawPictureBullets(in: entry.line, at: .zero, context: context)
                 drawDecorations(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
@@ -791,6 +793,10 @@ public struct TextRenderer {
                     runProperties.color = run.properties.color ?? .scheme("hlink")
                     runProperties.isUnderlined = run.properties.isUnderlined ?? true
                 }
+                if case .equation(let equation) = run.kind {
+                    result.append(equationString(equation, run: runProperties, scale: scale, colorOverride: textColor))
+                    continue
+                }
                 var text = run.text
                 if case .field(let type) = run.kind {
                     if type == "slidenum" {
@@ -1121,6 +1127,7 @@ public struct TextRenderer {
             guard let letter, let first = letter.unicodeScalars.first, !first.properties.isWhitespace,
                   first.properties.generalCategory != .format, !standsUpright(first) else { return }
             var attributes = string.attributes(at: range.location, effectiveRange: nil)
+            guard attributes[equationKey] == nil else { return }
             attributes[verticalForms] = nil
             let line = CTLineCreateWithAttributedString(NSAttributedString(string: letter, attributes: attributes))
             let font = attributes[fontKey].map { $0 as! CTFont } // swiftlint:disable:this force_cast
@@ -1194,6 +1201,74 @@ public struct TextRenderer {
         context.textPosition = CGPoint(x: -width / 2, y: -(ascent - descent) / 2)
         CTLineDraw(line, context)
         context.restoreGState()
+    }
+
+    // MARK: - Equations
+
+    private static let equationKey = NSAttributedString.Key("DazzleEquation")
+
+    /// An equation as the one character that keeps its room in the line: an
+    /// object replacement character as wide, tall and deep as the equation
+    /// laid out, which is drawn in its place.
+    private func equationString(
+        _ equation: MathEquation, run: RunProperties, scale: Double, colorOverride: RGBAColor?
+    ) -> NSAttributedString {
+        var attributes = attributes(for: run, scale: scale, colorOverride: colorOverride)
+        attributes[Self.underlineKey] = nil
+        attributes[Self.strikeKey] = nil
+        attributes[Self.shadowKey] = nil
+        let size = max(CGFloat(run.size ?? 1_800) / 100 * scale, 1)
+        let color = attributes[Self.colorKey].map { $0 as! CGColor } ?? CGColor(gray: 0, alpha: 1) // swiftlint:disable:this force_cast
+        var layout = MathLayout(fontSize: size, color: color)
+        // Prompts and text laid out unseen are all one colour.
+        if colorOverride == nil {
+            layout.runColor = { properties in properties.color.map { style.color($0).cgColor } }
+        }
+        layout.textFont = { properties, size in
+            guard let family = style.typeface(properties.latinFont), family.lowercased() != "cambria math" else { return nil }
+            return FontResolver.shared.font(
+                family: family, size: size, bold: properties.isBold ?? false, italic: properties.isItalic ?? false,
+                embedded: style.resources.embeddedFonts
+            )
+        }
+        let box = layout.box(for: equation)
+        // The line is never shorter for holding an equation than for holding text.
+        let font = MathLayout.font(size: size)
+        box.lineAscent = max(box.ascent, CTFontGetAscent(font))
+        box.lineDescent = max(box.descent, CTFontGetDescent(font))
+        box.baseAlpha = color.alpha
+        attributes[Self.equationKey] = box
+        attributes[NSAttributedString.Key(kCTRunDelegateAttributeName as String)] = Self.runDelegate(for: box)
+        return NSAttributedString(string: "\u{FFFC}", attributes: attributes)
+    }
+
+    private static func runDelegate(for box: MathBox) -> CTRunDelegate? {
+        var callbacks = CTRunDelegateCallbacks(
+            version: kCTRunDelegateVersion1,
+            dealloc: { Unmanaged<MathBox>.fromOpaque($0).release() },
+            getAscent: { Unmanaged<MathBox>.fromOpaque($0).takeUnretainedValue().lineAscent },
+            getDescent: { Unmanaged<MathBox>.fromOpaque($0).takeUnretainedValue().lineDescent },
+            getWidth: { Unmanaged<MathBox>.fromOpaque($0).takeUnretainedValue().width }
+        )
+        return CTRunDelegateCreate(&callbacks, Unmanaged.passRetained(box).toOpaque())
+    }
+
+    /// Draws each equation of `line`, whose origin is `origin`, where the line keeps its room.
+    private func drawEquations(in line: CTLine, at origin: CGPoint, context: CGContext) {
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let box = attributes[Self.equationKey.rawValue] as? MathBox, CTRunGetGlyphCount(run) > 0 else { continue }
+            var position = CGPoint.zero
+            CTRunGetPositions(run, CFRange(location: 0, length: 1), &position)
+            context.saveGState()
+            // An equation fades with its paragraph, as the text's colour says.
+            if box.baseAlpha > 0.001, let color = attributes[Self.colorKey.rawValue] {
+                let alpha = (color as! CGColor).alpha / box.baseAlpha // swiftlint:disable:this force_cast
+                if alpha < 0.999 { context.setAlpha(max(alpha, 0)) }
+            }
+            box.draw(in: context, at: CGPoint(x: origin.x + position.x, y: origin.y + position.y))
+            context.restoreGState()
+        }
     }
 
     // MARK: - Bullets
