@@ -86,7 +86,7 @@ struct WebRenderer {
             ]
         }
         if let effects = effects(shape.effects, size: frame.size, style: style) { node["effects"] = effects }
-        if let link = shape.link, let json = Self.link(link) { node["link"] = json }
+        if let link = shape.link, let json = Self.link(link, tooltip: shape.linkTooltip) { node["link"] = json }
 
         switch shape.kind {
         case .group(let group):
@@ -536,7 +536,10 @@ struct WebRenderer {
         if let media = picture.media {
             node["media"] = [
                 "kind": media.kind == .video ? "video" : "audio", "path": media.path as Any, "url": media.url as Any,
-                "auto": media.playsAutomatically,
+                "auto": media.playsAutomatically, "narration": media.isNarration,
+                "trim": [media.trimStart, media.trimEnd], "fade": [media.fadeIn, media.fadeOut],
+                "volume": media.effectiveVolume, "loop": media.loops, "rewind": media.rewinds,
+                "full": media.kind == .video && media.playsFullScreen, "hide": media.hidesWhenNotPlaying,
             ]
         }
         if let crop = Optional(picture), crop.cropLeft != 0 || crop.cropTop != 0 || crop.cropRight != 0 || crop.cropBottom != 0 {
@@ -823,7 +826,7 @@ struct WebRenderer {
                     if runProperties.capitalization == "all" { text = text.uppercased() }
                     json["t"] = TextLabels.symbolsMapped(text)
                 }
-                if let link = textRun.properties.link, let linkJSON = Self.link(link) { json["link"] = linkJSON }
+                if let link = textRun.properties.link, let linkJSON = Self.link(link, tooltip: textRun.properties.linkTooltip) { json["link"] = linkJSON }
                 runs.append(json)
             }
             json["runs"] = runs
@@ -853,17 +856,22 @@ struct WebRenderer {
         return json
     }
 
-    static func link(_ link: Hyperlink) -> [String: Any]? {
+    /// Where a link goes, with the ScreenTip pointing at it shows.
+    static func link(_ link: Hyperlink, tooltip: String? = nil) -> [String: Any]? {
+        var json: [String: Any]
         switch link {
-        case .url(let address): ["url": address]
-        case .slide(let id): ["slide": id.uuidString]
-        case .nextSlide: ["action": "next"]
-        case .previousSlide: ["action": "previous"]
-        case .firstSlide: ["action": "first"]
-        case .lastSlide: ["action": "last"]
-        case .endShow: ["action": "end"]
-        case .slidePart, .other: nil
+        case .url(let address): json = ["url": address]
+        case .slide(let id): json = ["slide": id.uuidString]
+        case .nextSlide: json = ["action": "next"]
+        case .previousSlide: json = ["action": "previous"]
+        case .firstSlide: json = ["action": "first"]
+        case .lastSlide: json = ["action": "last"]
+        case .endShow: json = ["action": "end"]
+        case .customShow(let id, let returns): json = ["customShow": id, "return": returns]
+        case .slidePart, .other: return nil
         }
+        if let tooltip = tooltip?.nilIfEmpty { json["tooltip"] = tooltip }
+        return json
     }
 
     // MARK: - Numbers

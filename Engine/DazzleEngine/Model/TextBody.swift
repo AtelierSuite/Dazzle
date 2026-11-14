@@ -476,6 +476,8 @@ public struct RunProperties: Equatable, Hashable, Sendable {
     public var shadow: TextShadow?
     /// Where clicking the text goes. Never inherited.
     public var link: Hyperlink?
+    /// The ScreenTip shown when pointing at the text's link. Never inherited.
+    public var linkTooltip: String?
 
     public init() {
         // Every property unsaid: inherited.

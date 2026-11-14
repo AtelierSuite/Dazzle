@@ -48,7 +48,9 @@ public final class ShapeParser {
             guard var shape = shape(from: element) else { return nil }
             shape.isHidden = ["1", "true"].contains(Self.commonProperties(of: element)?.attribute("hidden") ?? "")
             shape.altText = Self.description(of: element)
-            shape.link = link(in: Self.commonProperties(of: element))
+            let common = Self.commonProperties(of: element)
+            shape.link = link(in: common)
+            shape.linkTooltip = Hyperlink.tooltip(of: common?.firstChild(named: "hlinkClick"))
             if capturesSource {
                 if let source = XMLLite.serialize(element, inheritedNamespaces: namespaces) {
                     shape.source = source
@@ -223,6 +225,14 @@ public final class ShapeParser {
                 media.path = PackagePath.resolve(relationship.target, from: partPath)
             }
         }
+        if let trim = embedded?.firstChild(named: "trim") {
+            media.trimStart = Self.mediaTime(trim.attribute("st")) ?? 0
+            media.trimEnd = Self.mediaTime(trim.attribute("end")) ?? 0
+        }
+        if let fade = embedded?.firstChild(named: "fade") {
+            media.fadeIn = Self.mediaTime(fade.attribute("in")) ?? 0
+            media.fadeOut = Self.mediaTime(fade.attribute("out")) ?? 0
+        }
         if media.path == nil && media.url == nil { features.insert(.media) }
         if let path = media.path {
             // An old Windows format or a codec the device lacks still shows its picture; it just will not play.
@@ -230,6 +240,18 @@ public final class ShapeParser {
             if ["wmv", "avi", "wma", "asf", "mpg", "mpeg"].contains(ext) { features.insert(.media) }
         }
         return media
+    }
+
+    /// Seconds from a `p14:trim` or `p14:fade` time: milliseconds, or the
+    /// clock form `h:mm:ss.fff` some writers use.
+    static func mediaTime(_ value: String?) -> Double? {
+        guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
+        if value.contains(":") {
+            let parts = value.split(separator: ":").compactMap { Double($0) }
+            guard !parts.isEmpty else { return nil }
+            return max(parts.reduce(0) { $0 * 60 + $1 }, 0)
+        }
+        return Double(value).map { max($0 / 1_000, 0) }
     }
 
     private func group(_ element: XMLElement) -> SlideShape {
@@ -526,6 +548,7 @@ public final class ShapeParser {
                     run.fieldID = child.attribute("id")
                 }
                 run.properties.link = link(in: properties)
+                run.properties.linkTooltip = Hyperlink.tooltip(of: properties?.firstChild(named: "hlinkClick"))
                 run.sourceProperties = properties.flatMap(capture)
                 paragraph.runs.append(run)
             case "endParaRPr":

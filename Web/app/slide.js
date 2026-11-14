@@ -725,6 +725,8 @@ export class SlideDrawer {
     if (node.line) this.stroke(node.path, node.line, geometry, context, node);
     if (node.media) {
       parent.dataset.media = JSON.stringify(node.media);
+      // A slideshow leaves it out until it plays.
+      if (node.media.hide) parent.dataset.mediaHide = "1";
       if (context.editing) {
         // A video or sound is marked as one.
         const size = Math.min(Math.max(Math.min(node.w, node.h) * 0.18, 10), 28);
