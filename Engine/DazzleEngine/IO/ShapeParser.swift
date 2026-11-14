@@ -48,7 +48,10 @@ public final class ShapeParser {
             guard var shape = shape(from: element) else { return nil }
             shape.isHidden = ["1", "true"].contains(Self.commonProperties(of: element)?.attribute("hidden") ?? "")
             shape.altText = Self.description(of: element)
-            shape.link = link(in: Self.commonProperties(of: element))
+            let common = Self.commonProperties(of: element)
+            shape.link = link(in: common)
+            shape.linkTooltip = Hyperlink.tooltip(of: common?.firstChild(named: "hlinkClick"))
+            if element.name == "AlternateContent" { Self.applyZooms(SlideZoom.zooms(in: element), to: &shape) }
             if capturesSource {
                 if let source = XMLLite.serialize(element, inheritedNamespaces: namespaces) {
                     shape.source = source
@@ -68,6 +71,14 @@ public final class ShapeParser {
         case "grpSp": return group(element)
         case "graphicFrame": return graphicFrame(element)
         case "AlternateContent":
+            // One of Office 2016's charts is drawn as itself, from the rendition
+            // that has it, rather than from the picture of it kept for older readers.
+            if let frame = element.firstChild(named: "Choice")?.children.first, frame.name == "graphicFrame",
+               extendedChartPath(in: frame).flatMap({ Chart(path: $0, data: parts[$0]) }) != nil {
+                var shape = graphicFrame(frame)
+                shape.isLocked = true
+                return shape
+            }
             // Two renditions of one thing for different readers. The fallback
             // is the one every reader understands; it is drawn, and the whole
             // is kept as it was. An equation's fallback is only a picture of
@@ -85,6 +96,18 @@ public final class ShapeParser {
             )
         default:
             return nil
+        }
+    }
+
+    /// A slide or section zoom's picture leads where the zoom does; each
+    /// picture of a summary zoom, in order, to its section.
+    private static func applyZooms(_ zooms: [SlideZoom], to shape: inout SlideShape) {
+        guard !zooms.isEmpty else { return }
+        if case .group(var group) = shape.kind, zooms.count > 1 || group.children.count > 1 {
+            for (index, zoom) in zip(group.children.indices, zooms) { group.children[index].link = .zoom(zoom) }
+            shape.kind = .group(group)
+        } else {
+            shape.link = .zoom(zooms[0])
         }
     }
 
@@ -129,6 +152,10 @@ public final class ShapeParser {
         var shape = SlideShape(shapeID: id, name: name, kind: connector ? .connector : .shape, frame: .zero)
         shape.placeholder = placeholder
         shape.isTextBox = nonVisual?.firstChild(named: "cNvSpPr")?.attribute("txBox") == "1"
+        if connector, let ends = nonVisual?.firstChild(named: "cNvCxnSpPr") {
+            shape.startConnection = Self.connection(ends.firstChild(named: "stCxn"))
+            shape.endConnection = Self.connection(ends.firstChild(named: "endCxn"))
+        }
         applyTransform(properties?.firstChild(named: "xfrm"), to: &shape)
         shape.geometry = geometry(in: properties)
         shape.fill = Fill.parse(in: properties, image: target(of:))
@@ -149,6 +176,12 @@ public final class ShapeParser {
             shape.kind = .unsupported(label)
         }
         return shape
+    }
+
+    /// `a:stCxn` or `a:endCxn`: the shape and site an end of a connector is attached to.
+    private static func connection(_ element: XMLElement?) -> SlideShape.Connection? {
+        guard let id = element?.attribute("id").flatMap(Int.init) else { return nil }
+        return SlideShape.Connection(shapeID: id, site: element?.attribute("idx").flatMap(Int.init) ?? 0)
     }
 
     private func picture(_ element: XMLElement) -> SlideShape {
@@ -212,6 +245,14 @@ public final class ShapeParser {
                 media.path = PackagePath.resolve(relationship.target, from: partPath)
             }
         }
+        if let trim = embedded?.firstChild(named: "trim") {
+            media.trimStart = Self.mediaTime(trim.attribute("st")) ?? 0
+            media.trimEnd = Self.mediaTime(trim.attribute("end")) ?? 0
+        }
+        if let fade = embedded?.firstChild(named: "fade") {
+            media.fadeIn = Self.mediaTime(fade.attribute("in")) ?? 0
+            media.fadeOut = Self.mediaTime(fade.attribute("out")) ?? 0
+        }
         if media.path == nil && media.url == nil { features.insert(.media) }
         if let path = media.path {
             // An old Windows format or a codec the device lacks still shows its picture; it just will not play.
@@ -219,6 +260,18 @@ public final class ShapeParser {
             if ["wmv", "avi", "wma", "asf", "mpg", "mpeg"].contains(ext) { features.insert(.media) }
         }
         return media
+    }
+
+    /// Seconds from a `p14:trim` or `p14:fade` time: milliseconds, or the
+    /// clock form `h:mm:ss.fff` some writers use.
+    static func mediaTime(_ value: String?) -> Double? {
+        guard let value = value?.trimmingCharacters(in: .whitespaces), !value.isEmpty else { return nil }
+        if value.contains(":") {
+            let parts = value.split(separator: ":").compactMap { Double($0) }
+            guard !parts.isEmpty else { return nil }
+            return max(parts.reduce(0) { $0 * 60 + $1 }, 0)
+        }
+        return Double(value).map { max($0 / 1_000, 0) }
     }
 
     private func group(_ element: XMLElement) -> SlideShape {
@@ -250,6 +303,13 @@ public final class ShapeParser {
             shape.kind = .group(group)
         }
         return shape
+    }
+
+    /// The part of the `cx:chart` a graphic frame shows, if that is what it shows.
+    private func extendedChartPath(in frame: XMLElement) -> String? {
+        let data = frame.firstChild(named: "graphic")?.firstChild(named: "graphicData")
+        guard data?.attribute("uri")?.contains("chartex") == true else { return nil }
+        return data?.children.first { $0.name == "chart" }?.relationshipID.flatMap(target(of:))
     }
 
     private func graphicFrame(_ element: XMLElement) -> SlideShape {
@@ -368,19 +428,22 @@ public final class ShapeParser {
                         marginTop: margin("marT"), marginBottom: margin("marB"),
                         borderLeft: border("lnL"), borderRight: border("lnR"),
                         borderTop: border("lnT"), borderBottom: border("lnB"),
+                        borderDiagonalDown: border("lnTlToBr"), borderDiagonalUp: border("lnBlToTr"),
                         sourceProperties: cellProperties.flatMap(capture),
                         sourceBody: cell.firstChild(named: "txBody").flatMap(capture)
                     )
                 }
             )
         }
-        return SlideTable(
-            columnWidths: widths, rows: rows,
-            hasHeaderRow: properties?.attribute("firstRow") == "1",
-            hasBandedRows: properties?.attribute("bandRow") == "1",
+        var table = SlideTable(
+            columnWidths: widths, rows: rows, hasHeaderRow: false, hasBandedRows: false,
             styleID: properties?.firstChild(named: "tableStyleId")?.text.trimmed.nilIfEmpty,
             sourceProperties: properties.flatMap(capture)
         )
+        for option in SlideTable.StyleOption.allCases {
+            table[option] = ["1", "true"].contains(properties?.attribute(option.attribute))
+        }
+        return table
     }
 
     // MARK: - Transforms and geometry
@@ -482,7 +545,7 @@ public final class ShapeParser {
     public func textBody(_ element: XMLElement) -> TextBody {
         TextBody(
             properties: BodyProperties(element: element.firstChild(named: "bodyPr")),
-            listStyle: ListStyle(element: element.firstChild(named: "lstStyle")),
+            listStyle: ListStyle(element: element.firstChild(named: "lstStyle"), image: target(of:)),
             paragraphs: element.children(named: "p").map(paragraph)
         )
     }
@@ -492,7 +555,7 @@ public final class ShapeParser {
         for child in element.children {
             switch child.name {
             case "pPr":
-                paragraph.properties = ParagraphProperties(element: child)
+                paragraph.properties = ParagraphProperties(element: child, image: target(of:))
                 paragraph.sourceProperties = capture(child)
             case "r", "fld", "br":
                 let properties = child.firstChild(named: "rPr")
@@ -506,6 +569,7 @@ public final class ShapeParser {
                     run.fieldID = child.attribute("id")
                 }
                 run.properties.link = link(in: properties)
+                run.properties.linkTooltip = Hyperlink.tooltip(of: properties?.firstChild(named: "hlinkClick"))
                 run.sourceProperties = properties.flatMap(capture)
                 paragraph.runs.append(run)
             case "m":

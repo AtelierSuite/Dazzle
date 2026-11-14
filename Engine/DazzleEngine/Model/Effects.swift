@@ -1,8 +1,8 @@
 import Foundation
 
-/// The effects in an `a:effectLst` that Dazzle draws but does not edit: a
-/// glow, soft edges, an inner shadow, a preset shadow and a blur. Saving
-/// leaves them as the file had them.
+/// The effects in an `a:effectLst` besides its outer shadow and reflection:
+/// a glow, soft edges and an inner shadow, which Dazzle edits, and a preset
+/// shadow and a blur, which saving leaves as the file had them.
 public struct ShapeEffects: Equatable, Hashable, Sendable {
     public var glow: Glow?
     /// `a:softEdge`: EMU the shape fades out over, inward from its edge.
@@ -61,6 +61,9 @@ public struct Glow: Equatable, Hashable, Sendable {
         self.radius = radius
         self.color = color
     }
+
+    /// The glow as `a:glow`.
+    public var xml: String { "<a:glow rad=\"\(radius)\">\(color.xml)</a:glow>" }
 }
 
 /// `a:innerShdw`: a shadow cast inside the shape, as if it were a hole.
@@ -86,6 +89,11 @@ public struct InnerShadow: Equatable, Hashable, Sendable {
         distance = element.attribute("dist").flatMap(Int.init) ?? 0
         direction = Double(element.attribute("dir").flatMap(Int.init) ?? 0) / 60_000
         self.color = color
+    }
+
+    /// The shadow as `a:innerShdw`.
+    public var xml: String {
+        "<a:innerShdw blurRad=\"\(blur)\" dist=\"\(distance)\" dir=\"\(Int((direction * 60_000).rounded()))\">\(color.xml)</a:innerShdw>"
     }
 }
 

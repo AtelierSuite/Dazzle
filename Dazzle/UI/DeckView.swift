@@ -48,6 +48,9 @@ struct DeckView: View {
                     isRaised: state.presentedPanel != nil
                 )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .top) {
+                        if document.presentation.isInMasterView, !state.isDrawing { masterViewBanner }
+                    }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if !state.isDrawing {
                             FloatingActionBar(presentation: presentation, state: state, namespace: panelTransition)
@@ -58,10 +61,24 @@ struct DeckView: View {
             if horizontalSizeClass == .compact {
                 Divider()
                 SlideStrip(presentation: presentation, state: state, play: play) {
-                    PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 17))
-                            .frame(width: 44, height: 44)
+                    Group {
+                        if document.presentation.isInMasterView {
+                            Button {
+                                state.leaveMasterView(in: &document.presentation)
+                            } label: {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .frame(width: 44, height: 44)
+                            }
+                            .accessibilityIdentifier("closeMasterView")
+                            .accessibilityLabel("MasterView.Close")
+                        } else {
+                            PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }, customShows: document.presentation.customShows, playCustomShow: playCustomShow) {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 17))
+                                    .frame(width: 44, height: 44)
+                            }
+                        }
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.white)
@@ -92,10 +109,11 @@ struct DeckView: View {
                         }
                     }
             }
+            .environment(\.playCustomShow) { playCustomShow($0) }
             .navigationTransition(.zoom(sourceID: panel, in: panelTransition))
             // Formatting panels stay at half height, so the slide they change
             // is always in view; export needs the room for its slide picker.
-            .presentationDetents(panel == .export ? [.large] : ([.find, .chart, .comments, .headerFooter, .animations].contains(panel) ? [.medium, .large] : [.medium]))
+            .presentationDetents(panel == .export ? [.large] : ([.find, .chart, .comments, .headerFooter, .theme, .animations, .properties].contains(panel) ? [.medium, .large] : [.medium]))
             .presentationDragIndicator(.visible)
             // Swiping inside a panel scrolls its content rather than growing it.
             .presentationContentInteraction(.scrolls)
@@ -170,7 +188,7 @@ struct DeckView: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             NewSlideMenu(presentation: presentation, state: state) {
-                Label("Slide.New", systemImage: "plus")
+                Label(document.presentation.isInMasterView ? "MasterView.NewLayout" : "Slide.New", systemImage: "plus")
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 16)
                     .frame(height: 36)
@@ -184,18 +202,32 @@ struct DeckView: View {
         .background(.bar)
     }
 
+    /// Says the masters and layouts are what is being edited, at the top of
+    /// the canvas, where the slide being edited would otherwise pass for one.
+    private var masterViewBanner: some View {
+        Label("MasterView.Title", systemImage: "rectangle.3.group")
+            .font(.footnote.weight(.semibold))
+            .padding(.horizontal, 14)
+            .frame(height: 32)
+            .glassEffect(.regular, in: .capsule)
+            .padding(.top, 8)
+            .accessibilityIdentifier("masterViewBanner")
+    }
+
     @ViewBuilder
     private func panelContent(_ panel: EditorPanel) -> some View {
         switch panel {
         case .text: TextPanel(presentation: presentation, state: state)
         case .format: FormatPanel(presentation: presentation, state: state)
         case .notes: NotesPanel(presentation: presentation, state: state)
-        case .export: ExportPanel(presentation: document.presentation, state: state, name: name)
+        case .export: ExportPanel(presentation: document.presentation.outOfMasterView, state: state, name: name)
         case .find: FindPanel(presentation: presentation, state: state)
         case .chart: ChartPanel(presentation: presentation, state: state)
         case .animations: AnimationPanel(presentation: presentation, state: state)
         case .comments: CommentsPanel(presentation: presentation, state: state)
         case .headerFooter: HeaderFooterPanel(presentation: presentation, state: state)
+        case .theme: ThemePanel(presentation: presentation, state: state)
+        case .properties: PropertiesPanel(presentation: presentation, state: state)
         }
     }
 
@@ -209,10 +241,18 @@ struct DeckView: View {
     }
 
     private func play(from index: Int) {
-        guard !session.isPresenting else { return }
+        // The slideshow shows the slides, which master view has set aside.
+        guard !session.isPresenting, !document.presentation.isInMasterView else { return }
         state.presentedPanel = nil
         state.isDrawing = false
         session.start(document.presentation, title: name, fromSlide: index, owner: editorID)
+    }
+
+    private func playCustomShow(_ id: CustomShow.ID) {
+        guard !session.isPresenting else { return }
+        state.presentedPanel = nil
+        state.isDrawing = false
+        session.start(document.presentation, title: name, fromSlide: 0, customShow: id, owner: editorID)
     }
 
     /// Lets the watch start this presentation, as the one most recently in front.
@@ -259,10 +299,18 @@ struct DeckView: View {
         if horizontalSizeClass != .compact {
             ToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
-                PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
-                    Label("Toolbar.Play", systemImage: "play.fill")
+                if document.presentation.isInMasterView {
+                    Button("MasterView.Close", systemImage: "checkmark") {
+                        state.leaveMasterView(in: &document.presentation)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .accessibilityIdentifier("closeMasterView")
+                } else {
+                    PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }, customShows: document.presentation.customShows, playCustomShow: playCustomShow) {
+                        Label("Toolbar.Play", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.glassProminent)
                 }
-                .buttonStyle(.glassProminent)
             }
         }
         ToolbarSpacer(.fixed, placement: .primaryAction)
@@ -460,11 +508,36 @@ struct DeckView: View {
                 }
                 findButton
             }
-            Button("Toolbar.HeaderFooter", systemImage: "rectangle.bottomthird.inset.filled") {
-                state.endEditingText()
-                state.presentedPanel = .headerFooter
+            if document.presentation.isInMasterView {
+                Button("MasterView.Close", systemImage: "checkmark") {
+                    state.leaveMasterView(in: &document.presentation)
+                }
+                .accessibilityIdentifier("closeMasterViewMenu")
+            } else {
+                Button("Toolbar.HeaderFooter", systemImage: "rectangle.bottomthird.inset.filled") {
+                    state.endEditingText()
+                    state.presentedPanel = .headerFooter
+                }
+                .accessibilityIdentifier("headerFooter")
+                Button("Toolbar.Theme", systemImage: "paintpalette") {
+                    state.endEditingText()
+                    state.presentedPanel = .theme
+                }
+                .disabled(!state.canEditTheme(in: document.presentation))
+                .accessibilityIdentifier("theme")
+                if document.presentation.canEditMasters {
+                    Button("Toolbar.EditMasters", systemImage: "rectangle.3.group") {
+                        state.endEditingText()
+                        state.enterMasterView(in: &document.presentation)
+                    }
+                    .accessibilityIdentifier("editMasters")
+                }
             }
-            .accessibilityIdentifier("headerFooter")
+            Button("Toolbar.Properties", systemImage: "info.circle") {
+                state.endEditingText()
+                state.presentedPanel = .properties
+            }
+            .accessibilityIdentifier("properties")
             Section {
                 Link(destination: URL(string: "https://github.com/AtelierSuite/Dazzle")!) {
                     Label("Toolbar.SourceCode", systemImage: "chevron.left.forwardslash.chevron.right")
@@ -554,16 +627,25 @@ struct DeckView: View {
     }
 }
 
-/// Play, from the slide being edited; held, from the beginning instead.
+/// Play, from the slide being edited; held, from the beginning or a custom show instead.
 private struct PlayMenu<Label: View>: View {
     let play: (Int) -> Void
     let current: () -> Int
+    var customShows: [CustomShow] = []
+    var playCustomShow: (CustomShow.ID) -> Void = { _ in }
     @ViewBuilder var label: () -> Label
 
     var body: some View {
         Menu {
             Button("Toolbar.PlayFromStart", systemImage: "backward.end") { play(0) }
             Button("Toolbar.PlayFromCurrent", systemImage: "play") { play(current()) }
+            if !customShows.isEmpty {
+                Menu("Toolbar.PlayCustomShow", systemImage: "list.bullet.rectangle") {
+                    ForEach(customShows) { show in
+                        Button(show.name) { playCustomShow(show.id) }
+                    }
+                }
+            }
         } label: {
             label()
         } primaryAction: {

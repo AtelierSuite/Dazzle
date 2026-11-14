@@ -42,6 +42,8 @@ extension EditorState {
             pasted.append(shape)
         }
 
+        // Pasted connectors join the shapes pasted with them.
+        pasted.reconnect(Dictionary(zip(shapes.map(\.shapeID), pasted.map(\.shapeID))) { first, _ in first })
         target.shapes.append(contentsOf: pasted)
         target.isModified = true
         presentation.addedParts = importer.target.addedParts
@@ -80,6 +82,8 @@ extension EditorState {
 
     /// Puts copies of `slides`, from `source`, after the slide being edited.
     func pasteSlides(_ slides: [Slide], from source: Presentation, into presentation: inout Presentation) {
+        // Slides go among slides, never among the masters and layouts, nor those among slides.
+        guard !presentation.isInMasterView, !source.isInMasterView else { return }
         var importer = PartImporter(from: source, into: presentation)
         var position = min(selectedIndex(in: presentation) + 1, presentation.slides.count)
         var lastID: Slide.ID?
@@ -94,6 +98,7 @@ extension EditorState {
         presentation.addedParts = importer.target.addedParts
         presentation.addedContentTypes = importer.target.addedContentTypes
         presentation.isStructureModified = true
+        presentation.settleSections()
         selectSlide(lastID)
     }
 

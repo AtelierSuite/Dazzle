@@ -157,6 +157,7 @@ final class InspectorViewController: NSViewController {
         switch tab {
         case .format:
             key += [slide?.autoAdvanceAfter != nil, SlideSizeConverter.Preset.matching(presentation.slideSize)]
+            if case .pattern? = deck.selectedShape?.fill { key.append("pattern") }
         case .comments:
             key += [slide?.comments.map { [$0.id, $0.isResolved, $0.replies.map(\.id)] as [AnyHashable] }]
         case .animate:

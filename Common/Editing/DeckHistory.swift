@@ -73,7 +73,8 @@ final class DeckHistory {
             lastScope = scope
             lastChange = now
         }
-        // A run of typing into one shape, or into the notes, is one step.
+        // A run of typing into one shape, or into the notes, or of changes
+        // to the theme, is one step.
         if scope.coalesces, scope == lastScope, undoManager.canUndo,
            now.timeIntervalSince(lastChange) < Self.coalescingInterval {
             return
@@ -117,10 +118,16 @@ final class DeckHistory {
 private enum ChangeScope: Equatable {
     case text(slide: Slide.ID, shape: SlideShape.ID)
     case notes(slide: Slide.ID)
+    /// A theme colour or font, which a colour picker changes many times a second.
+    case theme
     case other
 
     init(from old: Presentation, to new: Presentation) {
         self = .other
+        if old.slides == new.slides, old.resources != new.resources {
+            self = .theme
+            return
+        }
         guard old.slides.count == new.slides.count else { return }
         let changed = zip(old.slides, new.slides).filter { $0 != $1 }
         guard changed.count == 1, let (before, after) = changed.first, before.id == after.id else { return }

@@ -20,9 +20,16 @@ public struct ShapeWriter {
         if shape.edits.isEmpty, let source = shape.source { return source }
         guard let element = element(for: shape) else { return shape.source }
         let edits: Set<SlideShape.Edit> = shape.source == nil
-            ? [.transform, .fill, .line, .text, .table, .picture, .altText, .effects, .link] : shape.edits
+            ? [.transform, .fill, .line, .text, .table, .picture, .altText, .effects, .link, .geometry, .connections, .media]
+            : shape.edits
         if edits.contains(.transform), shape.hasOwnFrame || shape.source != nil {
             writeTransform(of: shape, into: element)
+        }
+        if edits.contains(.geometry) {
+            writeGeometry(shape.geometry, into: element)
+        }
+        if edits.contains(.connections) {
+            writeConnections(of: shape, into: element)
         }
         if edits.contains(.fill), let fill = shape.fill {
             writeFill(fill, into: element)
@@ -33,18 +40,26 @@ public struct ShapeWriter {
         if edits.contains(.text), let text = shape.text {
             writeText(text, into: element)
         }
+        if shape.edits.contains(.listStyle), let text = shape.text {
+            writeListStyle(text.listStyle, into: element)
+        }
         if edits.contains(.table), case .table(let table) = shape.kind {
             writeTable(table, into: element)
         }
-        if edits.contains(.effects), shape.source != nil || shape.shadow != nil || shape.reflection != nil {
+        if edits.contains(.effects),
+           shape.source != nil || shape.shadow != nil || shape.reflection != nil || !shape.effects.isEmpty
+            || shape.scene3D != nil || shape.shape3D != nil {
             writeEffects(of: shape, into: element)
         }
         if edits.contains(.picture), case .picture(let picture) = shape.kind {
             writePicture(picture, into: element)
         }
+        if edits.contains(.media), case .picture(let picture) = shape.kind, let media = picture.media {
+            writeMediaTiming(media, into: element)
+        }
         if edits.contains(.link), shape.link != .other {
             let common = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "cNvPr")
-            if let common { writeLink(shape.link, into: common, before: ["hlinkHover", "extLst"], atStart: true) }
+            if let common { writeLink(shape.link, tooltip: shape.linkTooltip, into: common, before: ["hlinkHover", "extLst"], atStart: true) }
         }
         if edits.contains(.altText) {
             let common = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "cNvPr")
@@ -88,7 +103,7 @@ public struct ShapeWriter {
                 <a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm>\
                 </p:grpSpPr>\(members)</p:grpSp>
                 """
-        case .chart(let chart?):
+        case .chart(let chart?) where !chart.kind.isExtended:
             let reference = relationshipID(for: chart.path, type: OOXML.RelationshipType.chart)
             return """
                 <p:graphicFrame><p:nvGraphicFramePr>\(identity)<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>\
@@ -140,6 +155,17 @@ public struct ShapeWriter {
                     """
             }
             let geometry = shape.geometry.presetName ?? "rect"
+            if shape.kind == .connector {
+                // PowerPoint's own style for a new line: an accent outline and no fill.
+                return """
+                    <p:cxnSp><p:nvCxnSpPr>\(identity)<p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr>\
+                    <a:prstGeom prst="\(geometry)"><a:avLst/></a:prstGeom></p:spPr><p:style>\
+                    <a:lnRef idx="1"><a:schemeClr val="accent1"/></a:lnRef>\
+                    <a:fillRef idx="0"><a:schemeClr val="accent1"/></a:fillRef>\
+                    <a:effectRef idx="0"><a:schemeClr val="accent1"/></a:effectRef>\
+                    <a:fontRef idx="minor"><a:schemeClr val="tx1"/></a:fontRef></p:style></p:cxnSp>
+                    """
+            }
             if shape.isTextBox {
                 return """
                     <p:sp><p:nvSpPr>\(identity)<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>\
@@ -230,6 +256,33 @@ public struct ShapeWriter {
         }
     }
 
+    /// Names the preset the shape is drawn as, with its adjust values. A
+    /// freeform outline is left as it was.
+    private func writeGeometry(_ geometry: ShapeGeometry, into element: XMLElement) {
+        guard case .preset(let name, let adjustments) = geometry,
+              let preset = properties(of: element)?.firstChild(named: "prstGeom") else { return }
+        preset.setAttribute("prst", name)
+        let values = adjustments.sorted { $0.key < $1.key }
+            .map { "<a:gd name=\"\(XMLLite.escape($0.key))\" fmla=\"val \($0.value)\"/>" }.joined()
+        guard let list = fragment("<a:avLst>\(values)</a:avLst>") else { return }
+        for old in preset.children(named: "avLst") { preset.removeChild(old) }
+        preset.insertChild(list, at: 0)
+    }
+
+    /// Says which shapes a connector's ends are attached to, or that they are attached to none.
+    private func writeConnections(of shape: SlideShape, into element: XMLElement) {
+        guard element.name == "cxnSp",
+              let ends = element.firstChild(named: "nvCxnSpPr")?.firstChild(named: "cNvCxnSpPr") else { return }
+        for old in ends.children where old.name == "stCxn" || old.name == "endCxn" { ends.removeChild(old) }
+        var index = ends.children.firstIndex { $0.name == "extLst" } ?? ends.children.count
+        for (name, connection) in [("stCxn", shape.startConnection), ("endCxn", shape.endConnection)] {
+            guard let connection,
+                  let new = fragment("<a:\(name) id=\"\(connection.shapeID)\" idx=\"\(connection.site)\"/>") else { continue }
+            ends.insertChild(new, at: index)
+            index += 1
+        }
+    }
+
     /// Gives a copied shape, and everything inside it, ids of its own.
     private func writeIdentity(of shape: SlideShape, into element: XMLElement) {
         var next = shape.shapeID
@@ -271,38 +324,51 @@ public struct ShapeWriter {
         properties.insertChild(new, at: (after ?? -1) + 1)
     }
 
-    /// Replaces the shape's effects with its shadow and reflection, or with
-    /// none at all, which outranks any its style would give it.
+    /// Replaces the shape's effects with its shadow, reflection, glow, soft
+    /// edges and inner shadow, or with none at all, which outranks any its
+    /// style would give it; and its camera, lights, bevel and depth.
     private func writeEffects(of shape: SlideShape, into element: XMLElement) {
         guard let properties = properties(of: element) else { return }
         for child in properties.children where child.name == "effectDag" { properties.removeChild(child) }
-        // Effects Dazzle draws but does not edit, such as a glow or soft edges, stay as they were.
+        // A preset shadow or a blur, which Dazzle draws but does not edit, stays as it was.
         guard let effects = properties.firstChild(named: "effectLst") ?? fragment("<a:effectLst/>") else { return }
         if effects.parent !== properties {
             let before = properties.children.firstIndex { ["scene3d", "sp3d", "extLst"].contains($0.name) }
             properties.insertChild(effects, at: before ?? properties.children.count)
         }
-        // A shadow or reflection that reads back as the model has it keeps its own spelling.
-        if let old = effects.firstChild(named: "outerShdw"), Shadow(element: old) != shape.shadow {
-            effects.removeChild(old)
-        }
-        if let shadow = shape.shadow {
+        if shape.shadow != nil {
             for old in effects.children(named: "prstShdw") { effects.removeChild(old) }
-            if effects.firstChild(named: "outerShdw") == nil, let new = fragment(shadow.xml) {
-                effects.insertChild(new, at: effects.children.count)
-            }
         }
-        if let old = effects.firstChild(named: "reflection"), Reflection(element: old) != shape.reflection {
-            effects.removeChild(old)
+        // Each effect that reads back as the model has it keeps its own spelling.
+        replace("outerShdw", in: effects, with: shape.shadow?.xml) { Shadow(element: $0) == shape.shadow }
+        replace("reflection", in: effects, with: shape.reflection?.xml) { Reflection(element: $0) == shape.reflection }
+        replace("glow", in: effects, with: shape.effects.glow?.xml) { Glow(element: $0) == shape.effects.glow }
+        replace("innerShdw", in: effects, with: shape.effects.innerShadow?.xml) {
+            InnerShadow(element: $0) == shape.effects.innerShadow
         }
-        if let reflection = shape.reflection, effects.firstChild(named: "reflection") == nil,
-            let new = fragment(reflection.xml) {
-            effects.insertChild(new, at: effects.children.count)
+        replace("softEdge", in: effects, with: shape.effects.softEdge.map { "<a:softEdge rad=\"\($0)\"/>" }) {
+            $0.attribute("rad").flatMap(Int.init) == shape.effects.softEdge
         }
         let order = ["blur", "fillOverlay", "glow", "innerShdw", "outerShdw", "prstShdw", "reflection", "softEdge"]
         effects.reorderChildren(effects.children.sorted {
             (order.firstIndex(of: $0.name) ?? order.count) < (order.firstIndex(of: $1.name) ?? order.count)
         })
+        // The camera and lights, then the bevel and depth, after the effects and before any extensions.
+        replace("scene3d", in: properties, with: shape.scene3D?.xml) { Scene3D(element: $0) == shape.scene3D }
+        replace("sp3d", in: properties, with: shape.shape3D?.xml) { Shape3D(element: $0) == shape.shape3D }
+        let ranks = ["scene3d": 1, "sp3d": 2, "extLst": 3]
+        properties.reorderChildren(properties.children.enumerated().sorted {
+            (ranks[$0.element.name] ?? 0, $0.offset) < (ranks[$1.element.name] ?? 0, $1.offset)
+        }.map(\.element))
+    }
+
+    /// Takes out `parent`'s `name` children that `keeps` turns down, and adds
+    /// `xml` at the end in their place, unless one it keeps is left.
+    private func replace(_ name: String, in parent: XMLElement, with xml: String?, keeps: (XMLElement) -> Bool) {
+        for old in parent.children(named: name) where xml == nil || !keeps(old) { parent.removeChild(old) }
+        if let xml, parent.firstChild(named: name) == nil, let new = fragment(xml) {
+            parent.insertChild(new, at: parent.children.count)
+        }
     }
 
     /// Writes the outline's fill, width, compound, cap, dash, join and
@@ -364,7 +430,10 @@ public struct ShapeWriter {
             if let spacing = text.properties.columnSpacing { properties.setAttribute("spcCol", String(spacing)) }
             if let rightToLeft = text.properties.columnsRightToLeft { properties.setAttribute("rtlCol", rightToLeft ? "1" : "0") }
             if case .normal(let scale, let reduction) = text.properties.autofit { writeShrink(scale, reduction, into: properties) }
-            // A WordArt warp the file didn't say, first among bodyPr's children. One it said is kept as it was.
+            // The WordArt warp, first among bodyPr's children. One that reads back the same is kept as it was.
+            for old in properties.children(named: "prstTxWarp") where TextWarp(element: old) != text.properties.warp {
+                properties.removeChild(old)
+            }
             if let warp = text.properties.warp, properties.firstChild(named: "prstTxWarp") == nil,
                let element = fragment(warp.xml) {
                 properties.insertChild(element, at: 0)
@@ -378,6 +447,46 @@ public struct ShapeWriter {
             if let element = fragment(paragraphXML(paragraph)) {
                 body.insertChild(element, at: body.children.count)
             }
+        }
+    }
+
+    /// Writes the text styles a placeholder hands down into its `a:lstStyle`,
+    /// over what each level said already.
+    private mutating func writeListStyle(_ style: ListStyle, into element: XMLElement) {
+        guard let body = element.firstChild(named: "txBody") else { return }
+        let list: XMLElement
+        if let existing = body.firstChild(named: "lstStyle") {
+            list = existing
+        } else {
+            guard let created = fragment("<a:lstStyle/>") else { return }
+            body.insertChild(created, at: body.firstChild(named: "bodyPr") == nil ? 0 : 1)
+            list = created
+        }
+        for number in style.levels.keys.sorted() {
+            guard let properties = style.levels[number] else { continue }
+            let name = "lvl\(number)pPr"
+            guard let level = list.firstChild(named: name) ?? fragment("<a:\(name)/>") else { continue }
+            apply(properties, to: level)
+            let existing = level.firstChild(named: "defRPr")
+            if existing != nil || properties.defaultRun != RunProperties() {
+                let source = existing.flatMap { XMLLite.serialize($0, inheritedNamespaces: fragmentNamespaces) } ?? "<a:defRPr/>"
+                if let run = fragment(runPropertiesXML(properties.defaultRun, source: source, name: "defRPr")) {
+                    if let existing {
+                        level.replaceChild(existing, with: run)
+                    } else {
+                        let before = level.children.firstIndex { $0.name == "extLst" }
+                        level.insertChild(run, at: before ?? level.children.count)
+                    }
+                }
+            }
+            guard level.parent == nil, !level.attributes.isEmpty || !level.children.isEmpty else { continue }
+            // Levels go in order, after `defPPr` and before any extensions.
+            let before = list.children.firstIndex { child in
+                if child.name == "extLst" { return true }
+                guard child.name.hasPrefix("lvl"), let other = Int(child.name.dropFirst(3).prefix(1)) else { return false }
+                return other > number
+            }
+            list.insertChild(level, at: before ?? list.children.count)
         }
     }
 
@@ -400,16 +509,17 @@ public struct ShapeWriter {
 
     // MARK: - Links
 
-    /// Replaces an element's `a:hlinkClick` with `link`, or with none.
-    private mutating func writeLink(_ link: Hyperlink?, into element: XMLElement, before names: Set<String>, atStart: Bool = false) {
+    /// Replaces an element's `a:hlinkClick` with `link` and its ScreenTip,
+    /// or with none.
+    private mutating func writeLink(_ link: Hyperlink?, tooltip: String?, into element: XMLElement, before names: Set<String>, atStart: Bool = false) {
         for child in element.children(named: "hlinkClick") { element.removeChild(child) }
-        guard let link, let xml = linkXML(link), let new = fragment(xml) else { return }
+        guard let link, let xml = linkXML(link, tooltip: tooltip), let new = fragment(xml) else { return }
         let before = element.children.firstIndex { names.contains($0.name) }
         element.insertChild(new, at: before ?? (atStart ? 0 : element.children.count))
     }
 
     /// A link's `a:hlinkClick`, with the relationship it needs added.
-    private mutating func linkXML(_ link: Hyperlink) -> String? {
+    private mutating func linkXML(_ link: Hyperlink, tooltip: String?) -> String? {
         switch link {
         case .url(let address):
             let id: String
@@ -421,12 +531,12 @@ public struct ShapeWriter {
                 id = Relationship.unusedID(in: relationships)
                 relationships.append(Relationship(id: id, type: OOXML.RelationshipType.hyperlink, target: address, isExternal: true))
             }
-            return link.xml(relationshipID: id)
+            return link.xml(relationshipID: id, tooltip: tooltip)
         case .slide(let slideID):
             guard let path = slidePath(slideID) else { return nil }
-            return link.xml(relationshipID: relationshipID(for: path, type: OOXML.RelationshipType.slide))
+            return link.xml(relationshipID: relationshipID(for: path, type: OOXML.RelationshipType.slide), tooltip: tooltip)
         default:
-            return link.xml(relationshipID: nil)
+            return link.xml(relationshipID: nil, tooltip: tooltip)
         }
     }
 
@@ -462,6 +572,37 @@ public struct ShapeWriter {
         fill.insertChild(crop, at: (after ?? -1) + 1)
     }
 
+    /// Writes a video or sound's trim and fades into its `p14:media`, which
+    /// PowerPoint 2010 and later read; the rest of how it plays is in the
+    /// slide's timing.
+    private func writeMediaTiming(_ media: SlideShape.Media, into element: XMLElement) {
+        let details = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "nvPr")
+        guard let embedded = details?.firstChild(named: "extLst")?.children
+            .compactMap({ $0.firstChild(named: "media") }).first else { return }
+        let prefix = embedded.qualifiedName.split(separator: ":").dropLast().last.map(String.init) ?? "p14"
+        let uri = embedded.sourceNamespaceBinding(forPrefix: prefix) ?? Self.powerPoint2010
+        let namespaces = fragmentNamespaces.merging([prefix: uri]) { _, new in new }
+        for name in ["trim", "fade"] { embedded.firstChild(named: name).map(embedded.removeChild) }
+        func ms(_ seconds: Double) -> String { String(Int((max(seconds, 0) * 1_000).rounded())) }
+        var added: [String] = []
+        if media.trimStart > 0 || media.trimEnd > 0 {
+            let start = media.trimStart > 0 ? " st=\"\(ms(media.trimStart))\"" : ""
+            let end = media.trimEnd > 0 ? " end=\"\(ms(media.trimEnd))\"" : ""
+            added.append("<\(prefix):trim\(start)\(end)/>")
+        }
+        if media.fadeIn > 0 || media.fadeOut > 0 {
+            let fadeIn = media.fadeIn > 0 ? " in=\"\(ms(media.fadeIn))\"" : ""
+            let fadeOut = media.fadeOut > 0 ? " out=\"\(ms(media.fadeOut))\"" : ""
+            added.append("<\(prefix):fade\(fadeIn)\(fadeOut)/>")
+        }
+        // Trim, then fade, before any bookmarks and extensions.
+        for (offset, xml) in added.enumerated() {
+            if let child = XMLLite.fragment(xml, namespaces: namespaces) { embedded.insertChild(child, at: offset) }
+        }
+    }
+
+    private static let powerPoint2010 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+
     // MARK: - Tables
 
     /// Writes the table's grid, rows and cells from the model, each cell
@@ -471,8 +612,9 @@ public struct ShapeWriter {
               let grid = data.firstChild(named: "tbl") else { return }
         let properties = table.sourceProperties.flatMap(fragment) ?? grid.firstChild(named: "tblPr") ?? fragment("<a:tblPr/>")
         guard let properties else { return }
-        properties.setAttribute("firstRow", table.hasHeaderRow ? "1" : nil)
-        properties.setAttribute("bandRow", table.hasBandedRows ? "1" : nil)
+        for option in SlideTable.StyleOption.allCases {
+            properties.setAttribute(option.attribute, table[option] ? "1" : nil)
+        }
         if let styleID = table.styleID, properties.firstChild(named: "tableStyleId") == nil,
            let style = fragment("<a:tableStyleId>\(XMLLite.escape(styleID))</a:tableStyleId>") {
             properties.insertChild(style, at: properties.children.count)
@@ -573,7 +715,13 @@ public struct ShapeWriter {
     private func paragraphPropertiesXML(_ paragraph: Paragraph) -> String? {
         let element = paragraph.sourceProperties.flatMap(fragment) ?? fragment("<a:pPr/>")
         guard let element else { return nil }
-        let properties = paragraph.properties
+        apply(paragraph.properties, to: element)
+        guard !element.attributes.isEmpty || !element.children.isEmpty else { return nil }
+        return XMLLite.serialize(element, inheritedNamespaces: fragmentNamespaces)
+    }
+
+    /// Lays paragraph properties over an `a:pPr`, or a list style's level.
+    private func apply(_ properties: ParagraphProperties, to element: XMLElement) {
         if let alignment = properties.alignment {
             element.setAttribute("algn", alignment.rawValue)
         }
@@ -583,6 +731,7 @@ public struct ShapeWriter {
         if let margin = properties.marginLeft { element.setAttribute("marL", String(margin)) }
         if let indent = properties.indent { element.setAttribute("indent", String(indent)) }
         if let size = properties.defaultTabSize { element.setAttribute("defTabSz", String(size)) }
+        if let rightToLeft = properties.isRightToLeft { element.setAttribute("rtl", rightToLeft ? "1" : "0") }
 
         // Children, each in its place in the schema's order.
         func place(_ xml: String, replacing names: Set<String>) {
@@ -611,10 +760,9 @@ public struct ShapeWriter {
         case .autoNumber(let scheme, let start)?:
             let startAt = start == 1 ? "" : " startAt=\"\(start)\""
             place("<a:buAutoNum type=\"\(XMLLite.escape(scheme))\"\(startAt)/>", replacing: bullets)
-        case nil: break
+        // Only ever read from the file, whose `a:buBlip` and its relationship are kept as they were.
+        case .picture?, nil: break
         }
-        guard !element.attributes.isEmpty || !element.children.isEmpty else { return nil }
-        return XMLLite.serialize(element, inheritedNamespaces: fragmentNamespaces)
     }
 
     /// Where a child of `a:pPr` goes among its siblings.
@@ -646,8 +794,8 @@ public struct ShapeWriter {
         if let size = properties.size { element.setAttribute("sz", String(size)) }
         if let bold = properties.isBold { element.setAttribute("b", bold ? "1" : "0") }
         if let italic = properties.isItalic { element.setAttribute("i", italic ? "1" : "0") }
-        if let underline = properties.isUnderlined { element.setAttribute("u", underline ? "sng" : "none") }
-        if let strike = properties.isStruckThrough { element.setAttribute("strike", strike ? "sngStrike" : "noStrike") }
+        if let underline = properties.underline { element.setAttribute("u", underline.rawValue) }
+        if let strike = properties.strike { element.setAttribute("strike", strike.rawValue) }
         if let baseline = properties.baseline { element.setAttribute("baseline", baseline == 0 ? nil : String(baseline)) }
         if let spacing = properties.spacing { element.setAttribute("spc", spacing == 0 ? nil : String(spacing)) }
         if let color = properties.color, let fill = fragment("<a:solidFill>\(color.xml)</a:solidFill>") {
@@ -666,6 +814,31 @@ public struct ShapeWriter {
             let after = element.children.lastIndex { $0.name == "ln" || Fill.elementNames.contains($0.name) }
             element.insertChild(effects, at: after.map { $0 + 1 } ?? 0)
         }
+        // An underline colour the file had is kept as written.
+        if let color = properties.underlineColor, !element.children.contains(where: { ["uFill", "uFillTx"].contains($0.name) }),
+           let fill = fragment("<a:uFill><a:solidFill>\(color.xml)</a:solidFill></a:uFill>") {
+            let before = element.children.firstIndex {
+                ["latin", "ea", "cs", "sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"].contains($0.name)
+            }
+            element.insertChild(fill, at: before ?? element.children.count)
+        }
+        switch properties.highlight {
+        case .color(let color)?:
+            if let highlight = fragment("<a:highlight>\(color.xml)</a:highlight>") {
+                if let existing = element.firstChild(named: "highlight") {
+                    element.replaceChild(existing, with: highlight)
+                } else {
+                    // A highlight follows the line, fill and effects, before underlines and typefaces.
+                    let after = element.children.lastIndex {
+                        ["ln", "effectLst", "effectDag"].contains($0.name) || Fill.elementNames.contains($0.name)
+                    }
+                    element.insertChild(highlight, at: after.map { $0 + 1 } ?? 0)
+                }
+            }
+        case TextHighlight.none?:
+            if let existing = element.firstChild(named: "highlight") { element.removeChild(existing) }
+        case nil: break
+        }
         if let font = properties.latinFont, let latin = fragment("<a:latin typeface=\"\(XMLLite.escape(font))\"/>") {
             if let existing = element.firstChild(named: "latin") {
                 element.replaceChild(existing, with: latin)
@@ -677,9 +850,21 @@ public struct ShapeWriter {
                 element.insertChild(latin, at: before ?? element.children.count)
             }
         }
+        if let font = properties.complexScriptFont, let complex = fragment("<a:cs typeface=\"\(XMLLite.escape(font))\"/>") {
+            if let existing = element.firstChild(named: "cs") {
+                // Its other attributes, such as `pitchFamily`, describe the typeface it named.
+                if existing.attribute("typeface") != font { element.replaceChild(existing, with: complex) }
+            } else {
+                // After the Latin and East Asian typefaces, before symbols and links.
+                let before = element.children.firstIndex {
+                    ["sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"].contains($0.name)
+                }
+                element.insertChild(complex, at: before ?? element.children.count)
+            }
+        }
         // A link Dazzle does not follow is left as the file had it.
         if properties.link != .other, name == "rPr" {
-            writeLink(properties.link, into: element, before: ["hlinkMouseOver", "rtl", "extLst"])
+            writeLink(properties.link, tooltip: properties.linkTooltip, into: element, before: ["hlinkMouseOver", "rtl", "extLst"])
         }
         return XMLLite.serialize(element, inheritedNamespaces: fragmentNamespaces) ?? ""
     }

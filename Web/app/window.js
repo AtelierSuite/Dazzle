@@ -9,7 +9,7 @@ import * as storage from "./storage.js";
 import { attachMenuBar, attachToolbarOverflow, openMenu } from "../design/menus.js";
 import { dismissSheet } from "../design/sheets.js";
 import { MediaStore, SlideDrawer, applyFrame, substituteFor } from "./slide.js";
-import { isInstalled } from "./fonts.js";
+import { installedFamilies, isInstalled } from "./fonts.js";
 import { SlideCanvas } from "./canvas.js";
 import { SlideNavigator } from "./navigator.js";
 import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js";
@@ -141,7 +141,7 @@ export class PresentationWindow {
     this.build();
     this.canvas = new SlideCanvas(this.root.querySelector(".app__canvas"), engine, this.media);
     this.navigator = new SlideNavigator(this.root.querySelector(".app__navigator"), engine, this.media, {
-      t, menu: (ids) => this.slideMenu(ids),
+      t, menu: (ids) => this.slideMenu(ids), sectionMenu: (id) => this.sectionMenu(id),
     });
     this.inspector = new Inspector(this.root.querySelector(".app__inspector"), engine, {
       t, language, run: (command) => this.run(command), ask: { scaling: () => this.askScaling() },
@@ -279,7 +279,16 @@ export class PresentationWindow {
     return this.chartItems();
   }
 
+  /** Play ▸ Play Custom Show: each of the presentation's custom shows. */
+  customShowItems() {
+    const shows = this.engine.info?.customShows ?? [];
+    if (!shows.length) return [{ label: t("CustomShow.None"), disabled: true }];
+    return shows.map((show) => ({ label: show.name, disabled: !show.slides.length, action: () => this.play(null, { customShow: show.id }) }));
+  }
+
   layoutItems() {
+    // In master view, what is added is a layout.
+    if (this.engine.state?.masterView) return [this.item("newSlide")];
     return (this.engine.info?.layouts ?? []).map((layout) => ({ label: layout.name, action: () => this.engine.call("addSlide", { layout: layout.path }) }));
   }
 
@@ -387,6 +396,10 @@ export class PresentationWindow {
     const textual = has && (shapes > 0 || editingText);
     const look = this.look ?? {};
     const selected = shapes === 1 ? this.canvas?.shape(this.selection.shapes[0]) : null;
+    // Master view edits the masters and layouts in the slides' place, so what is only a slide's is off.
+    const master = Boolean(state?.masterView);
+    const picked = master ? this.pickedSlides().map((id) => state.slides.find((slide) => slide.id === id)) : [];
+    const layoutsPicked = picked.length > 0 && picked.every((slide) => slide?.role === "layout");
     return {
       new: { label: t("Menu.File.New"), shortcut: shortcut("N"), run: () => this.newDocument() },
       open: { label: t("Menu.File.Open"), shortcut: shortcut("O"), run: () => this.openPicked() },
@@ -394,9 +407,10 @@ export class PresentationWindow {
       save: { label: t("Menu.File.Save"), shortcut: shortcut("S"), enabled: has, run: () => this.save() },
       saveAs: { label: t("Web.Menu.SaveAs"), shortcut: shortcut("S", { shift: true }), enabled: has, run: () => this.saveAs() },
       rename: { label: t("Menu.File.Rename"), enabled: has, run: () => this.renameDocument() },
+      properties: { label: t("Mac.Menu.File.Properties"), enabled: has, run: () => this.showProperties() },
       exportPowerPoint: { label: t("Menu.File.Export.PowerPoint"), enabled: has, run: () => this.exportAs({ key: "pptx", extension: "pptx", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }) },
-      exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has, run: () => this.print() },
-      print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has, run: () => this.print() },
+      exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.print() },
+      print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has && !master, run: () => this.print() },
       undo: { label: t("Toolbar.Undo"), shortcut: shortcut("Z"), enabled: has && (state?.canUndo || editingText), run: () => this.undo() },
       redo: { label: t("Toolbar.Redo"), shortcut: shortcut("Z", { shift: true }), enabled: has && (state?.canRedo || editingText), run: () => this.redo() },
       cut: { label: t("Edit.Cut"), shortcut: shortcut("X"), enabled: has, run: () => this.clipboard("cut") },
@@ -410,13 +424,29 @@ export class PresentationWindow {
       findReplace: { label: t("Mac.Menu.Find.FindReplace"), shortcut: shortcut("F", { alt: true }), enabled: has, run: () => this.showFind(true) },
       findNext: { label: t("Menu.Edit.Find.Next"), shortcut: shortcut("G"), enabled: has, run: () => this.findAction("next") },
       findPrevious: { label: t("Menu.Edit.Find.Previous"), shortcut: shortcut("G", { shift: true }), enabled: has, run: () => this.findAction("previous") },
-      newSlide: { label: t("Slide.New"), shortcut: shortcut("N", { shift: true }), enabled: has, run: () => this.engine.call("addSlide", { layout: this.currentLayout() }) },
-      duplicateSlides: { label: t("Slide.Menu.Duplicate"), enabled: has, run: () => this.engine.call("duplicateSlides", { ids: this.pickedSlides() }) },
-      deleteSlides: { label: t("Slide.Menu.Delete"), enabled: has && (state?.slides.length ?? 0) > 1, run: () => this.engine.call("deleteSlides", { ids: this.pickedSlides() }) },
-      toggleHidden: { label: this.currentSlide()?.hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), enabled: has, run: () => this.engine.call("toggleHidden", { ids: this.pickedSlides() }) },
+      newSlide: {
+        label: master ? t("MasterView.NewLayout") : t("Slide.New"), shortcut: shortcut("N", { shift: true }), enabled: has,
+        run: () => (master ? this.engine.call("addLayout") : this.engine.call("addSlide", { layout: this.currentLayout() })),
+      },
+      duplicateSlides: {
+        label: master ? t("MasterView.Duplicate") : t("Slide.Menu.Duplicate"), enabled: has && (!master || layoutsPicked),
+        run: () => this.engine.call("duplicateSlides", { ids: this.pickedSlides() }),
+      },
+      deleteSlides: {
+        label: master ? t("MasterView.Delete") : t("Slide.Menu.Delete"),
+        enabled: has && (master ? layoutsPicked && picked.length === 1 && picked[0].canDelete : (state?.slides.length ?? 0) > 1),
+        run: () => this.engine.call("deleteSlides", { ids: this.pickedSlides() }),
+      },
+      renameLayout: { label: t("MasterView.Rename"), enabled: master && this.currentSlide()?.role === "layout", run: () => this.renameLayout(this.selection.slide) },
+      masterView: {
+        label: master ? t("MasterView.Close") : t("Toolbar.EditMasters"), enabled: has && (master || Boolean(info?.canEditMasters)),
+        run: () => this.toggleMasterView(),
+      },
+      toggleHidden: { label: this.currentSlide()?.hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), enabled: has && !master, run: () => this.engine.call("toggleHidden", { ids: this.pickedSlides() }) },
       previousSlide: { label: t("Menu.Slide.Previous"), enabled: has, run: () => this.stepSlide(-1) },
       nextSlide: { label: t("Menu.Slide.Next"), enabled: has, run: () => this.stepSlide(1) },
-      headerFooter: { label: t("Mac.Menu.Slide.HeaderFooter"), enabled: has, run: () => this.showHeaderFooter() },
+      headerFooter: { label: t("Mac.Menu.Slide.HeaderFooter"), enabled: has && !master, run: () => this.showHeaderFooter() },
+      theme: { label: t("Mac.Menu.Format.Theme"), enabled: has && !master && this.engine.info?.canEditTheme !== false, run: () => this.showTheme() },
       insertTextBox: { label: t("Menu.Insert.TextBox"), enabled: has, run: () => this.insert("insertTextBox") },
       insertTable: { label: t("Menu.Insert.Table"), enabled: has, run: () => this.insertTable() },
       insertPicture: { label: t("Menu.Insert.Choose"), shortcut: shortcut("I", { shift: true }), enabled: has, run: () => this.insertPicture() },
@@ -447,12 +477,13 @@ export class PresentationWindow {
       rotateRight: { label: t("Arrange.RotateRight"), enabled: shapes === 1, run: () => this.engine.call("rotate", { clockwise: true }) },
       flipH: { label: t("Arrange.FlipHorizontal"), enabled: shapes === 1, run: () => this.engine.call("flip", { horizontally: true }) },
       flipV: { label: t("Arrange.FlipVertical"), enabled: shapes === 1, run: () => this.engine.call("flip", { horizontally: false }) },
-      play: { label: t("Toolbar.PlayFromCurrent"), shortcut: shortcut("↩", { alt: true }), enabled: has, run: () => this.play(this.selection.slide) },
-      playFromStart: { label: t("Toolbar.PlayFromStart"), shortcut: shortcut("↩", { alt: true, shift: true }), enabled: has, run: () => this.play(this.engine.state?.slides[0]?.id) },
-      playFromCurrent: { label: t("Toolbar.PlayFromCurrent"), enabled: has, run: () => this.play(this.selection.slide) },
-      playHere: { label: t("Web.Play.ThisWindow"), enabled: has, run: () => this.play(this.selection.slide, { presenter: false }) },
-      playPresenter: { label: t("Web.Play.PresenterView"), enabled: has, run: () => this.play(this.selection.slide, { presenter: true }) },
+      play: { label: t("Toolbar.PlayFromCurrent"), shortcut: shortcut("↩", { alt: true }), enabled: has && !master, run: () => this.play(this.selection.slide) },
+      playFromStart: { label: t("Toolbar.PlayFromStart"), shortcut: shortcut("↩", { alt: true, shift: true }), enabled: has && !master, run: () => this.play(this.engine.state?.slides[0]?.id) },
+      playFromCurrent: { label: t("Toolbar.PlayFromCurrent"), enabled: has && !master, run: () => this.play(this.selection.slide) },
+      playHere: { label: t("Web.Play.ThisWindow"), enabled: has && !master, run: () => this.play(this.selection.slide, { presenter: false }) },
+      playPresenter: { label: t("Web.Play.PresenterView"), enabled: has && !master, run: () => this.play(this.selection.slide, { presenter: true }) },
       previewAnimations: { label: t("Menu.Play.PreviewAnimations"), enabled: has, run: () => this.previewAnimations() },
+      customShows: { label: t("Menu.Play.CustomShows"), enabled: has, run: () => this.showCustomShows() },
       zoomIn: { label: t("Menu.View.ZoomIn"), shortcut: shortcut("="), enabled: has, run: () => this.stepZoom(1) },
       zoomOut: { label: t("Menu.View.ZoomOut"), shortcut: shortcut("-", { alt: true }), enabled: has, run: () => this.stepZoom(-1) },
       zoomToFit: { label: t("Menu.View.ZoomToFit"), shortcut: shortcut("9"), enabled: has, run: () => this.setZoom("fit") },
@@ -530,7 +561,7 @@ export class PresentationWindow {
         return [
           ...self.items("newSlide"),
           { label: t("Menu.Slide.NewWithLayout"), disabled: !self.hasDocument, submenu: self.layoutItems() },
-          ...self.items("duplicateSlides", "deleteSlides", "toggleHidden", "-", "previousSlide", "nextSlide", "-", "headerFooter"),
+          ...self.items("duplicateSlides", "deleteSlides", "renameLayout", "toggleHidden", "-", "previousSlide", "nextSlide", "-", "headerFooter"),
         ];
       } },
       { label: t("Menu.Format"), get items() {
@@ -538,6 +569,8 @@ export class PresentationWindow {
           { label: t("Format.Section.Font"), submenu: self.items("bold", "italic", "underline", "strike", "-", "bigger", "smaller", "-", "superscript", "subscript") },
           { label: t("Format.Alignment"), submenu: self.items("alignLeft", "alignCenter", "alignRight", "alignJustify") },
           { label: t("Format.List"), submenu: self.items("bullets", "numbers", "-", "indent", "outdent") },
+          { separator: true },
+          ...self.items("theme"),
         ];
       } },
       { label: t("ActionBar.Arrange"), get items() {
@@ -557,7 +590,7 @@ export class PresentationWindow {
       { label: t("Menu.View"), get items() {
         const current = readSetting("appearance", "");
         return [
-          ...self.items("toggleNavigator", "toggleNotes", "toggleInspector", "-", "zoomIn", "zoomOut", "zoomToFit", "actualSize", "-"),
+          ...self.items("toggleNavigator", "toggleNotes", "toggleInspector", "-", "masterView", "-", "zoomIn", "zoomOut", "zoomToFit", "actualSize", "-"),
           { label: t("Web.Menu.Appearance"), submenu: [
             { label: t("Web.Appearance.System"), checked: current === "", action: () => self.applyAppearance("") },
             { label: t("Web.Appearance.Light"), checked: current === "light", action: () => self.applyAppearance("light") },
@@ -567,7 +600,13 @@ export class PresentationWindow {
           self.item("fullScreen"),
         ];
       } },
-      { label: t("Menu.Play"), get items() { return self.items("playFromStart", "playFromCurrent", "-", "playPresenter", "playHere", "-", "previewAnimations"); } },
+      { label: t("Menu.Play"), get items() {
+        return [
+          ...self.items("playFromStart", "playFromCurrent"),
+          { label: t("Toolbar.PlayCustomShow"), disabled: !self.hasDocument, submenu: self.customShowItems() },
+          ...self.items("customShows", "-", "playPresenter", "playHere", "-", "previewAnimations"),
+        ];
+      } },
       { label: t("Menu.Window"), get items() {
         return self.document ? [{ label: self.document.name, checked: true, action: () => self.canvas.element.focus() }] : [{ label: "Dazzle", disabled: true }];
       } },
@@ -599,6 +638,8 @@ export class PresentationWindow {
         this.item("exportPDF"), this.item("exportPowerPoint"),
         ...(keynote ? [{ label: t("Web.Export.Keynote"), action: () => this.exportAs(keynote) }] : []),
       ] },
+      { separator: true },
+      this.item("properties"),
       { separator: true },
       this.item("unsupported"),
       this.item("print"),
@@ -636,9 +677,50 @@ export class PresentationWindow {
   }
 
   /** The context menu over slides in the navigator. */
+  /** What can be done to a section, from its header's context menu. */
+  sectionMenu(id) {
+    if (!this.hasDocument) return null;
+    const sections = this.engine.state.sections ?? [];
+    const index = sections.findIndex((section) => section.id === id);
+    if (index < 0) return null;
+    return [
+      { label: t("Section.Rename"), action: () => this.renameSection(id) },
+      { separator: true },
+      { label: t("Section.MoveUp"), disabled: index === 0, action: () => this.engine.call("moveSection", { id, to: index - 1 }) },
+      { label: t("Section.MoveDown"), disabled: index === sections.length - 1, action: () => this.engine.call("moveSection", { id, to: index + 1 }) },
+      { separator: true },
+      { label: t("Section.Remove"), action: () => this.engine.call("removeSection", { id }) },
+      { label: t("Section.RemoveAll"), action: () => this.engine.call("removeAllSections") },
+    ];
+  }
+
+  /** Starts a section at a slide, then asks for its name. */
+  async addSection(slide) {
+    const response = await this.engine.call("addSection", { slide });
+    if (response) await this.renameSection(response);
+  }
+
+  async renameSection(id) {
+    const section = (this.engine.state.sections ?? []).find((each) => each.id === id);
+    if (!section) return;
+    const name = await this.askText(t("Section.Rename"), section.name, t("Section.Rename.Confirm"));
+    if (name != null) await this.engine.call("renameSection", { id, name });
+  }
+
   slideMenu(ids) {
     if (!this.hasDocument) return null;
     const hidden = ids.length && ids.every((id) => this.engine.state.slides.find((slide) => slide.id === id)?.hidden);
+    // A master offers a new layout; a layout, what can be done to it.
+    if (this.engine.state.masterView) {
+      const isLayout = this.engine.state.slides.find((slide) => slide.id === ids[0])?.role === "layout";
+      return [
+        this.item("newSlide"),
+        ...(isLayout ? [this.item("duplicateSlides"), { label: t("MasterView.Rename"), action: () => this.renameLayout(ids[0]) }, { separator: true }, this.item("deleteSlides")] : []),
+        { separator: true },
+        this.item("masterView"),
+      ];
+    }
+    const sections = this.engine.state.sections ?? [];
     return [
       this.item("newSlide"),
       { label: t("Menu.Slide.NewWithLayout"), submenu: this.layoutItems() },
@@ -651,6 +733,16 @@ export class PresentationWindow {
       { label: hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), action: () => this.engine.call("toggleHidden", { ids }) },
       { label: t("Slide.Menu.Delete"), disabled: this.engine.state.slides.length <= ids.length, action: () => this.engine.call("deleteSlides", { ids }) },
       { separator: true },
+      { label: t("Section.Add"), disabled: ids.length !== 1, action: () => this.addSection(ids[0]) },
+      ...(sections.length > 1 ? [{
+        label: t("Section.MoveSlideTo"),
+        submenu: sections.map((section) => ({
+          label: section.name || t("Section.Untitled"),
+          disabled: ids.every((id) => section.slides.includes(id)),
+          action: () => this.engine.call("moveSlidesToSection", { ids, section: section.id }),
+        })),
+      }] : []),
+      { separator: true },
       { label: t("Slide.Menu.Play"), action: () => this.play(ids[0]) },
     ];
   }
@@ -659,6 +751,21 @@ export class PresentationWindow {
 
   currentSlide() {
     return this.engine.state?.slides.find((slide) => slide.id === this.selection.slide) ?? null;
+  }
+
+  /** Shows the masters and layouts in place of the slides, to be edited as slides are, or the slides again. */
+  async toggleMasterView() {
+    await this.canvas.endEditing();
+    await this.flushNotes();
+    await this.engine.call("masterView", { on: !this.engine.state?.masterView });
+  }
+
+  /** Asks for another name for a layout. */
+  async renameLayout(id) {
+    const layout = this.engine.state?.slides.find((slide) => slide.id === id);
+    if (layout?.role !== "layout") return;
+    const name = await this.askText(t("MasterView.Rename.Title"), layout.name, t("MasterView.Rename.Confirm"));
+    if (name && name !== layout.name) await this.engine.call("renameLayout", { ids: [id], name });
   }
 
   currentLayout() {
@@ -898,7 +1005,7 @@ export class PresentationWindow {
     await this.canvas.endEditing();
     await this.flushNotes();
     const presenter = options.presenter ?? hasSecondDisplay();
-    await this.slideshow.start(slideID ?? this.engine.state.slides[0]?.id, { presenter });
+    await this.slideshow.start(slideID ?? this.engine.state.slides[0]?.id, { presenter, customShow: options.customShow });
     if (presenter && this.slideshow.mode !== "presenter") this.showMessage(t("Web.Play.PopupBlocked"), "info");
   }
 
@@ -1181,6 +1288,9 @@ export class PresentationWindow {
     }));
     this.navigator.addEventListener("pick", (event) => this.pickSlide(event.detail));
     this.navigator.addEventListener("move", (event) => this.engine.call("moveSlides", event.detail));
+    this.navigator.addEventListener("moveSection", (event) => this.engine.call("moveSection", event.detail));
+    this.navigator.addEventListener("moveToSection", (event) => this.engine.call("moveSlidesToSection", event.detail));
+    this.navigator.addEventListener("renameSection", (event) => this.renameSection(event.detail));
     this.navigator.addEventListener("command", (event) => this.run(event.detail));
     this.canvas.addEventListener("command", (event) => this.run(event.detail));
     this.canvas.addEventListener("selection", () => this.refreshInspector());
@@ -1278,7 +1388,9 @@ export class PresentationWindow {
     const name = this.document?.name ?? "Dazzle";
     this.titleElement.textContent = name;
     const edited = this.engine.state?.edited;
-    this.subtitleElement.textContent = this.document ? (edited ? t("Web.Document.Edited") : this.document.handle ? t("Web.Document.Saved") : "") : "";
+    const status = this.document ? (edited ? t("Web.Document.Edited") : this.document.handle ? t("Web.Document.Saved") : "") : "";
+    // Says the masters and layouts are what is being edited.
+    this.subtitleElement.textContent = this.document && this.engine.state?.masterView ? [t("MasterView.Title"), status].filter(Boolean).join(" — ") : status;
     document.title = this.document ? `${name}${edited ? " — " + t("Web.Document.Edited") : ""}` : "Dazzle";
   }
 
@@ -1400,6 +1512,116 @@ export class PresentationWindow {
     backdrop.querySelector("[data-cancel]").focus();
   }
 
+  /**
+   * Custom Shows: the presentation's named selections of slides. Shows are made,
+   * renamed and removed on the left; on the right, a show's slides are picked and
+   * put in order. Each change is made at once, and can be undone.
+   */
+  showCustomShows() {
+    let selected = this.engine.info?.customShows?.[0]?.id ?? null;
+    const backdrop = this.sheet(`
+      <form class="ds-sheet app__custom-shows-sheet" role="dialog" aria-labelledby="cs-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="cs-title">${escapeHTML(t("CustomShow.Title"))}</h2>
+          <div class="app__custom-shows"></div>
+          <p class="ds-caption app__note">${escapeHTML(t("CustomShow.Footer"))}</p>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-play>${escapeHTML(t("CustomShow.Play"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Web.Common.Done"))}</button>
+        </div>
+      </form>`);
+    const body = backdrop.querySelector(".app__custom-shows");
+    const slideLabel = (id) => {
+      const slide = (this.engine.info?.outline ?? []).find((entry) => entry.id === id);
+      return slide ? `${slide.number}. ${slide.title || t("Slide.Untitled")}` : "";
+    };
+    const render = () => {
+      const shows = this.engine.info?.customShows ?? [];
+      if (!shows.some((show) => show.id === selected)) selected = shows[0]?.id ?? null;
+      const show = shows.find((entry) => entry.id === selected);
+      const outline = this.engine.info?.outline ?? [];
+      body.innerHTML = `
+        <div class="app__custom-shows-list">
+          <nav class="ds-source-list" aria-label="${escapeHTML(t("CustomShow.Title"))}">${shows.map((entry) => `
+            <button class="ds-source-list__item" type="button" data-show="${entry.id}" aria-selected="${entry.id === selected}">${escapeHTML(entry.name)}<span class="ds-source-list__count">${entry.slides.length}</span></button>`).join("")}
+          </nav>
+          <span class="app__inspector-buttons">
+            <button class="ds-button ds-button--bordered ds-button--xs" type="button" data-op="new">${escapeHTML(t("CustomShow.New"))}</button>
+            <button class="ds-button ds-button--bordered ds-button--xs" type="button" data-op="duplicate"${show ? "" : " disabled"}>${escapeHTML(t("CustomShow.Duplicate"))}</button>
+            <button class="ds-button ds-button--bordered ds-button--xs" type="button" data-op="delete"${show ? "" : " disabled"}>${escapeHTML(t("CustomShow.Delete"))}</button>
+          </span>
+        </div>
+        ${show ? `<div class="app__custom-show">
+          <label class="ds-form app__custom-show-name"><span class="ds-form__label">${escapeHTML(t("CustomShow.Name"))}</span><span class="ds-form__control"><input class="ds-text-input ds-text-input--xs" name="name" value="${escapeHTML(show.name)}"></span></label>
+          <div class="app__custom-show-columns">
+            <div class="app__custom-show-table"><table class="ds-table"><thead><tr><th>${escapeHTML(t("CustomShow.AllSlides"))}</th></tr></thead><tbody>${outline.map((slide) => `
+              <tr><td><label class="ds-check"><input type="checkbox" data-include="${slide.id}"${show.slides.includes(slide.id) ? " checked" : ""}>${escapeHTML(slideLabel(slide.id))}</label></td></tr>`).join("")}
+            </tbody></table></div>
+            <div class="app__custom-show-table"><table class="ds-table"><thead><tr><th colspan="2">${escapeHTML(t("CustomShow.InShow"))}</th></tr></thead><tbody>${show.slides.length ? show.slides.map((id, index) => `
+              <tr><td>${escapeHTML(slideLabel(id))}</td><td class="app__custom-show-moves">
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-move="${index}:-1"${index ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveUp"))}" title="${escapeHTML(t("CustomShow.MoveUp"))}">${icon("chevronUp")}</button>
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-move="${index}:1"${index < show.slides.length - 1 ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveDown"))}" title="${escapeHTML(t("CustomShow.MoveDown"))}">${icon("chevronDown")}</button>
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-remove="${index}" aria-label="${escapeHTML(t("CustomShow.Remove"))}" title="${escapeHTML(t("CustomShow.Remove"))}">${icon("close")}</button>
+              </td></tr>`).join("") : `<tr><td class="ds-caption">${escapeHTML(t("CustomShow.Empty"))}</td></tr>`}
+            </tbody></table></div>
+          </div>
+        </div>` : ""}`;
+      backdrop.querySelector("[data-play]").disabled = !show?.slides.length;
+      const setSlides = (slides) => this.engine.call("setCustomShowSlides", { id: selected, slides }).then(render);
+      for (const button of body.querySelectorAll("[data-show]")) {
+        button.addEventListener("click", () => {
+          selected = Number(button.dataset.show);
+          render();
+        });
+      }
+      body.querySelector('[data-op="new"]').addEventListener("click", async () => {
+        const first = this.selection.slide ? [this.selection.slide] : [];
+        selected = await this.engine.call("addCustomShow", { slides: first });
+        render();
+        body.querySelector('input[name="name"]')?.select();
+      });
+      body.querySelector('[data-op="duplicate"]').addEventListener("click", async () => {
+        await this.engine.call("duplicateCustomShow", { id: selected });
+        selected = (this.engine.info?.customShows ?? []).at(-1)?.id ?? selected;
+        render();
+      });
+      body.querySelector('[data-op="delete"]').addEventListener("click", () => this.engine.call("deleteCustomShow", { id: selected }).then(render));
+      body.querySelector('input[name="name"]')?.addEventListener("change", (event) => {
+        this.engine.call("renameCustomShow", { id: selected, name: event.target.value }).then(render);
+      });
+      for (const box of body.querySelectorAll("[data-include]")) {
+        box.addEventListener("change", () => {
+          const id = box.dataset.include;
+          setSlides(box.checked ? [...show.slides, id] : show.slides.filter((entry) => entry !== id));
+        });
+      }
+      for (const button of body.querySelectorAll("[data-move]")) {
+        button.addEventListener("click", () => {
+          const [index, step] = button.dataset.move.split(":").map(Number);
+          const slides = [...show.slides];
+          const [moving] = slides.splice(index, 1);
+          slides.splice(index + step, 0, moving);
+          setSlides(slides);
+        });
+      }
+      for (const button of body.querySelectorAll("[data-remove]")) {
+        button.addEventListener("click", () => setSlides(show.slides.filter((_, index) => index !== Number(button.dataset.remove))));
+      }
+    };
+    render();
+    backdrop.querySelector("[data-play]").addEventListener("click", async () => {
+      document.activeElement?.blur();
+      await dismissSheet(backdrop);
+      if (selected != null) this.play(null, { customShow: selected });
+    });
+    backdrop.querySelector("form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      document.activeElement?.blur();
+      dismissSheet(backdrop);
+    });
+  }
+
   /** The date, slide number and footer, on this slide or every slide. */
   async showHeaderFooter() {
     const data = await this.engine.call("inspect");
@@ -1437,6 +1659,92 @@ export class PresentationWindow {
         fixedDate: values.get("fixedDate") ?? "", number: values.get("number") === "on", footer: values.get("footer") === "on",
         footerText: values.get("footerText") ?? "", hideOnTitle: values.get("hideOnTitle") === "on", toAll: event.submitter?.value === "all",
       });
+    });
+  }
+
+  /** Theme Colours & Fonts: the theme's twelve colours and its heading and body fonts, which every slide follows. */
+  async showTheme() {
+    const data = await this.engine.call("inspect");
+    const theme = data?.themeSettings;
+    if (!theme?.canEdit) return;
+    const families = [...new Set([...(this.engine.info?.fonts ?? []), ...installedFamilies()])].sort((a, b) => a.localeCompare(b, language));
+    const fontPopup = (name, label, selected) => {
+      const choices = families.includes(selected) ? families : [selected, ...families];
+      return `<span class="ds-popup ds-popup--xs"><select class="ds-popup__select" name="${name}" aria-label="${escapeHTML(label)}">${
+        choices.map((family) => `<option value="${escapeHTML(family)}"${family === selected ? " selected" : ""}>${escapeHTML(family)}</option>`).join("")
+      }</select>${icon("chevronDown", "ds-popup__chevron")}</span>`;
+    };
+    const backdrop = this.sheet(`
+      <form class="ds-sheet" role="dialog" aria-labelledby="theme-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="theme-title">${escapeHTML(t("Panel.Theme.Title"))}</h2>
+          <div class="ds-form app__theme">
+            <span class="ds-form__label"><strong>${escapeHTML(t("Theme.Colors"))}</strong></span><span class="ds-form__control"></span>
+            ${theme.colors.map((color) => `<span class="ds-form__label">${escapeHTML(color.label)}</span><span class="ds-form__control"><input type="color" class="ds-color-well" name="color.${color.slot}" value="${color.color}" aria-label="${escapeHTML(color.label)}"></span>`).join("")}
+            <span class="ds-form__label"><strong>${escapeHTML(t("Theme.Fonts"))}</strong></span><span class="ds-form__control"></span>
+            <span class="ds-form__label">${escapeHTML(t("Theme.HeadingFont"))}</span><span class="ds-form__control">${fontPopup("heading", t("Theme.HeadingFont"), theme.heading)}</span>
+            <span class="ds-form__label">${escapeHTML(t("Theme.BodyFont"))}</span><span class="ds-form__control">${fontPopup("body", t("Theme.BodyFont"), theme.body)}</span>
+          </div>
+          <p class="ds-sheet__message">${escapeHTML(t("Theme.Footer"))}</p>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Common.OK"))}</button>
+        </div>
+      </form>`);
+    const form = backdrop.querySelector("form");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = new FormData(form);
+      dismissSheet(backdrop);
+      // Only what was changed, so a colour left alone keeps its exact value.
+      const colors = {};
+      for (const color of theme.colors) {
+        const value = values.get(`color.${color.slot}`);
+        if (value && value.toLowerCase() !== color.color.toLowerCase()) colors[color.slot] = value;
+      }
+      await this.engine.call("setTheme", { colors, heading: values.get("heading"), body: values.get("body") });
+    });
+  }
+
+  /** The presentation's title, author and the rest, and when it was created and last saved. */
+  async showProperties() {
+    const properties = await this.engine.call("properties");
+    if (!properties) return;
+    const fields = [
+      ["title", "Properties.Title"], ["subject", "Properties.Subject"], ["author", "Properties.Author"], ["company", "Properties.Company"],
+      ["keywords", "Properties.Keywords"], ["category", "Properties.Category"],
+    ];
+    const row = (label, control) => `<span class="ds-form__label">${escapeHTML(label)}</span><span class="ds-form__control">${control}</span>`;
+    const when = (value) => value ? new Date(value).toLocaleString(language, { dateStyle: "medium", timeStyle: "short" }) : "—";
+    const history = [
+      ["Properties.Created", when(properties.created)], ["Properties.Modified", when(properties.modified)],
+      ["Properties.LastModifiedBy", properties.lastModifiedBy || "—"],
+      ...(properties.revision != null ? [["Properties.Revision", String(properties.revision)]] : []),
+      ...(properties.application ? [["Properties.Application", properties.application]] : []),
+    ];
+    const backdrop = this.sheet(`
+      <form class="ds-sheet" role="dialog" aria-labelledby="properties-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="properties-title">${escapeHTML(t("Panel.Properties.Title"))}</h2>
+          <div class="ds-form app__properties">
+            ${fields.map(([key, label]) => row(t(label), `<input class="ds-text-input ds-text-input--xs" name="${key}" value="${escapeHTML(properties[key] ?? "")}" aria-label="${escapeHTML(t(label))}">`)).join("")}
+            ${row(t("Properties.Comments"), `<textarea class="ds-text-input" name="comments" rows="3" aria-label="${escapeHTML(t("Properties.Comments"))}">${escapeHTML(properties.comments ?? "")}</textarea>`)}
+            ${history.map(([label, value]) => row(t(label), `<span>${escapeHTML(value)}</span>`)).join("")}
+          </div>
+          ${properties.keynote ? `<p class="ds-caption">${escapeHTML(t("Properties.Keynote.Footer"))}</p>` : ""}
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Common.OK"))}</button>
+        </div>
+      </form>`);
+    const form = backdrop.querySelector("form");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = Object.fromEntries([...fields.map(([key]) => key), "comments"].map((key) => [key, String(new FormData(form).get(key) ?? "")]));
+      dismissSheet(backdrop);
+      await this.engine.call("setProperties", values);
     });
   }
 
@@ -1788,7 +2096,7 @@ export class PresentationWindow {
     if (!this.hasUnkeptChanges) return;
     const version = this.engine.state.version;
     try {
-      const { result, payload } = await this.engine.call("save", { keep: true });
+      const { result, payload } = await this.engine.call("save", { keep: true, draft: true });
       if (await storage.writeDraft(record.id, payload)) {
         record.draftAt = Date.now();
         record.draftName = result.fileName;
@@ -1816,7 +2124,7 @@ export class PresentationWindow {
     const sameKind = record.handle && record.handle.name === format.fileName;
     if (!sameKind) return this.saveAs();
     try {
-      const { payload } = await this.engine.call("save", { format: format.key });
+      const { payload } = await this.engine.call("save", { format: format.key, author: readSetting("author", "") });
       if (!(await files.writeHandle(record.handle, payload))) return;
       await this.saved(record);
     } catch (error) {
@@ -1829,11 +2137,11 @@ export class PresentationWindow {
     if (!record) return;
     await this.flushEdits();
     try {
-      const { result, payload } = await this.engine.call("save", { format: format.key, keep: true });
+      const { result, payload } = await this.engine.call("save", { format: format.key, author: readSetting("author", ""), keep: true });
       const saved = await files.saveFileAs(payload, result.fileName, { ...format, description: this.formatLabel(format.key) });
       if (!saved) return;
       await this.engine.call("rename", { name: saved.name });
-      await this.engine.call("save", { format: format.key, keep: false }).catch(() => {});
+      await this.engine.call("save", { format: format.key, author: readSetting("author", ""), keep: false }).catch(() => {});
       record.name = saved.name;
       if (saved.handle) record.handle = saved.handle;
       await this.saved(record);
@@ -1847,7 +2155,7 @@ export class PresentationWindow {
     if (!this.document) return;
     await this.flushEdits();
     try {
-      const { result, payload } = await this.engine.call("save", { format: format.key, keep: true });
+      const { result, payload } = await this.engine.call("save", { format: format.key, author: readSetting("author", ""), keep: true });
       await files.saveFileAs(payload, result.fileName, { ...format, description: this.formatLabel(format.key) });
     } catch (error) {
       this.showMessage(error.message, "error");

@@ -86,6 +86,9 @@ private struct AudienceControls: View {
                         session.previous()
                     } else if session.advancesOnTap {
                         session.next()
+                    } else {
+                        // A kiosk show doesn't move on by a tap, but notices it.
+                        session.noteActivity()
                     }
                 }
             )
@@ -316,7 +319,7 @@ struct ShowingSlideView: View {
     }
 
     private func options(at date: Date) -> SlideRenderer.Options {
-        var options = SlideRenderer.Options.presentation
+        var options = SlideRenderer.Options.slideshow
         options.animation = session.animationFrame(at: date)
         return options
     }
@@ -355,7 +358,7 @@ private struct TransitionPlayer: View {
     }
 
     private func renderer(for content: TransitionFrame.Content) -> SlideRenderer {
-        var options = SlideRenderer.Options.presentation
+        var options = SlideRenderer.Options.slideshow
         options.animation = content == .outgoing ? showing.outgoingFrame : showing.incomingFrame
         return SlideRenderer(presentation: presentation, slide: content == .outgoing ? showing.outgoing : incoming, options: options)
     }

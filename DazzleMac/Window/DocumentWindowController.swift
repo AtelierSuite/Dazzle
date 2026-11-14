@@ -14,6 +14,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     lazy var finder = FindController(deck: deck)
     /// The Header & Footer sheet, while it is open.
     var headerFooter: HeaderFooterSheet?
+    /// The Custom Shows sheet, while it is open.
+    var customShows: CustomShowsSheet?
+    var propertiesSheet: PropertiesSheet?
+    /// The Theme Colours & Fonts sheet, while it is open.
+    var themeSheet: ThemeSheet?
 
     var canvas: CanvasViewController { split.editor.canvas }
     var presentationDocument: PresentationDocument? { document as? PresentationDocument }
@@ -86,6 +91,13 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     private func updateToolbar() {
         fontSubstitutions = deck.presentation.fontSubstitutions
         unsupportedItem?.isHidden = deck.presentation.unsupportedFeatures.isEmpty && fontSubstitutions.isEmpty
+        // Says the masters and layouts are what is being edited, and which.
+        if deck.presentation.isInMasterView {
+            let name = deck.selectedSlide.flatMap { $0.role == .master ? nil : $0.layoutName }
+            window?.subtitle = [String(localized: "MasterView.Title"), name].compactMap(\.self).joined(separator: " — ")
+        } else {
+            window?.subtitle = ""
+        }
     }
 
     /// The deck's fonts this Mac draws in others, as of the last change.
@@ -160,6 +172,7 @@ extension DocumentWindowController: NSToolbarDelegate {
                                          keyEquivalent: ""))
             item.menu.addItem(NSMenuItem(title: String(localized: "Toolbar.PlayFromStart"), action: #selector(playFromBeginning(_:)),
                                          keyEquivalent: ""))
+            item.menu.addItem(CustomShowMenuFiller.item())
             return item
         case .insertTextBox:
             return button(identifier, "Menu.Insert.TextBox", "character.textbox", #selector(insertTextBox(_:)))

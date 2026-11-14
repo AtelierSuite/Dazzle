@@ -29,9 +29,17 @@ public struct SlideRenderer {
         /// How far through their animations the slide's shapes are, in a
         /// slideshow. Without one, every shape is drawn as it sits.
         public var animation: AnimationFrame?
+        /// Zooms show the slide they lead to as it is now. Off inside such a
+        /// picture, so a zoom to its own slide does not go on forever.
+        public var drawsZoomPreviews = true
+        /// Leave out videos and sounds set to be hidden while not playing, as
+        /// a slideshow does; its player shows them while they play.
+        public var hidesStoppedMedia = false
 
         public static let presentation = Options()
         public static let editing = Options(showsPlaceholderPrompts: true)
+        /// The slide as the audience sees it during a show.
+        public static let slideshow = Options(hidesStoppedMedia: true)
     }
 
     public let presentation: Presentation
@@ -88,9 +96,19 @@ public struct SlideRenderer {
     /// topmost first. A shape's link covers it; a link in its text covers
     /// that text, and is found before the shape's.
     public func linkAreas() -> [(CGRect, Hyperlink)] {
+        linkAreasWithTooltips().map { ($0.0, $0.1) }
+    }
+
+    /// Where pointing at a link on the slide shows its ScreenTip, in slide
+    /// points, topmost first, as `linkAreas` finds them.
+    public func linkTooltips() -> [(CGRect, String)] {
+        linkAreasWithTooltips().compactMap { area in area.2.map { (area.0, $0) } }
+    }
+
+    private func linkAreasWithTooltips() -> [(CGRect, Hyperlink, String?)] {
         let style = style
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
-        var areas: [(CGRect, Hyperlink)] = []
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
+        var areas: [(CGRect, Hyperlink, String?)] = []
         for shape in slide.shapes.reversed() where !shape.isHidden && shape.rotation == 0 {
             let sources = style.sources(for: shape)
             if let text = shape.text, case .shape = shape.kind {
@@ -99,7 +117,15 @@ public struct SlideRenderer {
                 } ?? shape.frame.points
                 areas += renderer.linkAreas(text, shape: shape, sources: sources, in: textFrame)
             }
-            if let link = shape.link { areas.append((shape.frame.points, link)) }
+            if let link = shape.link { areas.append((shape.frame.points, link, shape.linkTooltip)) }
+            // Each picture of a summary zoom leads to its own section.
+            if case .group(let group) = shape.kind {
+                for member in group.children.reversed() where !member.isHidden {
+                    if case .zoom? = member.link, let link = member.link {
+                        areas.insert((Self.placed(member, from: group.childFrame, into: shape.frame).frame.points, link, member.linkTooltip), at: 0)
+                    }
+                }
+            }
         }
         return areas
     }
@@ -112,6 +138,10 @@ public struct SlideRenderer {
         paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
         guard !shape.isHidden else { return }
+        // In a show, a video or sound hidden while not playing is left to the player.
+        if options.hidesStoppedMedia, case .picture(let picture) = shape.kind, picture.media?.hidesWhenNotPlaying == true {
+            return
+        }
         // Effects its style gives it, drawn as though its own.
         let shape = style.resolvingEffects(of: shape, sources: sources)
         if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }
@@ -579,7 +609,7 @@ public struct SlideRenderer {
         let textFrame = shape.textFrame?.points ?? shape.geometry.presetName.map {
             PresetGeometry.textRect($0, adjustments: shape.geometry.adjustments, in: frame)
         } ?? frame
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         let bulletsOnly = shape.id == options.bulletsOnlyShapeID
         if let text = shape.text, !text.isEmpty {
             renderer.draw(
@@ -987,7 +1017,17 @@ public struct SlideRenderer {
         context.setAlpha(picture.effects.opacity)
         context.addPath(outlinePath)
         context.clip()
-        drawImage(image, in: imageRect, context: context)
+        if case .zoom(let zoom)? = shape.link, zoom.showsPreview, options.drawsZoomPreviews,
+           let target = zoom.previewSlide(in: presentation) {
+            // A zoom shows the slide it leads to as it is now, in place of the picture saved with it.
+            var preview = SlideRenderer(presentation: presentation, slide: target)
+            preview.options.drawsZoomPreviews = false
+            preview.options.drawsBackground = zoom.showsBackground
+            context.translateBy(x: frame.minX, y: frame.minY)
+            preview.draw(in: context, size: frame.size)
+        } else {
+            drawImage(image, in: imageRect, context: context)
+        }
         context.restoreGState()
         if let look { drawBevel(look, on: outlinePath, context: context) }
         if let (line, placeholderColor) = style.line(for: shape, sources: []) {
@@ -1035,7 +1075,7 @@ public struct SlideRenderer {
     // MARK: - Tables
 
     private func drawTable(_ table: SlideTable, shape: SlideShape, frame: CGRect, style: SlideStyleContext, context: CGContext) {
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         let layout = TableLayout(table: table, frame: frame, style: style, presentation: presentation, slideNumber: slideNumber)
         let accent = style.color(.scheme("accent1"))
 
@@ -1044,30 +1084,24 @@ public struct SlideRenderer {
                 let position = TableCellPosition(row: rowIndex, column: columnIndex)
                 let rect = layout.rect(of: position)
                 let path = CGPath(rect: rect, transform: nil)
+                let regions = table.regions(row: rowIndex, column: columnIndex)
 
-                var fill = cell.fill
-                if fill == nil, let tableStyle = layout.tableStyle {
-                    fill = layout.isHeader(rowIndex) ? tableStyle.headerRow.fill
-                        : (layout.isBanded(rowIndex) ? tableStyle.bandedRow.fill : nil)
-                    fill = fill ?? tableStyle.whole.fill
-                }
-                if let fill {
+                if let fill = cell.fill ?? layout.tableStyle?.fill(for: regions) {
                     paint(fill, in: path, bounds: rect, placeholderColor: nil, style: style, context: context)
                 } else if layout.usesBuiltInLook {
-                    let tint = layout.isHeader(rowIndex) ? accent
-                        : accent.applying(.init(name: "tint", value: layout.isBanded(rowIndex) ? 40_000 : 20_000))
+                    let tint = regions.builtInTint.map { accent.applying(.init(name: "tint", value: $0)) } ?? accent
                     context.setFillColor(tint.cgColor)
                     context.fill(rect)
                 }
 
                 if options.editingCell != TableEditingCell(shapeID: shape.id, position: position),
-                   let body = layout.body(for: cell, row: rowIndex) {
+                   let body = layout.body(for: cell, row: rowIndex, column: columnIndex) {
                     renderer.draw(body, shape: TableLayout.cellShape(body, rect), sources: [], in: rect, context: context)
                 }
 
                 // The style's border for an edge: the outer edges of the table
-                // use its own, those between cells its inside lines, and a
-                // header or band row's borders override the whole table's.
+                // use its own, those between cells its inside lines, and the
+                // borders of the parts the cell is in override the whole table's.
                 let lastRow = min(rowIndex + cell.rowSpan, table.rows.count)
                 let lastColumn = columnIndex + cell.columnSpan >= layout.columnCount
                 let edgeNames = [
@@ -1075,18 +1109,17 @@ public struct SlideRenderer {
                     columnIndex == 0 ? "left" : "insideV", lastColumn ? "right" : "insideV",
                 ]
                 func styleBorder(_ name: String) -> LineStyle? {
-                    if let tableStyle = layout.tableStyle {
-                        let part = layout.isHeader(rowIndex) ? tableStyle.headerRow
-                            : (layout.isBanded(rowIndex) ? tableStyle.bandedRow : TableStyle.Part())
-                        return part.borders[name] ?? tableStyle.whole.borders[name]
-                    }
-                    return layout.usesBuiltInLook ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
+                    if let tableStyle = layout.tableStyle { return tableStyle.border(name, for: regions) }
+                    return layout.usesBuiltInLook && !["tl2br", "tr2bl"].contains(name)
+                        ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
                 }
                 let edges: [(LineStyle?, String, CGPoint, CGPoint)] = [
                     (cell.borderTop, edgeNames[0], CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY)),
                     (cell.borderBottom, edgeNames[1], CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)),
                     (cell.borderLeft, edgeNames[2], CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.minX, y: rect.maxY)),
                     (cell.borderRight, edgeNames[3], CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)),
+                    (cell.borderDiagonalDown, "tl2br", CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)),
+                    (cell.borderDiagonalUp, "tr2bl", CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.minY)),
                 ]
                 for (border, name, start, end) in edges {
                     let fallback = styleBorder(name)
@@ -1189,12 +1222,12 @@ public struct TableLayout {
         for width in table.columnWidths { columns.append((columns.last ?? frame.minX) + CGFloat(EMU.points(width))) }
         columnStarts = columns
 
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         var heights = table.rows.map { CGFloat(EMU.points($0.height)) }
         for (rowIndex, row) in table.rows.enumerated() {
             for (columnIndex, cell) in row.cells.enumerated()
             where !cell.isMerged && cell.rowSpan == 1 && columnIndex < table.columnCount {
-                guard let body = body(for: cell, row: rowIndex) else { continue }
+                guard let body = body(for: cell, row: rowIndex, column: columnIndex) else { continue }
                 let width = spanWidth(columnIndex, cell.columnSpan)
                 let needed = renderer.height(
                     of: body, shape: Self.cellShape(body, CGRect(x: 0, y: 0, width: width, height: 1)), width: width
@@ -1205,12 +1238,6 @@ public struct TableLayout {
         var rows: [CGFloat] = [frame.minY]
         for height in heights { rows.append((rows.last ?? frame.minY) + height) }
         rowStarts = rows
-    }
-
-    public func isHeader(_ row: Int) -> Bool { table.hasHeaderRow && row == 0 }
-
-    public func isBanded(_ row: Int) -> Bool {
-        table.hasBandedRows && (row - (table.hasHeaderRow ? 1 : 0)).isMultiple(of: 2)
     }
 
     private func spanWidth(_ column: Int, _ span: Int) -> CGFloat {
@@ -1238,7 +1265,7 @@ public struct TableLayout {
     }
 
     /// A cell's text, with its margins and the style's text colour and weight.
-    public func body(for cell: SlideTable.Cell, row: Int, includeEmpty: Bool = false) -> TextBody? {
+    public func body(for cell: SlideTable.Cell, row: Int, column: Int, includeEmpty: Bool = false) -> TextBody? {
         guard var body = cell.text, includeEmpty || !body.isEmpty else { return nil }
         // A table's rows grow to hold their text, which never shrinks to fit a cell.
         body.properties.autofit = nil
@@ -1249,11 +1276,11 @@ public struct TableLayout {
         if body.properties.anchor == nil { body.properties.anchor = cell.anchor }
         var color: DrawingColor?
         var bold: Bool?
+        let regions = table.regions(row: row, column: column)
         if let tableStyle {
-            let part = isHeader(row) ? tableStyle.headerRow : tableStyle.whole
-            color = part.textColor ?? tableStyle.whole.textColor
-            bold = part.isBold
-        } else if usesBuiltInLook, isHeader(row), cell.fill == nil {
+            color = tableStyle.textColor(for: regions)
+            bold = tableStyle.isBold(for: regions)
+        } else if usesBuiltInLook, regions.isEmphasised, cell.fill == nil {
             color = .scheme("lt1")
             bold = true
         }
@@ -1266,12 +1293,12 @@ public struct TableLayout {
         return body
     }
 
-    /// A shape whose text style gives a row's cells the style's text colour
-    /// and weight, for typing into a cell without writing them into it.
-    public func styleSource(forRow row: Int) -> SlideShape {
+    /// A shape whose text style gives a cell the style's text colour and
+    /// weight, for typing into it without writing them into it.
+    public func styleSource(for position: TableCellPosition) -> SlideShape {
         var properties = ParagraphProperties()
         let empty = SlideTable.Cell(text: TextBody(paragraphs: [Paragraph(runs: [])]))
-        if let styled = body(for: empty, row: row, includeEmpty: true)?.paragraphs.first?.endProperties {
+        if let styled = body(for: empty, row: position.row, column: position.column, includeEmpty: true)?.paragraphs.first?.endProperties {
             properties.defaultRun = styled
         }
         var list = ListStyle()

@@ -472,6 +472,66 @@ body {
   box-shadow: 0 2px 0 var(--ds-interactive);
 }
 
+.navigator__section {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-spacing-02);
+  min-height: var(--ds-control-sm);
+  padding-inline-end: var(--ds-spacing-03);
+}
+
+.navigator__section:not(:first-child) {
+  margin-top: var(--ds-spacing-03);
+}
+
+.navigator__section.is-drop-before {
+  box-shadow: 0 -2px 0 var(--ds-interactive);
+}
+
+.navigator__section.is-drop-target {
+  outline: 2px solid var(--ds-interactive);
+  outline-offset: -2px;
+}
+
+.navigator__disclosure {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ds-spacing-03);
+  padding: var(--ds-spacing-02);
+  border: 0;
+  background: none;
+  color: var(--ds-text-primary);
+  font: var(--ds-type-heading-compact);
+  text-align: start;
+}
+
+.navigator__disclosure:hover {
+  background: var(--ds-layer-hover-01);
+}
+
+.navigator__disclosure:focus-visible {
+  outline: 2px solid var(--ds-focus);
+  outline-offset: -2px;
+}
+
+.navigator__triangle {
+  flex: none;
+  color: var(--ds-icon-secondary);
+  transition: transform var(--ds-duration-fast-02) var(--ds-ease-standard);
+}
+
+.navigator__section.is-collapsed .navigator__triangle {
+  transform: rotate(-90deg);
+}
+
+.navigator__section-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .navigator__number {
   font: var(--ds-type-label);
   color: var(--ds-text-secondary);
@@ -581,6 +641,38 @@ body {
   cursor: grab;
 }
 
+.canvas__handle--end {
+  cursor: crosshair;
+}
+
+.canvas__handle--end.is-attached {
+  background: var(--ds-interactive);
+  border-color: var(--ds-background);
+}
+
+.canvas__connector {
+  position: absolute;
+  height: 1px;
+  background: var(--ds-interactive);
+  transform-origin: 0 0;
+}
+
+.canvas__site {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  background: var(--ds-background);
+  border: 1px solid var(--ds-interactive);
+}
+
+.canvas__site.is-settled {
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  background: var(--ds-interactive);
+}
+
 .canvas__marquee {
   position: absolute;
   background: color-mix(in srgb, var(--ds-interactive) 12%, transparent);
@@ -665,6 +757,17 @@ body {
   position: absolute;
   inset: 0;
   overflow: visible;
+}
+
+/* A zoom's live picture of the slide it leads to, drawn small within its outline. */
+.shape__zoom {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.shape__zoom > .slide {
+  pointer-events: none;
 }
 
 .shape.is-hidden-for-editing {
@@ -783,6 +886,13 @@ body {
   text-decoration: none;
 }
 
+/* A picture bullet, as tall as the text and centred on its capitals. */
+.text__bullet-picture {
+  height: 1em;
+  width: auto;
+  vertical-align: -0.15em;
+}
+
 .text--prompt {
   pointer-events: none;
 }
@@ -828,6 +938,17 @@ body {
   background: #000;
 }
 
+/* A video set to play full screen covers the whole show while it plays. */
+.slideshow__media--full {
+  z-index: 5;
+}
+
+/* Media hidden while not playing is left out of the show; its player covers it once it plays. */
+.slideshow [data-media-hide] > svg,
+.audience__stage [data-media-hide] > svg {
+  visibility: hidden;
+}
+
 /* MARK: - Crop and chart data sheets */
 
 .app__crop {
@@ -869,6 +990,60 @@ body {
 }
 
 .app__header-footer {
+  margin-top: var(--ds-spacing-04);
+}
+
+.app__custom-shows-sheet {
+  width: min(860px, calc(100vw - 2 * var(--ds-spacing-05)));
+}
+
+.app__custom-shows {
+  display: flex;
+  gap: var(--ds-spacing-05);
+  margin: var(--ds-spacing-04) 0;
+}
+
+.app__custom-shows-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-spacing-03);
+}
+
+.app__custom-shows-list .ds-source-list {
+  width: 200px;
+  height: 320px;
+  border: 1px solid var(--ds-border-subtle-01);
+}
+
+.app__custom-show {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-spacing-04);
+}
+
+.app__custom-show-columns {
+  display: flex;
+  gap: var(--ds-spacing-04);
+}
+
+.app__custom-show-table {
+  flex: 1;
+  min-width: 0;
+  height: 280px;
+  overflow: auto;
+  border: 1px solid var(--ds-border-subtle-01);
+}
+
+.app__custom-show-moves {
+  width: 1%;
+  padding-inline: var(--ds-spacing-02);
+  text-align: end;
+  white-space: nowrap;
+}
+
+.app__properties {
   margin-top: var(--ds-spacing-04);
 }
 
@@ -981,6 +1156,14 @@ body {
   inset: 0;
   z-index: 100;
   background: #000;
+}
+
+/* A link's ScreenTip, under the pointer once it rests on the link (showLinkTips). */
+.slideshow__link-tip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  box-shadow: var(--ds-shadow-float);
 }
 
 .slideshow__stage {

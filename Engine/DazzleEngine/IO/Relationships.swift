@@ -39,6 +39,7 @@ public enum OOXML {
     public enum ContentType {
         private static let base = "application/vnd.openxmlformats-officedocument.presentationml."
         public static let slide = base + "slide+xml"
+        public static let slideLayout = base + "slideLayout+xml"
         public static let notesSlide = base + "notesSlide+xml"
         public static let notesMaster = base + "notesMaster+xml"
         public static let theme = "application/vnd.openxmlformats-officedocument.theme+xml"
@@ -138,5 +139,11 @@ extension XMLElement {
     /// qualified name instead.
     public var relationshipID: String? {
         qualifiedAttributes.first { $0.key.hasSuffix(":id") && !$0.key.hasPrefix("xmlns") }?.value
+    }
+
+    /// The plain `id`, such as a `p:sldId`'s slide number, which `r:id`
+    /// would otherwise be mistaken for.
+    public var unprefixedID: String? {
+        qualifiedAttributes["id"]
     }
 }

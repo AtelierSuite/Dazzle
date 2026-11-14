@@ -14,7 +14,7 @@ public struct SlideStyleContext: Sendable {
     public init(presentation: Presentation, slide: Slide) {
         resources = presentation.resources
         layout = presentation.layout(for: slide)
-        master = presentation.resources.master(for: layout)
+        master = presentation.master(for: slide)
         var map = master?.colorMap ?? SlideMaster.defaultColorMap
         for (key, value) in layout?.colorMapOverride ?? [:] { map[key] = value }
         colorMap = map
@@ -213,5 +213,12 @@ public struct SlideStyleContext: Sendable {
     /// A theme font reference such as `+mj-lt`, made a typeface name.
     public func typeface(_ name: String?, eastAsian: Bool = false) -> String? {
         name.map(theme.typeface)
+    }
+
+    /// The typeface `run`'s text in a complex `script` is set in: its `a:cs`,
+    /// through the theme. Nil when nothing names one, leaving the text in
+    /// its Latin typeface.
+    public func complexScriptTypeface(for run: RunProperties, script: String) -> String? {
+        theme.complexScriptTypeface(run.complexScriptFont, script: script)
     }
 }

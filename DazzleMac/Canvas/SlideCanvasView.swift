@@ -23,6 +23,9 @@ final class SlideCanvasView: NSView {
     private var interaction: Interaction?
     /// A crop being adjusted.
     private var cropDraft: CropDraft?
+    /// An end of a connector being dragged: where it is, in slide points,
+    /// and the connection site it has settled on, if any.
+    private var connectorDrag: (shapeID: SlideShape.ID, end: SlideShape.ConnectorEnd, point: CGPoint, site: ConnectionSite?)?
     /// The lines a moved or resized shape has settled on.
     private var guides: [Snapping.Guide] = []
     /// The rectangle being dragged out to select what it crosses.
@@ -75,6 +78,8 @@ final class SlideCanvasView: NSView {
     private static let handleReach: CGFloat = 7
     /// How far the mouse moves before a click becomes a drag, in screen points.
     private static let dragThreshold: CGFloat = 3
+    /// How near a connection site a connector's end has to come to attach to it, in view points.
+    private static let connectionDistance: CGFloat = 10
 
     init(deck: Deck) {
         self.deck = deck
@@ -205,12 +210,18 @@ final class SlideCanvasView: NSView {
             slide.shapes[index].frame = EMURect(points: cropDraft.frame)
             slide.shapes[index].kind = .picture(cropDraft.picture)
         }
+        if let connectorDrag {
+            slide.setConnectorEnd(connectorDrag.end, of: connectorDrag.shapeID, to: connectorDrag.point, connection: connectorDrag.site?.connection)
+        }
         guard let interaction else { return slide }
+        let before = slide
         for index in slide.shapes.indices {
             guard let placement = interaction.current[slide.shapes[index].id] else { continue }
             slide.shapes[index].frame = EMURect(points: placement.frame)
             slide.shapes[index].rotation = placement.rotation
         }
+        // Connectors go with the shapes they are attached to as they move.
+        slide.followConnections(from: before)
         return slide
     }
 
@@ -241,6 +252,10 @@ final class SlideCanvasView: NSView {
         if selected.count == 1, let shape = selected.first {
             if shape.id == state.croppingShapeID, case .picture(let picture) = shape.kind {
                 drawCrop(of: shape, picture: picture, in: context)
+                return
+            }
+            if shape.kind == .connector, shape.isEditable, slide.canEditShapes {
+                drawConnectorSelection(of: shape, on: slide, in: context)
                 return
             }
             withRotation(of: shape, in: context) {
@@ -341,13 +356,28 @@ final class SlideCanvasView: NSView {
         }
     }
 
-    private func drawHandle(at point: CGPoint, in context: CGContext, radius: CGFloat) {
+    private func drawHandle(at point: CGPoint, in context: CGContext, radius: CGFloat, isFilled: Bool = false) {
         let rect = CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
-        context.setFillColor(NSColor.white.cgColor)
+        context.setFillColor(isFilled ? NSColor.controlAccentColor.cgColor : NSColor.white.cgColor)
         context.fillEllipse(in: rect)
-        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+        context.setStrokeColor(isFilled ? NSColor.white.cgColor : NSColor.controlAccentColor.cgColor)
         context.setLineWidth(onScreen(1.5))
         context.strokeEllipse(in: rect)
+    }
+
+    /// A selected connector: a handle at each end, filled where the end is
+    /// attached to a shape. While an end is dragged, the connection sites of
+    /// the shapes it passes are shown, and the one it has settled on stands out.
+    private func drawConnectorSelection(of shape: SlideShape, on slide: Slide, in context: CGContext) {
+        if let drag = connectorDrag, drag.shapeID == shape.id {
+            for site in slide.connectionSites(around: drag.point, margin: onScreen(24)) {
+                let isSettled = site.connection == drag.site?.connection
+                drawHandle(at: site.point, in: context, radius: onScreen(isSettled ? 6 : 3.5), isFilled: isSettled)
+            }
+        }
+        let ends = shape.connectorEnds
+        drawHandle(at: ends.start, in: context, radius: onScreen(4.5), isFilled: shape.startConnection != nil)
+        drawHandle(at: ends.end, in: context, radius: onScreen(4.5), isFilled: shape.endConnection != nil)
     }
 
     /// The whole image, faded, round the part the crop keeps, with bars on
@@ -448,6 +478,7 @@ final class SlideCanvasView: NSView {
         case resize(Handle)
         case rotate
         case crop(Handle)
+        case connectorEnd(SlideShape.ConnectorEnd)
     }
 
     /// The handle of the lone selected shape under a point, in slide points.
@@ -459,6 +490,13 @@ final class SlideCanvasView: NSView {
         let local = local(point, in: shape)
         let reach = onScreen(Self.handleReach)
         func near(_ target: CGPoint) -> Bool { hypot(local.x - target.x, local.y - target.y) <= reach }
+        if shape.kind == .connector {
+            // A connector's handles are its two ends, where they lie on the slide.
+            let ends = shape.connectorEnds
+            if hypot(point.x - ends.end.x, point.y - ends.end.y) <= reach { return (.connectorEnd(.end), shape) }
+            if hypot(point.x - ends.start.x, point.y - ends.start.y) <= reach { return (.connectorEnd(.start), shape) }
+            return nil
+        }
         if shape.id == state.croppingShapeID {
             return Handle.allCases.first { near(position(of: $0, in: frame)) }.map { (.crop($0), shape) }
         }
@@ -470,7 +508,7 @@ final class SlideCanvasView: NSView {
 
     override func resetCursorRects() {
         guard state.selectedShapeIDs.count == 1, let shape = deck.selectedShape, shape.isEditable, shape.rotation == 0,
-              state.croppingShapeID != shape.id, state.editingTextShapeID == nil else { return }
+              shape.kind != .connector, state.croppingShapeID != shape.id, state.editingTextShapeID == nil else { return }
         let frame = shape.frame.points
         let reach = onScreen(Self.handleReach)
         for handle in handles(for: frame) {
@@ -520,6 +558,7 @@ final class SlideCanvasView: NSView {
             case .resize(let handle): trackResize(handle, of: shape, from: event)
             case .rotate: trackRotation(of: shape, from: event)
             case .crop(let handle): trackCrop(handle, of: shape, from: event)
+            case .connectorEnd(let end): trackConnectorEnd(end, of: shape, on: slide, from: event)
             }
             return
         }
@@ -640,6 +679,24 @@ final class SlideCanvasView: NSView {
             interaction = current
         }
         finish(moved ? current : nil)
+    }
+
+    /// Moves one end of a connector with the mouse. Near a shape's
+    /// connection site it settles on the site, and is attached there when
+    /// the mouse is let go; let go anywhere else, it is attached to nothing.
+    private func trackConnectorEnd(_ end: SlideShape.ConnectorEnd, of shape: SlideShape, on slide: Slide, from event: NSEvent) {
+        let moved = track(from: event, threshold: Self.dragThreshold) { point, _ in
+            let site = slide.connectionSite(near: point, within: onScreen(Self.connectionDistance))
+            connectorDrag = (shape.id, end, site?.point ?? point, site)
+        }
+        let finished = connectorDrag
+        connectorDrag = nil
+        if moved, let finished {
+            deck.edit {
+                state.setConnectorEnd(finished.end, of: finished.shapeID, to: finished.point, connection: finished.site?.connection, in: &$0)
+            }
+        }
+        needsDisplay = true
     }
 
     /// Turns the shape to face the mouse. Within a few degrees of a multiple
@@ -941,7 +998,7 @@ final class SlideCanvasView: NSView {
         let slideNumber = (presentation.index(of: slide.id) ?? 0) + 1
         if let id = state.editingTextShapeID, let shape = slide.shapes.first(where: { $0.id == id }), shape.canHoldText {
             let sources = style.sources(for: shape)
-            let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+            let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
             let (area, properties) = renderer.textArea(of: shape, sources: sources)
             // Shrunk to fit as the slide draws it.
             let shrink = renderer.drawnShrink(of: shape, sources: sources)
@@ -965,7 +1022,7 @@ final class SlideCanvasView: NSView {
             )
             return InPlaceTextEditor.Target(
                 id: .cell(shape.id, position), body: body, shape: TableLayout.cellShape(body, rect),
-                sources: [layout.styleSource(forRow: position.row)], style: layout.style, slideNumber: slideNumber,
+                sources: [layout.styleSource(for: position)], style: layout.style, slideNumber: slideNumber,
                 fontScale: 1, anchor: cell.anchor ?? .top, frame: area, area: area, rotation: 0
             )
         }

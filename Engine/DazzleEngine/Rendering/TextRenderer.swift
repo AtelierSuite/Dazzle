@@ -11,6 +11,8 @@ import Foundation
 public struct TextRenderer {
     public let style: SlideStyleContext
     public let slideNumber: Int
+    /// The picture at a package path, for picture bullets.
+    public let picture: (String) -> CGImage?
 
     /// The kinds of vertical text, by their name in the file, all laid out
     /// across the shape and turned a quarter.
@@ -288,6 +290,9 @@ public struct TextRenderer {
             context.restoreGState()
         }
         for (line, origin, column) in placed {
+            inColumn(column) { drawHighlights(in: line, origin: origin, context: context) }
+        }
+        for (line, origin, column) in placed {
             inColumn(column) { drawShadows(of: line, at: origin, space: space, context: context) }
         }
         for (line, origin, column) in placed {
@@ -296,7 +301,8 @@ public struct TextRenderer {
                 CTLineDraw(line, context)
                 drawStackedLetters(in: line, at: origin, context: context)
                 drawEquations(in: line, at: origin, context: context)
-                drawStrikethroughs(in: line, origin: origin, context: context)
+                drawPictureBullets(in: line, at: origin, context: context)
+                drawDecorations(in: line, origin: origin, context: context)
             }
         }
     }
@@ -318,6 +324,21 @@ public struct TextRenderer {
                 let reversed = -baseline + ascent - descent
                 return (line, CGPoint(x: origin.x, y: column.origin.y + column.height - reversed), column)
             }
+        }
+    }
+
+    /// Highlighted runs' colour, behind their letters, as tall as the line's letters reach.
+    private func drawHighlights(in line: CTLine, origin: CGPoint, context: CGContext) {
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let value = attributes[Self.highlightKey.rawValue], CFGetTypeID(value as CFTypeRef) == CGColor.typeID else { continue }
+            let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
+            let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), nil, nil, nil)
+            context.setFillColor(value as! CGColor) // swiftlint:disable:this force_cast
+            context.fill(CGRect(x: origin.x + start, y: origin.y - descent, width: width, height: ascent + descent))
         }
     }
 
@@ -379,6 +400,13 @@ public struct TextRenderer {
                 context.saveGState()
                 context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
                 context.scaleBy(x: 1, y: -1)
+                drawHighlights(in: entry.line, origin: .zero, context: context)
+                context.restoreGState()
+            }
+            for entry in paragraph {
+                context.saveGState()
+                context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
+                context.scaleBy(x: 1, y: -1)
                 context.textMatrix = .identity
                 drawShadows(of: entry.line, at: .zero, space: space, context: context)
                 context.restoreGState()
@@ -394,7 +422,8 @@ public struct TextRenderer {
                 CTLineDraw(entry.line, context)
                 drawStackedLetters(in: entry.line, at: .zero, context: context)
                 drawEquations(in: entry.line, at: .zero, context: context)
-                drawStrikethroughs(in: entry.line, origin: .zero, context: context)
+                drawPictureBullets(in: entry.line, at: .zero, context: context)
+                drawDecorations(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
             }
         }
@@ -526,12 +555,12 @@ public struct TextRenderer {
         }
     }
 
-    /// Where each linked run of `body` lies, in slide points, and where it
-    /// goes. Text running vertically has none.
-    public func linkAreas(_ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect) -> [(CGRect, Hyperlink)] {
+    /// Where each linked run of `body` lies, in slide points, where it
+    /// goes, and its ScreenTip. Text running vertically has none.
+    public func linkAreas(_ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect) -> [(CGRect, Hyperlink, String?)] {
         guard let layout = layout(body, shape: shape, sources: sources, in: rect, colorOverride: nil, hidesText: false),
               layout.turn == nil else { return [] }
-        var areas: [(CGRect, Hyperlink)] = []
+        var areas: [(CGRect, Hyperlink, String?)] = []
         for (line, origin, column) in lines(of: layout) {
             for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
                 let attributes = CTRunGetAttributes(run) as NSDictionary
@@ -539,11 +568,11 @@ public struct TextRenderer {
                 var ascent: CGFloat = 0
                 var descent: CGFloat = 0
                 let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), &ascent, &descent, nil)
-                let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
+                let start = Self.leftEdge(of: run, width: width, in: line)
                 areas.append((CGRect(
                     x: column.origin.x + origin.x + start, y: column.origin.y + column.height - origin.y - ascent,
                     width: width, height: ascent + descent
-                ), box.link))
+                ), box.link, box.tooltip))
             }
         }
         return areas
@@ -667,7 +696,8 @@ public struct TextRenderer {
     private static let colorKey = NSAttributedString.Key(kCTForegroundColorAttributeName as String)
     private static let paragraphIndexKey = NSAttributedString.Key("DazzleParagraphIndex")
     private static let paragraphKey = NSAttributedString.Key(kCTParagraphStyleAttributeName as String)
-    private static let underlineKey = NSAttributedString.Key(kCTUnderlineStyleAttributeName as String)
+    private static let underlineKey = NSAttributedString.Key("DazzleUnderline")
+    private static let underlineColorKey = NSAttributedString.Key("DazzleUnderlineColor")
     private static let superscriptKey = NSAttributedString.Key(kCTSuperscriptAttributeName as String)
     private static let kernKey = NSAttributedString.Key(kCTKernAttributeName as String)
     private static let strikeKey = NSAttributedString.Key("DazzleStrikethrough")
@@ -675,11 +705,16 @@ public struct TextRenderer {
     private static let strokeWidthKey = NSAttributedString.Key(kCTStrokeWidthAttributeName as String)
     private static let strokeColorKey = NSAttributedString.Key(kCTStrokeColorAttributeName as String)
     private static let shadowKey = NSAttributedString.Key("DazzleShadow")
+    private static let highlightKey = NSAttributedString.Key("DazzleHighlight")
 
     /// A link riding on the text it belongs to.
     private final class LinkBox: NSObject {
         let link: Hyperlink
-        init(_ link: Hyperlink) { self.link = link }
+        let tooltip: String?
+        init(_ link: Hyperlink, tooltip: String?) {
+            self.link = link
+            self.tooltip = tooltip
+        }
     }
 
     /// A shadow riding on the text that casts it, its colour worked out.
@@ -715,10 +750,14 @@ public struct TextRenderer {
             // Numbering continues through a level until something interrupts it.
             for deeper in counters.keys where deeper > level { counters[deeper] = nil }
             var bulletText: String?
+            var bulletPicture: CGImage?
             if !paragraph.plainText.isEmpty {
                 switch properties.bullet {
                 case .character(let character):
                     bulletText = character
+                case .picture(let path):
+                    bulletPicture = picture(path)
+                    counters[level] = nil
                 case .autoNumber(let scheme, let startAt):
                     let number = (counters[level] ?? (startAt - 1)) + 1
                     counters[level] = number
@@ -735,9 +774,15 @@ public struct TextRenderer {
                 }
                 if let color = properties.bulletColor { bulletRun.color = color }
                 let bulletScale = scale * (properties.bulletSize ?? 1)
-                result.append(NSAttributedString(
-                    string: Self.displayable(bulletText) + "\t",
+                result.append(string(
+                    Self.displayable(bulletText) + "\t", run: bulletRun,
                     attributes: attributes(for: bulletRun, scale: bulletScale, colorOverride: colorOverride)
+                ))
+            }
+            if let bulletPicture {
+                result.append(pictureBullet(
+                    bulletPicture, run: firstRun, scale: scale * (properties.bulletSize ?? 1),
+                    opacity: colorOverride?.alpha == 0 ? 0 : paragraphOpacity[index] ?? 1
                 ))
             }
 
@@ -763,8 +808,16 @@ public struct TextRenderer {
                 if runProperties.capitalization == "all" { text = text.uppercased() }
                 text = Self.symbolsMapped(text)
                 var runAttributes = attributes(for: runProperties, scale: scale, colorOverride: textColor)
-                if let link = run.properties.link { runAttributes[Self.linkKey] = LinkBox(link) }
-                result.append(NSAttributedString(string: text, attributes: runAttributes))
+                if let link = run.properties.link { runAttributes[Self.linkKey] = LinkBox(link, tooltip: run.properties.linkTooltip) }
+                let runStart = result.length
+                result.append(string(text, run: runProperties, attributes: runAttributes))
+                if runProperties.underline == .words {
+                    // Words underlined one by one: the spaces between them are left bare.
+                    let spaces = try? NSRegularExpression(pattern: "\\s+")
+                    for match in spaces?.matches(in: text, range: NSRange(text.startIndex..., in: text)) ?? [] {
+                        result.removeAttribute(Self.underlineKey, range: NSRange(location: runStart + match.range.location, length: match.range.length))
+                    }
+                }
             }
 
             // A paragraph break, or for the last paragraph a zero-width space
@@ -790,7 +843,7 @@ public struct TextRenderer {
             }
             // A paragraph not yet built in keeps its place, bullet and all, unseen.
             if let opacity = paragraphOpacity[index], opacity < 1, range.length > 0 {
-                for key in [Self.colorKey, Self.strokeColorKey] {
+                for key in [Self.colorKey, Self.strokeColorKey, Self.underlineColorKey, Self.highlightKey] {
                     result.enumerateAttribute(key, in: range) { value, subrange, _ in
                         guard let value, CFGetTypeID(value as CFTypeRef) == CGColor.typeID else { return }
                         let color = value as! CGColor // swiftlint:disable:this force_cast
@@ -802,10 +855,29 @@ public struct TextRenderer {
                 result.addAttribute(Self.paragraphIndexKey, value: index, range: range)
                 result.addAttribute(
                     Self.paragraphKey,
-                    value: paragraphStyle(properties, fontSize: baseSize, hasBullet: bulletText != nil, spacingReduction: spacingReduction),
+                    value: paragraphStyle(properties, fontSize: baseSize, hasBullet: bulletText != nil || bulletPicture != nil, spacingReduction: spacingReduction),
                     range: range
                 )
             }
+        }
+        return result
+    }
+
+    /// `text` in `attributes`, with what is in Arabic, Hebrew or another
+    /// complex script set in `run`'s complex-script typeface, at the same
+    /// size and weight.
+    private func string(_ text: String, run: RunProperties, attributes: [NSAttributedString.Key: Any]) -> NSAttributedString {
+        let stretches = ComplexScript.stretches(in: text)
+        guard !stretches.isEmpty, let latin = attributes[Self.fontKey] else { return NSAttributedString(string: text, attributes: attributes) }
+        let result = NSMutableAttributedString(string: text, attributes: attributes)
+        let size = CTFontGetSize(latin as! CTFont) // swiftlint:disable:this force_cast
+        for stretch in stretches {
+            guard let family = style.complexScriptTypeface(for: run, script: stretch.script) else { continue }
+            let font = FontResolver.shared.font(
+                family: family, size: size, bold: run.isBold ?? false, italic: run.isItalic ?? false,
+                embedded: style.resources.embeddedFonts
+            )
+            result.addAttribute(Self.fontKey, value: font, range: NSRange(location: stretch.range.lowerBound, length: stretch.range.count))
         }
         return result
     }
@@ -823,11 +895,14 @@ public struct TextRenderer {
             Self.fontKey: font,
             Self.colorKey: color.cgColor,
         ]
-        if run.isUnderlined == true {
-            attributes[Self.underlineKey] = NSNumber(value: CTUnderlineStyle.single.rawValue)
+        if let underline = run.underline, underline != .none {
+            attributes[Self.underlineKey] = underline.rawValue
+            if let underlineColor = run.underlineColor {
+                attributes[Self.underlineColorKey] = (colorOverride ?? style.color(underlineColor)).cgColor
+            }
         }
-        if run.isStruckThrough == true {
-            attributes[Self.strikeKey] = NSNumber(value: true)
+        if let strike = run.strike, strike != .none {
+            attributes[Self.strikeKey] = strike.rawValue
         }
         if let baseline = run.baseline, baseline != 0 {
             attributes[Self.superscriptKey] = NSNumber(value: baseline > 0 ? 1 : -1)
@@ -841,9 +916,12 @@ public struct TextRenderer {
             attributes[Self.strokeWidthKey] = NSNumber(value: -EMU.points(width) / Double(size) * 100)
             attributes[Self.strokeColorKey] = (colorOverride ?? style.color(outlineColor)).cgColor
         }
-        // Prompts and text laid out unseen cast no shadow.
+        // Prompts and text laid out unseen cast no shadow, and show no highlight.
         if case .shadow(let shadow) = run.shadow, colorOverride == nil {
             attributes[Self.shadowKey] = ShadowBox(shadow, color: style.color(shadow.color).cgColor)
+        }
+        if let highlight = run.highlight?.color, colorOverride == nil {
+            attributes[Self.highlightKey] = style.color(highlight).cgColor
         }
         return attributes
     }
@@ -853,7 +931,13 @@ public struct TextRenderer {
     ) -> CTParagraphStyle {
         let marginLeft = CGFloat(EMU.points(properties.marginLeft ?? 0))
         let indent = CGFloat(EMU.points(properties.indent ?? 0))
-        var alignment: CTTextAlignment = switch properties.alignment ?? .left {
+        // A right-to-left paragraph reads from the right: its margin, indent,
+        // bullet and tab stops are measured from there, and it sits at the
+        // right unless it says where. Alignment itself stays left and right
+        // as the file names them, whichever way the paragraph reads.
+        let rightToLeft = properties.isRightToLeft ?? false
+        var direction: CTWritingDirection = rightToLeft ? .rightToLeft : .leftToRight
+        var alignment: CTTextAlignment = switch properties.effectiveAlignment {
         case .left: .left
         case .center: .center
         case .right: .right
@@ -865,7 +949,8 @@ public struct TextRenderer {
         // every default tab size.
         var firstLine = max(marginLeft + indent, 0)
         var head = marginLeft
-        var tabs = TabLayout.stops(properties, fontSize: Double(fontSize), hasBullet: hasBullet).map(Self.textTab) as CFArray
+        var tabs = TabLayout.stops(properties, fontSize: Double(fontSize), hasBullet: hasBullet)
+            .map { Self.textTab($0, rightToLeft: rightToLeft) } as CFArray
         var defaultTab = CGFloat(TabLayout.defaultInterval(properties))
 
         var lineMultiple: CGFloat = 1
@@ -901,6 +986,7 @@ public struct TextRenderer {
         }
         var settings = [
             setting(.alignment, &alignment),
+            setting(.baseWritingDirection, &direction),
             setting(.firstLineHeadIndent, &firstLine),
             setting(.headIndent, &head),
             setting(.tabStops, &tabs),
@@ -919,11 +1005,14 @@ public struct TextRenderer {
 
     /// A stop as CoreText takes it. A decimal stop is a right-aligned one that
     /// ends its column at the decimal point.
-    private static func textTab(_ stop: TabLayout.Stop) -> CTTextTab {
+    /// In a right-to-left paragraph the stops are measured from the right,
+    /// and text starts at a left stop and ends at a right one as it reads,
+    /// the other way round from how CoreText names them.
+    private static func textTab(_ stop: TabLayout.Stop, rightToLeft: Bool) -> CTTextTab {
         let alignment: CTTextAlignment = switch stop.alignment {
-        case .left: .left
+        case .left: rightToLeft ? .right : .left
         case .center: .center
-        case .right, .decimal: .right
+        case .right, .decimal: rightToLeft ? .left : .right
         }
         var options: CFDictionary?
         if stop.alignment == .decimal {
@@ -933,23 +1022,82 @@ public struct TextRenderer {
         return CTTextTabCreate(alignment, stop.location, options)
     }
 
-    /// Strikethrough is a TextKit attribute that CoreText does not draw.
-    private func drawStrikethroughs(in line: CTLine, origin: CGPoint, context: CGContext) {
+    /// Where a run's letters start at the left, from its line's origin. A
+    /// run read from right to left has its first character at its right.
+    private static func leftEdge(of run: CTRun, width: Double, in line: CTLine) -> CGFloat {
+        let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
+        return CTRunGetStatus(run).contains(.rightToLeft) ? start - CGFloat(width) : start
+    }
+
+    /// Underlines and strikethroughs, drawn here rather than by CoreText,
+    /// which has neither dotted, dashed nor wavy lines, nor double strikes.
+    private func drawDecorations(in line: CTLine, origin: CGPoint, context: CGContext) {
+        /// A wave about `y`, in step with every other wave on the line.
+        func addWave(from left: CGFloat, to right: CGFloat, y: CGFloat, lineStart: CGFloat, thickness: CGFloat) {
+            let length = max(thickness * 4, 2)
+            let height = max(thickness, 0.75)
+            func wave(_ x: CGFloat) -> CGFloat { height * sin((x - lineStart) / length * 2 * .pi) }
+            var x = left
+            context.move(to: CGPoint(x: x, y: y + wave(x)))
+            while x < right {
+                x = min(x + length / 8, right)
+                context.addLine(to: CGPoint(x: x, y: y + wave(x)))
+            }
+        }
+
         for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
             let attributes = CTRunGetAttributes(run) as NSDictionary
-            guard attributes[Self.strikeKey.rawValue] != nil else { continue }
+            let underline = (attributes[Self.underlineKey.rawValue] as? String).flatMap(UnderlineStyle.init(rawValue:))
+            let strike = (attributes[Self.strikeKey.rawValue] as? String).flatMap(StrikeStyle.init(rawValue:))
+            guard underline != nil || strike != nil else { continue }
             let font = attributes[kCTFontAttributeName as String].map { $0 as! CTFont } // swiftlint:disable:this force_cast
-            let height = font.map { CTFontGetXHeight($0) / 2 } ?? 4
-            let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
-            let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), nil, nil, nil)
-            if let color = attributes[kCTForegroundColorAttributeName as String] {
-                context.setStrokeColor(color as! CGColor) // swiftlint:disable:this force_cast
+            let size = font.map { CTFontGetSize($0) } ?? 12
+            let width = CGFloat(CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), nil, nil, nil))
+            let start = origin.x + Self.leftEdge(of: run, width: Double(width), in: line)
+            let textColor = attributes[kCTForegroundColorAttributeName as String].map { $0 as! CGColor } // swiftlint:disable:this force_cast
+            // Raised or lowered text keeps its lines with its letters.
+            var position = CGPoint.zero
+            if CTRunGetGlyphCount(run) > 0 { CTRunGetPositions(run, CFRange(location: 0, length: 1), &position) }
+            let baseline = origin.y + position.y
+            context.saveGState()
+            if let strike {
+                if let textColor { context.setStrokeColor(textColor) }
+                let thickness = max(size / 16, 0.5)
+                let middle = baseline + (font.map { CTFontGetXHeight($0) / 2 } ?? size / 4)
+                context.setLineWidth(thickness)
+                for offset in strike == .double ? [-thickness, thickness] : [0] {
+                    context.move(to: CGPoint(x: start, y: middle + offset))
+                    context.addLine(to: CGPoint(x: start + width, y: middle + offset))
+                }
+                context.strokePath()
             }
-            context.setLineWidth(max((font.map { CTFontGetSize($0) } ?? 12) / 16, 0.5))
-            context.move(to: CGPoint(x: origin.x + start, y: origin.y + height))
-            context.addLine(to: CGPoint(x: origin.x + start + width, y: origin.y + height))
-            context.strokePath()
+            if let underline {
+                let color = attributes[Self.underlineColorKey.rawValue].map { $0 as! CGColor } ?? textColor // swiftlint:disable:this force_cast
+                if let color { context.setStrokeColor(color) }
+                let fontThickness = font.map { CTFontGetUnderlineThickness($0) } ?? 0
+                var thickness = max(fontThickness > 0 ? fontThickness : size / 16, size / 24, 0.5)
+                if underline.isHeavy { thickness *= 2 }
+                let fontPosition = font.map { CTFontGetUnderlinePosition($0) } ?? 0
+                let below = fontPosition < 0 ? -fontPosition : size / 10
+                let y = baseline - below - thickness / 2
+                context.setLineWidth(thickness)
+                // Dashes run on from one run to the next, measured from the line's start.
+                let dashes = underline.dashPattern.map { CGFloat($0) * thickness }
+                if !dashes.isEmpty { context.setLineDash(phase: start - origin.x, lengths: dashes) }
+                let offsets: [CGFloat] = underline.isDouble ? [thickness, -thickness] : [0]
+                for offset in offsets {
+                    if underline.isWavy {
+                        addWave(from: start, to: start + width, y: y + offset, lineStart: origin.x, thickness: thickness)
+                    } else {
+                        context.move(to: CGPoint(x: start, y: y + offset))
+                        context.addLine(to: CGPoint(x: start + width, y: y + offset))
+                    }
+                }
+                context.strokePath()
+            }
+            context.restoreGState()
         }
+
     }
 
     // MARK: - Stacked letters
@@ -1125,15 +1273,87 @@ public struct TextRenderer {
 
     // MARK: - Bullets
 
+    private static let pictureBulletKey = NSAttributedString.Key("DazzlePictureBullet")
+
+    /// A picture bullet: the picture, how big it is drawn, and how far its
+    /// bottom sits above the baseline.
+    private final class PictureBullet: NSObject {
+        let image: CGImage
+        let size: CGSize
+        let rise: CGFloat
+        let opacity: CGFloat
+        init(image: CGImage, size: CGSize, rise: CGFloat, opacity: CGFloat) {
+            self.image = image
+            self.size = size
+            self.rise = rise
+            self.opacity = opacity
+        }
+    }
+
+    /// A picture bullet and the tab after it: an object replacement character
+    /// keeping the picture's room, as tall as the text and centred on its
+    /// capitals, the picture's own shape kept.
+    private func pictureBullet(_ image: CGImage, run: RunProperties, scale: Double, opacity: Double) -> NSAttributedString {
+        let textAttributes = attributes(for: run, scale: scale, colorOverride: nil)
+        let font = textAttributes[Self.fontKey].map { $0 as! CTFont } // swiftlint:disable:this force_cast
+        let height = max(CGFloat(run.size ?? 1_800) / 100 * scale, 1)
+        let aspect = image.height > 0 ? CGFloat(image.width) / CGFloat(image.height) : 1
+        let middle = font.map { CTFontGetCapHeight($0) / 2 } ?? height * 0.35
+        let bullet = PictureBullet(
+            image: image, size: CGSize(width: height * aspect, height: height), rise: middle - height / 2,
+            opacity: CGFloat(opacity)
+        )
+        var callbacks = CTRunDelegateCallbacks(
+            version: kCTRunDelegateVersion1,
+            dealloc: { Unmanaged<PictureBullet>.fromOpaque($0).release() },
+            getAscent: { let bullet = Unmanaged<PictureBullet>.fromOpaque($0).takeUnretainedValue(); return max(bullet.rise + bullet.size.height, 0) },
+            getDescent: { max(-Unmanaged<PictureBullet>.fromOpaque($0).takeUnretainedValue().rise, 0) },
+            getWidth: { Unmanaged<PictureBullet>.fromOpaque($0).takeUnretainedValue().size.width }
+        )
+        var pictureAttributes = textAttributes
+        pictureAttributes[Self.pictureBulletKey] = bullet
+        pictureAttributes[NSAttributedString.Key(kCTRunDelegateAttributeName as String)] =
+            CTRunDelegateCreate(&callbacks, Unmanaged.passRetained(bullet).toOpaque())
+        let result = NSMutableAttributedString(string: "\u{FFFC}", attributes: pictureAttributes)
+        result.append(NSAttributedString(string: "\t", attributes: textAttributes))
+        return result
+    }
+
+    /// Draws each picture bullet of `line`, whose origin is `origin`.
+    private func drawPictureBullets(in line: CTLine, at origin: CGPoint, context: CGContext) {
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let bullet = attributes[Self.pictureBulletKey.rawValue] as? PictureBullet, bullet.opacity > 0,
+                  CTRunGetGlyphCount(run) > 0 else { continue }
+            var position = CGPoint.zero
+            CTRunGetPositions(run, CFRange(location: 0, length: 1), &position)
+            context.saveGState()
+            context.setAlpha(bullet.opacity)
+            context.interpolationQuality = .high
+            context.draw(bullet.image, in: CGRect(
+                origin: CGPoint(x: origin.x + position.x, y: origin.y + position.y + bullet.rise), size: bullet.size
+            ))
+            context.restoreGState()
+        }
+    }
+
     public static func symbolsMapped(_ text: String) -> String { TextLabels.symbolsMapped(text) }
 
     public static func numberLabel(_ number: Int, scheme: String) -> String { TextLabels.numberLabel(number, scheme: scheme) }
 
     private static func displayable(_ bullet: String) -> String { TextLabels.displayable(bullet) }
 
-    public init(style: SlideStyleContext, slideNumber: Int) {
+    public init(style: SlideStyleContext, slideNumber: Int, picture: @escaping (String) -> CGImage? = { _ in nil }) {
         self.style = style
         self.slideNumber = slideNumber
+        self.picture = picture
+    }
+
+    /// A renderer that draws picture bullets from `presentation`'s package.
+    public init(style: SlideStyleContext, slideNumber: Int, presentation: Presentation) {
+        self.init(style: style, slideNumber: slideNumber) { path in
+            presentation.data(at: path).flatMap { ImageCache.shared.image(for: $0, path: path) }
+        }
     }
 }
 

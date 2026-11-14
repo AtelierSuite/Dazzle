@@ -80,8 +80,11 @@ extension SlideShape {
         copy.text = shape.text
         copy.textFrame = shape.textFrame
         copy.isTextBox = shape.isTextBox
+        copy.startConnection = shape.startConnection
+        copy.endConnection = shape.endConnection
         copy.altText = shape.altText
         copy.link = shape.link
+        copy.linkTooltip = shape.linkTooltip
         copy.isLocked = shape.isLocked
         copy.source = shape.source
         copy.edits = shape.edits

@@ -57,7 +57,19 @@ enum EditableText {
                     for: run.properties.merged(over: properties.defaultRun), style: style, scale: scale * fontScale
                 )
                 attributes[runKey] = RunBox(run)
-                result.append(NSAttributedString(string: text, attributes: attributes))
+                let piece = NSMutableAttributedString(string: text, attributes: attributes)
+                // Arabic, Hebrew and other complex scripts are set in the run's complex-script typeface.
+                let merged = run.properties.merged(over: properties.defaultRun)
+                for stretch in ComplexScript.stretches(in: text) {
+                    guard let family = style.complexScriptTypeface(for: merged, script: stretch.script),
+                          let latin = attributes[.font] as? PlatformFont else { continue }
+                    let font = FontResolver.shared.font(
+                        family: family, size: latin.pointSize, bold: merged.isBold ?? false, italic: merged.isItalic ?? false,
+                        embedded: style.resources.embeddedFonts
+                    )
+                    piece.addAttribute(.font, value: font as PlatformFont, range: NSRange(location: stretch.range.lowerBound, length: stretch.range.count))
+                }
+                result.append(piece)
             }
             if index < paragraphs.count - 1 {
                 var attributes = Self.attributes(for: endRun, style: style, scale: scale * fontScale)
@@ -130,8 +142,14 @@ enum EditableText {
             .font: font as PlatformFont,
             .foregroundColor: platformColor(color.cgColor),
         ]
-        if run.isUnderlined == true { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-        if run.isStruckThrough == true { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        if let underline = run.underline, underline != .none {
+            attributes[.underlineStyle] = underlineStyle(underline).rawValue
+            if let color = run.underlineColor { attributes[.underlineColor] = platformColor(style.color(color).cgColor) }
+        }
+        if let strike = run.strike, strike != .none {
+            attributes[.strikethroughStyle] = (strike == .double ? NSUnderlineStyle.double : .single).rawValue
+        }
+        if let highlight = run.highlight?.color { attributes[.backgroundColor] = platformColor(style.color(highlight).cgColor) }
         if let baseline = run.baseline, baseline != 0 {
             attributes[.baselineOffset] = CGFloat(baseline) / 100_000 * size * 1.5
         }
@@ -139,6 +157,20 @@ enum EditableText {
             attributes[.kern] = CGFloat(spacing) / 100 * scale
         }
         return attributes
+    }
+
+    /// The nearest TextKit has to an underline style; it has no wavy line.
+    private static func underlineStyle(_ underline: UnderlineStyle) -> NSUnderlineStyle {
+        var result: NSUnderlineStyle = underline.isDouble ? .double : underline.isHeavy ? .thick : .single
+        switch underline {
+        case .words: result.insert(.byWord)
+        case .dotted, .dottedHeavy: result.insert(.patternDot)
+        case .dash, .dashHeavy, .dashLong, .dashLongHeavy: result.insert(.patternDash)
+        case .dotDash, .dotDashHeavy: result.insert(.patternDashDot)
+        case .dotDotDash, .dotDotDashHeavy: result.insert(.patternDashDotDot)
+        default: break
+        }
+        return result
     }
 
     private static func platformColor(_ color: CGColor) -> PlatformColor {
@@ -154,7 +186,11 @@ enum EditableText {
         _ properties: ParagraphProperties, fontSize: CGFloat, scale: CGFloat, lineSpacingReduction: Double = 0
     ) -> NSParagraphStyle {
         let style = NSMutableParagraphStyle()
-        style.alignment = switch properties.alignment ?? .left {
+        // A right-to-left paragraph is typed from the right, its margin and
+        // indent measured from there, as the slide draws it.
+        let rightToLeft = properties.isRightToLeft ?? false
+        style.baseWritingDirection = rightToLeft ? .rightToLeft : .leftToRight
+        style.alignment = switch properties.effectiveAlignment {
         case .left: .left
         case .center: .center
         case .right: .right
@@ -165,7 +201,7 @@ enum EditableText {
         let margin = CGFloat(EMU.points(properties.marginLeft ?? 0)) * scale
         let firstLine = max(margin + CGFloat(EMU.points(properties.indent ?? 0)) * scale, 0)
         let hasBullet = switch properties.bullet {
-        case .character?, .autoNumber?: true
+        case .character?, .autoNumber?, .picture?: true
         default: false
         }
         style.headIndent = margin

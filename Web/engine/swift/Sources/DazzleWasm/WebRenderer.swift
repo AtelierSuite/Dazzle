@@ -14,6 +14,9 @@ struct WebRenderer {
     struct Options {
         /// Prompts in empty placeholders and badges on media, as the editor shows them.
         var editing = false
+        /// Zooms show the slide they lead to as it is now. Off inside such a
+        /// picture, so a zoom to its own slide does not go on forever.
+        var drawsZoomPreviews = true
     }
 
     let presentation: Presentation
@@ -86,7 +89,11 @@ struct WebRenderer {
             ]
         }
         if let effects = effects(shape.effects, size: frame.size, style: style) { node["effects"] = effects }
-        if let link = shape.link, let json = Self.link(link) { node["link"] = json }
+        if let link = shape.link, var json = Self.link(link, tooltip: shape.linkTooltip) {
+            // A zoom flies out of where it sits, and back into it.
+            if case .zoom = link { json["frame"] = [n(frame.minX), n(frame.minY), n(frame.width), n(frame.height)] }
+            node["link"] = json
+        }
 
         switch shape.kind {
         case .group(let group):
@@ -103,6 +110,17 @@ struct WebRenderer {
         case .picture(let picture):
             node["kind"] = "picture"
             picturePart(picture, shape: shape, frame: frame, style: style, into: &node)
+            if case .zoom(let zoom)? = shape.link, zoom.showsPreview, options.drawsZoomPreviews,
+               let target = zoom.previewSlide(in: presentation) {
+                var preview = WebRenderer(presentation: presentation, slide: target)
+                preview.options.drawsZoomPreviews = false
+                var scene = preview.scene()
+                if !zoom.showsBackground {
+                    scene["bg"] = NSNull()
+                    scene["art"] = [[String: Any]]()
+                }
+                node["zoomScene"] = scene
+            }
         case .table(let table):
             node["kind"] = "table"
             node["table"] = self.table(table, shape: shape, frame: frame, style: style)
@@ -120,6 +138,14 @@ struct WebRenderer {
         case .shape, .connector:
             node["kind"] = "shape"
             autoShape(shape, sources: sources, frame: frame, style: style, groupFill: groupFill, into: &node)
+            if shape.kind == .connector {
+                // Where its two ends are, which are its handles, and whether each is attached to a shape.
+                let ends = shape.connectorEnds
+                node["ends"] = [
+                    "start": ["x": Double(ends.start.x), "y": Double(ends.start.y), "attached": shape.startConnection != nil],
+                    "end": ["x": Double(ends.end.x), "y": Double(ends.end.y), "attached": shape.endConnection != nil],
+                ]
+            }
         }
         return node
     }
@@ -528,7 +554,10 @@ struct WebRenderer {
         if let media = picture.media {
             node["media"] = [
                 "kind": media.kind == .video ? "video" : "audio", "path": media.path as Any, "url": media.url as Any,
-                "auto": media.playsAutomatically,
+                "auto": media.playsAutomatically, "narration": media.isNarration,
+                "trim": [media.trimStart, media.trimEnd], "fade": [media.fadeIn, media.fadeOut],
+                "volume": media.effectiveVolume, "loop": media.loops, "rewind": media.rewinds,
+                "full": media.kind == .video && media.playsFullScreen, "hide": media.hidesWhenNotPlaying,
             ]
         }
         if let crop = Optional(picture), crop.cropLeft != 0 || crop.cropTop != 0 || crop.cropRight != 0 || crop.cropBottom != 0 {
@@ -542,8 +571,6 @@ struct WebRenderer {
         let tableStyle = table.styleID.flatMap { presentation.resources.tableStyles[$0] }
         let usesBuiltInLook = table.styleID != nil && tableStyle == nil
         let accent = style.color(.scheme("accent1"))
-        func isHeader(_ row: Int) -> Bool { table.hasHeaderRow && row == 0 }
-        func isBanded(_ row: Int) -> Bool { table.hasBandedRows && (row - (table.hasHeaderRow ? 1 : 0)).isMultiple(of: 2) }
 
         var cells: [[String: Any]] = []
         for (rowIndex, row) in table.rows.enumerated() {
@@ -551,21 +578,16 @@ struct WebRenderer {
                 var json: [String: Any] = [
                     "r": rowIndex, "c": columnIndex, "rs": max(cell.rowSpan, 1), "cs": max(cell.columnSpan, 1),
                 ]
-                var fill = cell.fill
-                if fill == nil, let tableStyle {
-                    fill = isHeader(rowIndex) ? tableStyle.headerRow.fill : (isBanded(rowIndex) ? tableStyle.bandedRow.fill : nil)
-                    fill = fill ?? tableStyle.whole.fill
-                }
-                if let fill {
+                let regions = table.regions(row: rowIndex, column: columnIndex)
+                if let fill = cell.fill ?? tableStyle?.fill(for: regions) {
                     if let paint = paint(fill, placeholder: nil, style: style) { json["fill"] = paint }
                 } else if usesBuiltInLook {
-                    let tint = isHeader(rowIndex) ? accent
-                        : accent.applying(.init(name: "tint", value: isBanded(rowIndex) ? 40_000 : 20_000))
+                    let tint = regions.builtInTint.map { accent.applying(.init(name: "tint", value: $0)) } ?? accent
                     json["fill"] = ["t": "solid", "c": css(tint)]
                 }
 
                 // A cell's text, with its margins and the style's text colour and weight.
-                let body = self.cellBody(cell, row: rowIndex, tableStyle: tableStyle, usesBuiltInLook: usesBuiltInLook, isHeader: isHeader(rowIndex))
+                let body = self.cellBody(cell, row: rowIndex, tableStyle: tableStyle, usesBuiltInLook: usesBuiltInLook, regions: regions)
                 let width = (columnIndex..<min(columnIndex + max(cell.columnSpan, 1), table.columnCount))
                     .map { CGFloat(EMU.points(table.columnWidths[$0])) }.reduce(0, +)
                 let rect = CGRect(x: 0, y: 0, width: width, height: CGFloat(EMU.points(table.rows[rowIndex].height)))
@@ -579,15 +601,14 @@ struct WebRenderer {
                     columnIndex == 0 ? "left" : "insideV", lastColumn ? "right" : "insideV",
                 ]
                 func styleBorder(_ name: String) -> LineStyle? {
-                    if let tableStyle {
-                        let part = isHeader(rowIndex) ? tableStyle.headerRow : (isBanded(rowIndex) ? tableStyle.bandedRow : nil)
-                        return part?.borders[name] ?? tableStyle.whole.borders[name]
-                    }
-                    return usesBuiltInLook ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
+                    if let tableStyle { return tableStyle.border(name, for: regions) }
+                    return usesBuiltInLook && !["tl2br", "tr2bl"].contains(name)
+                        ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
                 }
                 var borders: [String: Any] = [:]
                 for (key, border, name) in [("t", cell.borderTop, edgeNames[0]), ("b", cell.borderBottom, edgeNames[1]),
-                                            ("l", cell.borderLeft, edgeNames[2]), ("r", cell.borderRight, edgeNames[3])] {
+                                            ("l", cell.borderLeft, edgeNames[2]), ("r", cell.borderRight, edgeNames[3]),
+                                            ("d", cell.borderDiagonalDown, "tl2br"), ("u", cell.borderDiagonalUp, "tr2bl")] {
                     let fallback = styleBorder(name)
                     guard let line = border.map({ $0.merged(over: fallback) }) ?? fallback,
                           let stroke = stroke(line, path: [], placeholder: nil, style: style) else { continue }
@@ -605,7 +626,7 @@ struct WebRenderer {
         ]
     }
 
-    private func cellBody(_ cell: SlideTable.Cell, row: Int, tableStyle: TableStyle?, usesBuiltInLook: Bool, isHeader: Bool) -> TextBody {
+    private func cellBody(_ cell: SlideTable.Cell, row: Int, tableStyle: TableStyle?, usesBuiltInLook: Bool, regions: SlideTable.CellRegions) -> TextBody {
         var body = cell.text ?? TextBody(paragraphs: [Paragraph(runs: [])])
         body.properties.leftInset = cell.marginLeft ?? 91_440
         body.properties.rightInset = cell.marginRight ?? 91_440
@@ -617,10 +638,9 @@ struct WebRenderer {
         var color: DrawingColor?
         var bold: Bool?
         if let tableStyle {
-            let part = isHeader ? tableStyle.headerRow : tableStyle.whole
-            color = part.textColor ?? tableStyle.whole.textColor
-            bold = part.isBold
-        } else if usesBuiltInLook, isHeader, cell.fill == nil {
+            color = tableStyle.textColor(for: regions)
+            bold = tableStyle.isBold(for: regions)
+        } else if usesBuiltInLook, regions.isEmphasised, cell.fill == nil {
             color = .scheme("lt1")
             bold = true
         }
@@ -716,7 +736,9 @@ struct WebRenderer {
             let baseSize = Double(firstRun.size ?? 1_800) / 100
 
             var json: [String: Any] = ["i": index, "lvl": level]
-            json["align"] = (properties.alignment ?? .left).rawValue
+            json["align"] = properties.effectiveAlignment.rawValue
+            // A right-to-left paragraph: its margin, indent, bullet and tabs are measured from the right.
+            if properties.isRightToLeft == true { json["rtl"] = true }
             json["ml"] = n(CGFloat(EMU.points(properties.marginLeft ?? 0)))
             json["ind"] = n(CGFloat(EMU.points(properties.indent ?? 0)))
             switch properties.lineSpacing {
@@ -739,7 +761,7 @@ struct WebRenderer {
             if paragraph.runs.contains(where: { $0.kind == .text && $0.text.contains("\t") }) {
                 let hasBullet = !paragraph.plainText.isEmpty && {
                     switch properties.bullet {
-                    case .character?, .autoNumber?: true
+                    case .character?, .autoNumber?, .picture?: true
                     default: false
                     }
                 }()
@@ -752,9 +774,13 @@ struct WebRenderer {
             for deeper in counters.keys where deeper > level { counters[deeper] = nil }
             if !paragraph.plainText.isEmpty {
                 var bulletText: String?
+                var bulletPicture: String?
                 switch properties.bullet {
                 case .character(let character):
                     bulletText = character
+                case .picture(let path):
+                    counters[level] = nil
+                    if presentation.data(at: path) != nil { bulletPicture = path }
                 case .autoNumber(let scheme, let startAt):
                     let number = (counters[level] ?? (startAt - 1)) + 1
                     counters[level] = number
@@ -762,7 +788,14 @@ struct WebRenderer {
                 default:
                     counters[level] = nil
                 }
-                if let bulletText {
+                if let bulletPicture {
+                    // As tall as the text, centred on its capitals.
+                    var bullet = run(firstRun, style: style)
+                    bullet["t"] = ""
+                    bullet["img"] = bulletPicture
+                    bullet["sz"] = (bullet["sz"] as? Double ?? 18) * (properties.bulletSize ?? 1)
+                    json["bullet"] = bullet
+                } else if let bulletText {
                     var bulletRun = firstRun
                     bulletRun.isUnderlined = false
                     if let font = properties.bulletFont, !font.hasPrefix("+"), !["Arial", "Wingdings", "Symbol"].contains(font) {
@@ -788,6 +821,11 @@ struct WebRenderer {
                 }
                 var json = run(runProperties, style: style)
                 json["r"] = runIndex
+                // The typeface for the run's Arabic, Hebrew or other complex-script text, when it has any.
+                if textRun.kind == .text, let script = ComplexScript.stretches(in: textRun.text).first?.script,
+                   let complex = style.complexScriptTypeface(for: runProperties, script: script) {
+                    json["cs"] = complex
+                }
                 switch textRun.kind {
                 case .lineBreak:
                     json["br"] = true
@@ -813,7 +851,7 @@ struct WebRenderer {
                     if runProperties.capitalization == "all" { text = text.uppercased() }
                     json["t"] = TextLabels.symbolsMapped(text)
                 }
-                if let link = textRun.properties.link, let linkJSON = Self.link(link) { json["link"] = linkJSON }
+                if let link = textRun.properties.link, let linkJSON = Self.link(link, tooltip: textRun.properties.linkTooltip) { json["link"] = linkJSON }
                 runs.append(json)
             }
             json["runs"] = runs
@@ -830,8 +868,11 @@ struct WebRenderer {
         if let eastAsian = style.typeface(run.eastAsianFont, eastAsian: true) ?? style.theme.minorEastAsianFont { json["ea"] = eastAsian }
         if run.isBold == true { json["b"] = true }
         if run.isItalic == true { json["i"] = true }
-        if run.isUnderlined == true { json["u"] = true }
-        if run.isStruckThrough == true { json["s"] = true }
+        if let underline = run.underline, underline != .none {
+            json["u"] = underline.rawValue
+            if let color = run.underlineColor { json["uc"] = css(style.color(color)) }
+        }
+        if let strike = run.strike, strike != .none { json["s"] = strike == .double ? 2 : 1 }
         if let baseline = run.baseline, baseline != 0 { json["base"] = baseline > 0 ? 1 : -1 }
         // Character spacing, in points (`spc` is hundredths of a point).
         if let spacing = run.spacing, spacing != 0 { json["sp"] = Double(spacing) / 100 }
@@ -840,20 +881,42 @@ struct WebRenderer {
             json["outline"] = ["w": EMU.points(width), "c": css(style.color(color))]
         }
         if case .shadow(let shadow) = run.shadow { json["shadow"] = self.shadow(shadow, style: style) }
+        if let highlight = run.highlight?.color { json["hl"] = css(style.color(highlight)) }
         return json
     }
 
-    static func link(_ link: Hyperlink) -> [String: Any]? {
+    /// Where a link goes, with the ScreenTip pointing at it shows.
+    static func link(_ link: Hyperlink, tooltip: String? = nil) -> [String: Any]? {
+        var json: [String: Any]
         switch link {
-        case .url(let address): ["url": address]
-        case .slide(let id): ["slide": id.uuidString]
-        case .nextSlide: ["action": "next"]
-        case .previousSlide: ["action": "previous"]
-        case .firstSlide: ["action": "first"]
-        case .lastSlide: ["action": "last"]
-        case .endShow: ["action": "end"]
-        case .slidePart, .other: nil
+        case .url(let address): json = ["url": address]
+        case .slide(let id): json = ["slide": id.uuidString]
+        case .nextSlide: json = ["action": "next"]
+        case .previousSlide: json = ["action": "previous"]
+        case .firstSlide: json = ["action": "first"]
+        case .lastSlide: json = ["action": "last"]
+        case .endShow: json = ["action": "end"]
+        case .customShow(let id, let returns): json = ["customShow": id, "return": returns]
+        case .zoom(let zoom):
+            guard let zoomJSON = zoomLink(zoom) else { return nil }
+            json = zoomJSON
+        case .slidePart, .other: return nil
         }
+        if let tooltip = tooltip?.nilIfEmpty { json["tooltip"] = tooltip }
+        return json
+    }
+
+    /// Where a zoom leads, for the slideshow page to follow: the slide or
+    /// section, whether it comes back, and how long it flies.
+    private static func zoomLink(_ zoom: SlideZoom) -> [String: Any]? {
+        var json: [String: Any] = ["returns": zoom.returnsToParent]
+        switch zoom.target {
+        case .slide(let id): json["slide"] = id.uuidString
+        case .section(let id): json["section"] = id
+        case .slideNumber: return nil
+        }
+        if let duration = zoom.transitionDuration { json["dur"] = duration }
+        return ["zoom": json]
     }
 
     // MARK: - Numbers

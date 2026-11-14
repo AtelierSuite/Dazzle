@@ -22,9 +22,9 @@ final class SlideshowController {
     var isPresenting: Bool { session.isPresenting }
     var ownerID: UUID? { session.ownerID }
 
-    func start(deck: Deck, title: String, from index: Int, editorWindow: NSWindow?) {
+    func start(deck: Deck, title: String, from index: Int, customShow: CustomShow.ID? = nil, editorWindow: NSWindow?) {
         guard !session.isPresenting else { return }
-        session.start(deck.presentation, title: title, fromSlide: index, owner: deck.id)
+        session.start(deck.presentation, title: title, fromSlide: index, customShow: customShow, owner: deck.id)
         guard session.isPresenting else { return }
         self.deck = deck
         self.editorWindow = editorWindow

@@ -12,7 +12,9 @@ enum EditorPanel: String, Identifiable, Hashable {
     case chart
     case comments
     case headerFooter
+    case theme
     case animations
+    case properties
 
     var id: String { rawValue }
 
@@ -22,7 +24,9 @@ enum EditorPanel: String, Identifiable, Hashable {
         case .chart: String(localized: "Panel.Chart.Title")
         case .comments: String(localized: "Panel.Comments.Title")
         case .headerFooter: String(localized: "Panel.HeaderFooter.Title")
+        case .theme: String(localized: "Panel.Theme.Title")
         case .animations: String(localized: "Panel.Animations.Title")
+        case .properties: String(localized: "Panel.Properties.Title")
         case .text: String(localized: "Panel.Text.Title")
         case .format: String(localized: "Panel.Format.Title")
         case .notes: String(localized: "Panel.Notes.Title")
@@ -155,9 +159,86 @@ final class EditorState {
         if let editingTextShapeID, !selectedShapeIDs.contains(editingTextShapeID) { endEditingText() }
     }
 
+    // MARK: - Master view
+
+    /// Shows the masters and layouts in place of the slides, to be edited as
+    /// slides are, opening on the layout the slide being edited is built on.
+    func enterMasterView(in presentation: inout Presentation) {
+        guard presentation.canEditMasters, !presentation.isInMasterView else { return }
+        let current = selectedSlide(in: presentation)
+        var entered = presentation
+        entered.enterMasterView(selectedSlideID: current?.id)
+        guard entered.isInMasterView else { return }
+        presentedPanel = nil
+        isDrawing = false
+        stopPreviewingAnimations()
+        presentation = entered
+        selectedSlideID = nil
+        selectSlide((entered.slides.first { $0.partName == current?.layoutPath } ?? entered.slides.first)?.id)
+    }
+
+    /// Goes back to the slides, which now follow what was changed.
+    func leaveMasterView(in presentation: inout Presentation) {
+        guard let view = presentation.masterView else { return }
+        do {
+            let left = try presentation.leavingMasterView()
+            presentedPanel = nil
+            presentation = left
+            selectedSlideID = nil
+            selectSlide(left.index(of: view.selectedSlideID) == nil ? left.slides.first?.id : view.selectedSlideID)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// The master a master or layout shown in master view belongs to.
+    private func masterPath(of slide: Slide) -> String? {
+        switch slide.role {
+        case .slide: nil
+        case .master: slide.partName
+        case .layout(let masterPath): masterPath
+        }
+    }
+
+    /// Adds a layout with a title to the master being edited, or the one
+    /// the layout being edited belongs to, after that layout.
+    func addLayout(in presentation: inout Presentation) {
+        guard presentation.isInMasterView, let selected = selectedSlide(in: presentation),
+              let masterPath = masterPath(of: selected) else { return }
+        let taken = Set(presentation.slides.compactMap(\.layoutName))
+        let base = String(localized: "MasterView.NewLayoutName")
+        var name = base
+        var number = 2
+        while taken.contains(name) {
+            name = "\(base) \(number)"
+            number += 1
+        }
+        let layout = presentation.newLayout(named: name, masterPath: masterPath)
+        presentation.slides.insert(layout, at: min(selectedIndex(in: presentation) + 1, presentation.slides.count))
+        presentation.refreshTemplates()
+        selectSlide(layout.id)
+    }
+
+    func renameLayout(_ id: Slide.ID, to name: String, in presentation: inout Presentation) {
+        guard presentation.isInMasterView, let index = presentation.index(of: id), !name.trimmed.isEmpty,
+              presentation.slides[index].role != .master, presentation.slides[index].layoutName != name.trimmed else { return }
+        presentation.slides[index].layoutName = name.trimmed
+        presentation.slides[index].isModified = true
+    }
+
+    /// Whether a layout can be deleted: no slide is built on it, and its
+    /// master keeps at least one.
+    func canDeleteLayout(_ id: Slide.ID, in presentation: Presentation) -> Bool {
+        guard presentation.isInMasterView, let index = presentation.index(of: id),
+              case .layout(let masterPath) = presentation.slides[index].role else { return false }
+        return presentation.slideCount(usingLayoutAt: presentation.slides[index].partName) == 0
+            && presentation.slides.filter { $0.role == .layout(masterPath: masterPath) }.count > 1
+    }
+
     // MARK: - Slides
 
     func addSlide(using layout: SlideLayout, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
         var slide = Slide(layoutPath: layout.path)
         slide.relationships = [Relationship(
             id: "rId1", type: OOXML.RelationshipType.slideLayout,
@@ -177,38 +258,105 @@ final class EditorState {
         let index = min(selectedIndex(in: presentation) + 1, presentation.slides.count)
         presentation.slides.insert(slide, at: index)
         presentation.isStructureModified = true
+        presentation.settleSections()
         selectSlide(slide.id)
     }
 
     func duplicateSlide(_ id: Slide.ID, in presentation: inout Presentation) {
         guard let index = presentation.index(of: id) else { return }
+        if presentation.isInMasterView {
+            // A layout's copy is another layout of the same master; masters stay as they are.
+            let original = presentation.slides[index]
+            guard original.role != .master else { return }
+            var copy = Slide(layoutPath: "", relationships: original.relationships, shapes: original.shapes.map(SlideShape.init(copying:)))
+            copy.role = original.role
+            copy.sourcePart = original.sourcePart
+            copy.background = original.background
+            copy.isBackgroundModified = original.isBackgroundModified
+            copy.showsMasterShapes = original.showsMasterShapes
+            copy.canEditShapes = original.canEditShapes
+            copy.layoutName = String(localized: "MasterView.CopyName").replacingOccurrences(of: "%@", with: original.layoutName ?? "")
+            copy.isModified = true
+            presentation.slides.insert(copy, at: index + 1)
+            presentation.refreshTemplates()
+            return selectSlide(copy.id)
+        }
         let copy = Self.duplicate(of: presentation.slides[index])
         presentation.slides.insert(copy, at: index + 1)
         presentation.isStructureModified = true
+        presentation.settleSections()
         selectSlide(copy.id)
     }
 
     func deleteSlide(_ id: Slide.ID, in presentation: inout Presentation) {
         // A presentation always keeps at least one slide.
         guard presentation.slides.count > 1, let index = presentation.index(of: id) else { return }
+        if presentation.isInMasterView {
+            guard canDeleteLayout(id, in: presentation) else { return }
+        } else {
+            presentation.isStructureModified = true
+        }
         presentation.slides.remove(at: index)
-        presentation.isStructureModified = true
+        presentation.refreshTemplates()
+        presentation.settleSections()
         if selectedSlideID == id {
             selectSlide(presentation.slides[min(index, presentation.slides.count - 1)].id)
         }
     }
 
     func moveSlide(_ id: Slide.ID, to destination: Int, in presentation: inout Presentation) {
-        guard let index = presentation.index(of: id) else { return }
+        // Masters and layouts keep the order they are listed in.
+        guard !presentation.isInMasterView, let index = presentation.index(of: id) else { return }
         let target = min(max(destination, 0), presentation.slides.count - 1)
         guard target != index else { return }
         let slide = presentation.slides.remove(at: index)
         presentation.slides.insert(slide, at: target)
         presentation.isStructureModified = true
+        // It joins the section of the slide it took the place of.
+        let neighbour = target > index ? target - 1 : target + 1
+        if presentation.slides.indices.contains(neighbour) {
+            presentation.placeSlide(id, inSectionOf: presentation.slides[neighbour].id)
+        }
+        presentation.settleSections()
+    }
+
+    // MARK: - Sections
+
+    /// Starts a section at the selected slide.
+    @discardableResult
+    func addSection(in presentation: inout Presentation) -> SlideSection.ID? {
+        guard !presentation.isInMasterView, let slide = selectedSlide(in: presentation) else { return nil }
+        return presentation.addSection(at: slide.id)
+    }
+
+    func renameSection(_ id: SlideSection.ID, to name: String, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        presentation.renameSection(id, to: trimmed.isEmpty ? SlideSection.untitledName : trimmed)
+    }
+
+    func removeSection(_ id: SlideSection.ID, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        presentation.removeSection(id)
+    }
+
+    func removeAllSections(in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        presentation.removeAllSections()
+    }
+
+    func moveSection(_ id: SlideSection.ID, to destination: Int, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        presentation.moveSection(id, to: destination)
+    }
+
+    func moveSlides(_ ids: [Slide.ID], toSection sectionID: SlideSection.ID, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        presentation.moveSlides(ids, toSection: sectionID)
     }
 
     func toggleHidden(_ id: Slide.ID, in presentation: inout Presentation) {
-        guard let index = presentation.index(of: id) else { return }
+        guard !presentation.isInMasterView, let index = presentation.index(of: id) else { return }
         presentation.slides[index].isHidden.toggle()
         presentation.slides[index].isModified = true
     }
@@ -421,12 +569,25 @@ final class EditorState {
         presentation.isShowSettingsModified = true
     }
 
+    /// Changes how every slideshow of the presentation plays.
+    func updateShowSettings(in presentation: inout Presentation, _ change: (inout SlideshowSettings) -> Void) {
+        change(&presentation.showSettings)
+        presentation.isShowSettingsModified = true
+    }
+
+    func setProperty(_ field: DocumentProperties.Field, to value: String, in presentation: inout Presentation) {
+        guard presentation.properties[field] != value else { return }
+        presentation.properties[field] = value
+        presentation.arePropertiesModified = true
+    }
+
     func setBackground(_ fill: Fill?, in presentation: inout Presentation) {
         let index = selectedIndex(in: presentation)
         guard presentation.slides.indices.contains(index) else { return }
         presentation.slides[index].background = fill.map(Background.fill)
         presentation.slides[index].isBackgroundModified = true
         presentation.slides[index].isModified = true
+        presentation.refreshTemplates()
     }
 
     // MARK: - Shapes
@@ -435,15 +596,20 @@ final class EditorState {
     private func updateSlide(in presentation: inout Presentation, _ change: (inout Slide) -> Void) {
         let index = selectedIndex(in: presentation)
         guard presentation.slides.indices.contains(index), presentation.slides[index].canEditShapes else { return }
-        let before = Set(presentation.slides[index].shapes.map(\.shapeID))
+        let slideBefore = presentation.slides[index]
+        let before = Set(slideBefore.shapes.map(\.shapeID))
         change(&presentation.slides[index])
         presentation.slides[index].isModified = true
+        // Connectors go with the shapes they are attached to.
+        presentation.slides[index].followConnections(from: slideBefore)
         // Animations go with the shapes they animate.
         let removed = before.subtracting(presentation.slides[index].shapes.map(\.shapeID))
         if presentation.slides[index].animations.contains(where: { removed.contains($0.shapeID) }) {
             presentation.slides[index].animations.removeAll { removed.contains($0.shapeID) }
             presentation.slides[index].areAnimationsModified = true
         }
+        // A master's layouts follow it as it changes.
+        if presentation.slides[index].role == .master { presentation.refreshTemplates() }
     }
 
     /// Changes one shape, noting which parts of it were changed.
@@ -494,10 +660,16 @@ final class EditorState {
         guard let slide = selectedSlide(in: presentation) else { return }
         let side = presentation.slideSize.points.height * 0.3
         let isLine = preset == "line"
+        // A line is a connector, as PowerPoint makes it, so its ends can be attached to shapes.
+        let isConnector = isLine || preset.hasSuffix("Connector3")
+        let label = isLine ? "Straight Connector" : preset.hasPrefix("bent") ? "Elbow Connector" : "Curved Connector"
         var shape = SlideShape(
-            shapeID: slide.nextShapeID, name: "\(isLine ? "Straight Connector" : "Shape") \(slide.nextShapeID - 1)",
-            kind: .shape,
-            frame: centered(CGSize(width: isLine ? side * 1.5 : side, height: isLine ? 0 : side), in: presentation)
+            shapeID: slide.nextShapeID, name: "\(isConnector ? label : "Shape") \(slide.nextShapeID - 1)",
+            kind: isConnector ? .connector : .shape,
+            frame: centered(
+                CGSize(width: isConnector ? side * 1.5 : side, height: isLine ? 0 : isConnector ? side * 0.75 : side),
+                in: presentation
+            )
         )
         shape.geometry = .preset(preset, adjustments: [:])
         shape.style = StyleReferences(element: XMLLite.fragment(
@@ -506,7 +678,7 @@ final class EditorState {
                 + "<a:fontRef idx=\"minor\"><a:schemeClr val=\"lt1\"/></a:fontRef></p:style>",
             namespaces: OOXML.namespaces
         ))
-        if isLine {
+        if isConnector {
             shape.line = LineStyle(fill: .solid(.scheme("accent1")), width: 28_575)
         } else {
             var paragraph = Paragraph(runs: [])
@@ -587,6 +759,8 @@ final class EditorState {
             shape.edits.formUnion([.transform, .identity])
             copies.append(shape)
         }
+        // Copied connectors join the copies of the shapes they joined.
+        copies.reconnect(Dictionary(zip(originals.map(\.shapeID), copies.map(\.shapeID))) { first, _ in first })
         updateSlide(in: &presentation) { $0.shapes.append(contentsOf: copies) }
         selectedShapeIDs = copies.map(\.id)
     }
@@ -719,13 +893,46 @@ final class EditorState {
         }
     }
 
+    /// Links the selected shape; taking its link away takes its ScreenTip too.
     func setShapeLink(_ link: Hyperlink?, in presentation: inout Presentation) {
-        updateShape(selectedShapeID, edits: [.link], in: &presentation) { $0.link = link }
+        updateShape(selectedShapeID, edits: [.link], in: &presentation) { shape in
+            shape.link = link
+            if link == nil { shape.linkTooltip = nil }
+        }
+    }
+
+    /// The ScreenTip shown when pointing at the selected shape's link.
+    func setShapeLinkTooltip(_ tooltip: String, in presentation: inout Presentation) {
+        updateShape(selectedShapeID, edits: [.link], in: &presentation) { $0.linkTooltip = tooltip.nilIfEmpty }
     }
 
     /// Links the selected text, or with none selected, all of the shape's.
     func setTextLink(_ link: Hyperlink?, in presentation: inout Presentation) {
-        updateRuns(in: &presentation) { $0.link = link }
+        updateRuns(in: &presentation) { properties in
+            properties.link = link
+            if link == nil { properties.linkTooltip = nil }
+        }
+    }
+
+    /// The ScreenTip shown when pointing at the selected text's link.
+    func setTextLinkTooltip(_ tooltip: String, in presentation: inout Presentation) {
+        updateRuns(in: &presentation) { $0.linkTooltip = tooltip.nilIfEmpty }
+    }
+
+    /// Changes how the selected video or sound plays.
+    func setMedia(in presentation: inout Presentation, _ change: (inout SlideShape.Media) -> Void) {
+        updateShape(selectedShapeID, edits: [.media], in: &presentation) { shape in
+            guard case .picture(var picture) = shape.kind, var media = picture.media else { return }
+            change(&media)
+            media.trimStart = max(media.trimStart, 0)
+            media.trimEnd = max(media.trimEnd, 0)
+            media.fadeIn = max(media.fadeIn, 0)
+            media.fadeOut = max(media.fadeOut, 0)
+            media.volume = min(max(media.volume, 0), 1)
+            if media.kind == .audio { media.playsFullScreen = false } else { media.playsAcrossSlides = false }
+            picture.media = media
+            shape.kind = .picture(picture)
+        }
     }
 
     func setAltText(_ text: String, in presentation: inout Presentation) {
@@ -798,12 +1005,9 @@ final class EditorState {
         selectCell(next)
     }
 
-    func setTableHeaderRow(_ isOn: Bool, in presentation: inout Presentation) {
-        updateTable(in: &presentation) { $0.hasHeaderRow = isOn }
-    }
-
-    func setTableBandedRows(_ isOn: Bool, in presentation: inout Presentation) {
-        updateTable(in: &presentation) { $0.hasBandedRows = isOn }
+    /// Turns one of the table style's options, such as its header row or banded columns, on or off.
+    func setTableOption(_ option: SlideTable.StyleOption, _ isOn: Bool, in presentation: inout Presentation) {
+        updateTable(in: &presentation) { $0[option] = isOn }
     }
 
     func setCellText(_ body: TextBody, in presentation: inout Presentation) {
@@ -847,7 +1051,7 @@ final class EditorState {
 
     /// Changes the selected chart, writing its part and its workbook anew.
     func updateChart(in presentation: inout Presentation, _ change: (inout Chart) -> Void) {
-        guard let shape = selectedShape(in: presentation), shape.isEditable, case .chart(var chart?) = shape.kind,
+        guard let shape = selectedShape(in: presentation), shape.isEditable, case .chart(var chart?) = shape.kind, !chart.kind.isExtended,
               let slideIndex = presentation.index(of: selectedSlideID ?? presentation.slides.first?.id),
               presentation.slides[slideIndex].canEditShapes else { return }
         let before = chart
@@ -988,6 +1192,18 @@ final class EditorState {
         }
     }
 
+    /// Moves one end of a connector to `point`, in slide points, and
+    /// attaches it to the site `connection` names, or to nothing.
+    func setConnectorEnd(
+        _ end: SlideShape.ConnectorEnd, of id: SlideShape.ID, to point: CGPoint, connection: SlideShape.Connection?,
+        in presentation: inout Presentation
+    ) {
+        updateSlide(in: &presentation) { slide in
+            guard slide.shapes.first(where: { $0.id == id })?.isEditable == true else { return }
+            slide.setConnectorEnd(end, of: id, to: point, connection: connection)
+        }
+    }
+
     /// Turns the selected shape a quarter turn either way.
     func rotateSelectedShape(clockwise: Bool, in presentation: inout Presentation) {
         updateShape(selectedShapeID, edits: [.transform], in: &presentation) { shape in
@@ -1066,7 +1282,9 @@ final class EditorState {
     }
 
     /// Changes the text formatting applies to.
-    private func updateFormattedText(in presentation: inout Presentation, _ change: (inout TextBody) -> Void) {
+    private func updateFormattedText(
+        in presentation: inout Presentation, edits: Set<SlideShape.Edit> = [.text], _ change: (inout TextBody) -> Void
+    ) {
         if isEditingCell, let position = selectedCell {
             updateTable(in: &presentation) { table in
                 guard table.cell(at: position) != nil else { return }
@@ -1077,7 +1295,7 @@ final class EditorState {
             return
         }
         let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
-        updateShape(selectedShapeID, edits: [.text], in: &presentation) { shape in
+        updateShape(selectedShapeID, edits: edits, in: &presentation) { shape in
             var body = shape.text ?? TextBody(paragraphs: [Paragraph(runs: [])])
             change(&body)
             shape.text = style.map { Self.shrunkToFit(body, shape: shape, style: $0) } ?? body
@@ -1099,7 +1317,7 @@ final class EditorState {
             measured.text = body
             let frame = measured.frame.points
             #if canImport(CoreText)
-            let renderer = TextRenderer(style: style, slideNumber: 1)
+            let renderer = TextRenderer(style: style, slideNumber: 1, presentation: presentation)
             extent = properties.runsVertically
                 ? renderer.width(of: body, shape: measured, height: frame.height)
                 : renderer.height(of: body, shape: measured, width: frame.width)
@@ -1157,28 +1375,54 @@ final class EditorState {
     }
 
     func effectiveAlignment(in presentation: Presentation) -> ParagraphAlignment {
-        effectiveParagraphProperties(in: presentation).alignment ?? .left
+        effectiveParagraphProperties(in: presentation).effectiveAlignment
+    }
+
+    /// Whether formatting the selected shape's text also sets the styles it
+    /// hands down: a placeholder of a layout or master, in master view.
+    private func handsDownTextStyles(in presentation: Presentation) -> Bool {
+        guard !isEditingCell, let slide = selectedSlide(in: presentation), slide.role != .slide else { return false }
+        return selectedShape(in: presentation)?.placeholder != nil
+    }
+
+    /// The outline levels of the paragraphs formatting applies to.
+    private static func levels(of body: TextBody, in range: NSRange?) -> Set<Int> {
+        let indices = range.flatMap { $0.length > 0 ? body.paragraphIndices(in: $0) : nil } ?? Array(body.paragraphs.indices)
+        let levels = Set(indices.filter(body.paragraphs.indices.contains).map { body.paragraphs[$0].properties.level ?? 0 })
+        return levels.isEmpty ? [0] : levels
     }
 
     func updateRuns(in presentation: inout Presentation, _ change: (inout RunProperties) -> Void) {
         let range = activeTextRange
-        updateFormattedText(in: &presentation) { body in
+        let handsDown = handsDownTextStyles(in: presentation)
+        updateFormattedText(in: &presentation, edits: handsDown ? [.text, .listStyle] : [.text]) { body in
             if let range, range.length > 0 {
                 body.updateRuns(in: range, change)
             } else {
                 body.updateRuns(change)
+            }
+            guard handsDown else { return }
+            // The placeholder's own text shows the change; its list style
+            // is what slides built on it take it from.
+            for level in Self.levels(of: body, in: range) {
+                body.listStyle.updateLevel(level) { change(&$0.defaultRun) }
             }
         }
     }
 
     func updateParagraphs(in presentation: inout Presentation, _ change: (inout ParagraphProperties) -> Void) {
         let range = activeTextRange
-        updateFormattedText(in: &presentation) { body in
+        let handsDown = handsDownTextStyles(in: presentation)
+        updateFormattedText(in: &presentation, edits: handsDown ? [.text, .listStyle] : [.text]) { body in
             if let range {
                 body.updateParagraphs(in: range, change)
             } else {
                 body.updateParagraphs(change)
             }
+            guard handsDown else { return }
+            let levels = range.map { Set(body.paragraphIndices(in: $0).map { body.paragraphs[$0].properties.level ?? 0 }) }
+                ?? Self.levels(of: body, in: nil)
+            for level in levels { body.listStyle.updateLevel(level, change) }
         }
     }
 
@@ -1217,9 +1461,18 @@ final class EditorState {
         updateRuns(in: &presentation) { $0.size = target }
     }
 
-    /// A typeface by name, or a theme font such as `+mn-lt`.
+    /// A typeface by name, or a theme font such as `+mn-lt`. Arabic, Hebrew
+    /// and other complex-script text takes it too, as it does in PowerPoint.
     func setFontFamily(_ family: String, in presentation: inout Presentation) {
-        updateRuns(in: &presentation) { $0.latinFont = family }
+        let complexScript = switch family {
+        case "+mj-lt": "+mj-cs"
+        case "+mn-lt": "+mn-cs"
+        default: family
+        }
+        updateRuns(in: &presentation) {
+            $0.latinFont = family
+            $0.complexScriptFont = complexScript
+        }
     }
 
     func setAlignment(_ alignment: ParagraphAlignment, in presentation: inout Presentation) {
@@ -1230,6 +1483,11 @@ final class EditorState {
         updateRuns(in: &presentation) { $0.color = color }
     }
 
+    /// A colour behind the text, or nil to take it away.
+    func setTextHighlight(_ color: DrawingColor?, in presentation: inout Presentation) {
+        updateRuns(in: &presentation) { $0.highlight = color.map(TextHighlight.color) ?? TextHighlight.none }
+    }
+
     enum ListStyleChoice: Hashable {
         case none
         case bullets
@@ -1238,7 +1496,7 @@ final class EditorState {
 
     func listStyle(in presentation: Presentation) -> ListStyleChoice {
         switch effectiveParagraphProperties(in: presentation).bullet {
-        case .character?: .bullets
+        case .character?, .picture?: .bullets
         case .autoNumber?: .numbers
         default: .none
         }
@@ -1319,6 +1577,109 @@ final class EditorState {
             case .shape, .connector, .picture: shape.reflection = reflection
             default: break
             }
+        }
+    }
+
+    func setGlow(_ glow: Glow?, in presentation: inout Presentation) {
+        updateSelectedEffects(in: &presentation) { $0.effects.glow = glow }
+    }
+
+    /// The glow's colour, keeping its size; PowerPoint's glows are 60% see-through.
+    func setGlowColor(_ color: DrawingColor, in presentation: inout Presentation) {
+        updateSelectedEffects(in: &presentation) { shape in
+            guard let glow = shape.effects.glow else { return }
+            shape.effects.glow = Glow(radius: glow.radius, color: FormatChoices.glowColor(color))
+        }
+    }
+
+    /// Soft edges `radius` EMU wide, or none.
+    func setSoftEdge(_ radius: Int?, in presentation: inout Presentation) {
+        updateSelectedEffects(in: &presentation) { $0.effects.softEdge = radius.flatMap { $0 > 0 ? $0 : nil } }
+    }
+
+    func setInnerShadow(_ shadow: InnerShadow?, in presentation: inout Presentation) {
+        updateSelectedEffects(in: &presentation) { $0.effects.innerShadow = shadow }
+    }
+
+    /// Changes the effects of every selected shape that has them. A shape
+    /// whose effects come from its style takes them as its own first, so
+    /// adding one keeps the rest.
+    private func updateSelectedEffects(in presentation: inout Presentation, _ change: (inout SlideShape) -> Void) {
+        let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
+        updateSelectedShapes(edits: [.effects], in: &presentation) { shape in
+            switch shape.kind {
+            case .shape, .connector, .picture: break
+            default: return
+            }
+            if !shape.hasOwnEffects, !shape.edits.contains(.effects), let style {
+                let resolved = style.effects(for: shape, sources: style.sources(for: shape))
+                let before = shape
+                shape.shadow = resolved.shadow
+                shape.reflection = resolved.reflection
+                shape.effects = resolved.effects
+                change(&shape)
+                // Nothing changed after all: the shape stays as its style has it.
+                if shape.shadow == resolved.shadow, shape.reflection == resolved.reflection, shape.effects == resolved.effects {
+                    shape = before
+                }
+                return
+            }
+            change(&shape)
+        }
+    }
+
+    // MARK: - 3-D
+
+    /// The top bevel, or none.
+    func setBevel(_ bevel: Shape3D.Bevel?, in presentation: inout Presentation) {
+        updateSelected3D(in: &presentation) { shape3D, _ in shape3D.topBevel = bevel }
+    }
+
+    /// How far the shape stands out from the slide, in EMU.
+    func setDepth(_ height: Int, in presentation: inout Presentation) {
+        updateSelected3D(in: &presentation) { shape3D, _ in shape3D.extrusionHeight = max(height, 0) }
+    }
+
+    /// The camera the shape is seen through, by its `prst`; any turn of its own is dropped.
+    func setCamera(_ camera: String, in presentation: inout Presentation) {
+        updateSelected3D(in: &presentation) { _, scene in
+            scene.camera = camera
+            scene.cameraRotation = nil
+        }
+    }
+
+    /// The shape's own 3-D, starting from what it is drawn with now. One
+    /// left with nothing to draw goes, unless its style would give it some.
+    private func updateSelected3D(in presentation: inout Presentation, _ change: (inout Shape3D, inout Scene3D) -> Void) {
+        let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
+        updateSelectedShapes(edits: [.effects], in: &presentation) { shape in
+            switch shape.kind {
+            case .shape, .picture: break
+            default: return
+            }
+            let themed = style?.themedEffectStyle(for: shape, sources: style?.sources(for: shape) ?? [])
+            var shape3D = shape.shape3D ?? themed?.shape3D ?? Shape3D()
+            var scene = shape.scene3D ?? themed?.scene3D ?? Scene3D()
+            change(&shape3D, &scene)
+            let isPlain = shape3D.isEmpty && scene.camera == "orthographicFront" && scene.cameraRotation == nil
+            if isPlain, themed?.shape3D == nil, themed?.scene3D == nil {
+                shape.shape3D = nil
+                shape.scene3D = nil
+            } else {
+                shape.shape3D = shape3D
+                shape.scene3D = scene
+            }
+        }
+    }
+
+    // MARK: - Text warp
+
+    /// Lays the text along a WordArt warp, or flat.
+    func setTextWarp(_ warp: TextWarp?, in presentation: inout Presentation) {
+        updateSelectedShapes(edits: [.text], in: &presentation) { shape in
+            guard case .shape = shape.kind, shape.text != nil else { return }
+            // A warp that is changed starts from its own adjust values.
+            if shape.text?.properties.warp?.preset != warp?.preset { shape.text?.properties.warp = warp }
         }
     }
 
