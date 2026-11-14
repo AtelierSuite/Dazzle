@@ -162,13 +162,15 @@ final class WebSession {
         }
     }
 
-    func data(as format: Format) throws -> Data {
+    /// `author`, when given, is who the saved file says saved it last; a
+    /// draft kept on the device is written as it is.
+    func data(as format: Format, savedBy author: String? = nil) throws -> Data {
         if format == .key {
             let wrapper = try KeynoteWriter.fileWrapper(for: presentation)
             guard let contents = wrapper.regularFileContents else { throw Bridge.Failure(message: "A Keynote package can't be saved here.") }
             return contents
         }
-        return try PPTXWriter.data(from: presentation)
+        return try PPTXWriter.data(from: author.map { presentation.stampedForSaving(by: $0) } ?? presentation)
     }
 
     func fileName(for format: Format) -> String {

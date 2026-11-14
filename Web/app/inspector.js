@@ -170,7 +170,7 @@ export class Inspector extends EventTarget {
     let html = this.section(t("Format.Section.Background"),
       this.row(t("Fill.Kind"), this.popup("bgKind", t("Fill.Kind"), [
         ["auto", t("Fill.Automatic")], ["solid", t("Fill.Solid")], ["gradient", t("Fill.Gradient")], ["picture", t("Fill.Picture")],
-        ...(background.own && background.kind === "pattern" ? [["pattern", t("Fill.Pattern")]] : []),
+        ["pattern", t("Fill.Pattern")],
       ], background.own ? background.kind : "auto"))
       + (background.kind === "solid" || !background.own ? this.row(t("Mac.Inspector.Colour"), this.color("bgColor", t("Mac.Inspector.Colour"), background.color)) : "")
       + (background.own && background.kind === "gradient" ? this.gradientRows("bg", background) : "")
@@ -201,8 +201,36 @@ export class Inspector extends EventTarget {
     if (!info.sizePreset) sizes.push(["custom", t("SlideSize.Custom")]);
     html += this.section(t("Format.Section.Presentation"),
       this.row(t("Format.SlideSize"), this.popup("slideSize", t("Format.SlideSize"), sizes, info.sizePreset ?? "custom"))
-      + this.row("", this.check("loop", t("Format.LoopSlideshow"), info.loop)));
+      + this.row("", this.buttons([["customShows", t("Menu.Play.CustomShows")]])));
+    html += this.showSection(info);
     return html;
+  }
+
+  /** How every slideshow of the presentation plays: PowerPoint's Set Up Slide Show. */
+  showSection(info) {
+    const t = this.t;
+    const show = info.show ?? {};
+    const shows = (info.customShows ?? []).map((entry) => [entry.id, entry.name]);
+    const ranges = [["all", t("Show.Range.All")], ["slides", t("Show.Range.Slides")]];
+    if (shows.length || show.range === "customShow") ranges.push(["customShow", t("Show.Range.CustomShow")]);
+    if (show.range === "customShow" && !shows.some(([id]) => id === show.show)) shows.push([show.show, t("Link.CustomShow.Missing")]);
+    const count = info.outline?.length ?? 1;
+    let body = this.row(t("Show.Range"), this.popup("showRange", t("Show.Range"), ranges, show.range ?? "all"));
+    if (show.range === "slides") {
+      body += this.row(t("Show.From"), this.stepper("showFrom", t("Show.From"), show.from, { min: 1, max: count }))
+        + this.row(t("Show.To"), this.stepper("showTo", t("Show.To"), show.to, { min: 1, max: count }));
+    }
+    if (show.range === "customShow") body += this.row("", this.popup("showCustomShow", t("Show.Range.CustomShow"), shows, show.show));
+    body += this.row("", this.check("showKiosk", t("Show.Kiosk"), show.kiosk));
+    if (show.kiosk) {
+      body += this.row(t("Show.KioskRestart"), this.stepper("showRestart", t("Show.KioskRestart"), (show.restart ?? 300) / 60, { min: 1, max: 60, unit: t("Show.Minutes") }));
+    }
+    body += this.row("", this.check("loop", t("Format.LoopSlideshow"), show.loop))
+      + this.row("", this.check("showTimings", t("Show.UseTimings"), show.timings))
+      + this.row("", this.check("showAnimations", t("Show.ShowAnimations"), show.animations !== false))
+      + this.row("", this.check("showNarration", t("Show.PlayNarration"), show.narration))
+      + this.note(t(show.kiosk ? "Show.Kiosk.Footer" : "Show.Footer"));
+    return this.section(t("Show.Title"), body);
   }
 
   gradientRows(prefix, fill) {
@@ -218,9 +246,13 @@ export class Inspector extends EventTarget {
         : "");
   }
 
-  /** A pattern fill's two colours. Patterns come from files; they're kept and recoloured, not made here. */
+  /** A pattern fill's cells and two colours. */
   patternRows(prefix, fill) {
-    return this.row(t("Fill.Pattern.Foreground"), this.color(`${prefix}PatternFg`, t("Fill.Pattern.Foreground"), fill.color ?? "#000000"))
+    const t = this.t;
+    const patterns = (this.engine.info?.choices?.patterns ?? []).map((pattern) => [pattern.id, pattern.label]);
+    if (fill.preset && !patterns.some(([id]) => id === fill.preset)) patterns.push([fill.preset, fill.preset]);
+    return this.row(t("Fill.Pattern"), this.popup(`${prefix}Pattern`, t("Fill.Pattern"), patterns, fill.preset))
+      + this.row(t("Fill.Pattern.Foreground"), this.color(`${prefix}PatternFg`, t("Fill.Pattern.Foreground"), fill.color ?? "#000000"))
       + this.row(t("Fill.Pattern.Background"), this.color(`${prefix}PatternBg`, t("Fill.Pattern.Background"), fill.background ?? "#ffffff"));
   }
 
@@ -238,7 +270,7 @@ export class Inspector extends EventTarget {
       html += this.section(t("Format.Section.Fill"),
         this.row(t("Fill.Kind"), this.popup("fillKind", t("Fill.Kind"), [
           ["none", t("Fill.None")], ["solid", t("Fill.Solid")], ["gradient", t("Fill.Gradient")], ["picture", t("Fill.Picture")],
-          ...(fill.kind === "pattern" ? [["pattern", t("Fill.Pattern")]] : []),
+          ["pattern", t("Fill.Pattern")],
         ], fill.kind))
         + (fill.kind === "solid" ? this.row(t("Mac.Inspector.Colour"), this.color("fillColor", t("Mac.Inspector.Colour"), fill.color)) : "")
         + (fill.kind === "gradient" ? this.gradientRows("fill", fill) : "")
@@ -313,9 +345,33 @@ export class Inspector extends EventTarget {
     if (shape.shadow === "custom") shadows.push(["custom", t("Shadow.Custom")]);
     const reflections = (choices.reflections ?? []).map((reflection) => [reflection.id, reflection.label]);
     if (shape.reflection === "custom") reflections.push(["custom", t("Reflection.Custom")]);
-    return this.section(t("Mac.Inspector.Effects"),
-      this.row(t("Format.Shadow"), this.popup("shadow", t("Format.Shadow"), shadows, shape.shadow))
-      + this.row(t("Format.Reflection"), this.popup("reflection", t("Format.Reflection"), reflections, shape.reflection)), { open: shape.shadow !== "none" || shape.reflection !== "none" });
+    const sizes = (list, current) => {
+      const options = [["0", t("Effect.None")], ...(list ?? []).map((points) => [String(points), `${points} pt`])];
+      if (current && !options.some(([id]) => Number(id) === current)) options.push([String(current), `${Math.round(current * 10) / 10} pt`]);
+      return options;
+    };
+    const named = (list, current, none) => {
+      const options = [...(none ? [none] : []), ...(list ?? []).map((choice) => [choice.id, choice.label])];
+      if (current && !options.some(([id]) => id === current)) options.push([current, t("Shadow.Custom")]);
+      return options;
+    };
+    let body = this.row(t("Format.Shadow"), this.popup("shadow", t("Format.Shadow"), shadows, shape.shadow))
+      + this.row(t("Format.Reflection"), this.popup("reflection", t("Format.Reflection"), reflections, shape.reflection))
+      + this.row(t("Format.Glow"), this.popup("glow", t("Format.Glow"), sizes(choices.glowSizes, shape.glow), String(shape.glow ?? 0)))
+      + (shape.glow ? this.row(t("Format.Glow.Color"), this.color("glowColor", t("Format.Glow.Color"), shape.glowColor)) : "")
+      + this.row(t("Format.SoftEdges"), this.popup("softEdge", t("Format.SoftEdges"), sizes(choices.softEdgeSizes, shape.softEdge), String(shape.softEdge ?? 0)))
+      + this.row(t("Format.InnerShadow"), this.popup("innerShadow", t("Format.InnerShadow"), named(choices.innerShadows, shape.innerShadow), shape.innerShadow));
+    if (shape.bevel !== undefined) {
+      body += this.row(t("Format.Bevel"), this.popup("bevel", t("Format.Bevel"), named(choices.bevels, shape.bevel, ["none", t("Effect.None")]), shape.bevel))
+        + this.row(t("Format.Depth"), this.stepper("depth", t("Format.Depth"), shape.depth, { step: 6, min: 0, max: 200, unit: "pt" }))
+        + this.row(t("Format.Camera"), this.popup("camera", t("Format.Camera"), named(choices.cameras, shape.camera), shape.camera));
+    }
+    if (shape.warp !== undefined) {
+      body += this.row(t("Format.TextWarp"), this.popup("warp", t("Format.TextWarp"), named(choices.textWarps, shape.warp, ["textNoShape", t("Effect.None")]), shape.warp));
+    }
+    const isPlain = shape.shadow === "none" && shape.reflection === "none" && !shape.glow && !shape.softEdge && shape.innerShadow === "none"
+      && (shape.bevel ?? "none") === "none" && !shape.depth && (shape.warp ?? "textNoShape") === "textNoShape";
+    return this.section(t("Mac.Inspector.Effects"), body, { open: !isPlain });
   }
 
   tableSection(table) {
@@ -378,15 +434,21 @@ export class Inspector extends EventTarget {
   linkSection(shape) {
     const t = this.t;
     const link = shape.link;
-    const kind = !link ? "none" : link.url ? "url" : link.slide ? "slide" : link.action;
+    const kind = !link ? "none" : link.url ? "url" : link.slide ? "slide" : link.customShow != null ? "customShow" : link.action;
     const slides = (this.engine.info?.outline ?? []).map((slide) => [slide.id, `${slide.number}. ${slide.title || t("Slide.Untitled")}`]);
+    const shows = (this.engine.info?.customShows ?? []).map((show) => [show.id, show.name]);
+    if (kind === "customShow" && !shows.some(([id]) => id === link.customShow)) shows.push([link.customShow, t("Link.CustomShow.Missing")]);
     return this.section(t("Format.Section.Link"),
       this.row(t("Link.Kind"), this.popup("linkKind", t("Link.Kind"), [
         ["none", t("Link.None")], ["url", t("Link.URL")], ["slide", t("Link.Slide")], ["next", t("Link.Next")],
         ["previous", t("Link.Previous")], ["first", t("Link.First")], ["last", t("Link.Last")], ["end", t("Link.End")],
+        ...(shows.length ? [["customShow", t("Link.CustomShow")]] : []),
       ], kind))
       + (kind === "url" ? this.row("", this.text("linkURL", t("Link.URL"), link.url, { placeholder: t("Link.URL.Placeholder") })) : "")
       + (kind === "slide" ? this.row("", this.popup("linkSlide", t("Link.Slide"), slides, link.slide)) : "")
+      + (kind === "customShow" ? this.row("", this.popup("linkCustomShow", t("Link.CustomShow"), shows, link.customShow))
+        + this.row("", this.check("linkCustomShowReturn", t("Link.CustomShow.Return"), link.return)) : "")
+      + (link ? this.row(t("Link.Tooltip.Placeholder"), this.text("linkTooltip", t("Link.Tooltip.Placeholder"), link.tooltip ?? "", { placeholder: t("Link.Tooltip.Placeholder") })) : "")
       + this.note(t("Format.Link.Footer")), { open: Boolean(link) });
   }
 
@@ -530,7 +592,7 @@ export class Inspector extends EventTarget {
       case "ungroup": return engine.call("ungroup");
       case "rowAbove": case "rowBelow": case "columnLeft": case "columnRight": case "deleteRow": case "deleteColumn":
         return engine.call("table", { op: action });
-      case "headerFooter": case "chartData": case "crop": case "resetCrop": case "replacePicture": case "previewAnimations":
+      case "headerFooter": case "customShows": case "chartData": case "crop": case "resetCrop": case "replacePicture": case "previewAnimations":
         return this.run(action);
       case "fillPicture":
         return this.run("fillPicture");
@@ -589,7 +651,7 @@ export class Inspector extends EventTarget {
       case "lineSpacing": return format({ lineSpacing: Number(value) });
       // Fill
       case "fillKind":
-        if (value === "pattern") return;
+        if (value === "pattern") return engine.call("setFill", { fill: { kind: "pattern", preset: "pct50", color: shape?.fill?.color ?? "scheme:accent1", background: "scheme:bg1" } });
         if (value === "picture") return this.run("fillPicture");
         if (value === "none") return engine.call("setFill", { fill: { kind: "none" } });
         if (value === "solid") return engine.call("setFill", { fill: { kind: "solid", color: shape?.fill?.color ?? "scheme:accent1" } });
@@ -605,6 +667,10 @@ export class Inspector extends EventTarget {
         // Where it starts, the box it spans and whether it is scaled carry over as they were.
         return engine.call("setFill", { fill: { kind: "gradient", start: fill.start, end: fill.end, angle: fill.angle, path: fill.path, focus: fill.focus, tile: fill.tile, scaled: fill.scaled } });
       }
+      case "fillPattern":
+        return engine.call("setFill", { fill: { kind: "pattern", preset: value, color: shape.fill.color, background: shape.fill.background } });
+      case "bgPattern":
+        return engine.call("setBackground", { fill: { kind: "pattern", preset: value, color: data.slide.background.color, background: data.slide.background.background } });
       case "fillPatternFg": case "fillPatternBg": {
         const color = colorValue();
         if (!color) return;
@@ -614,7 +680,7 @@ export class Inspector extends EventTarget {
       case "fillTile": return engine.call("setTiled", { tiled: value });
       // Background
       case "bgKind":
-        if (value === "pattern") return;
+        if (value === "pattern") return engine.call("setBackground", { fill: { kind: "pattern", preset: "pct50", color: "scheme:accent1", background: data.slide.background.color ?? "scheme:bg1" } });
         if (value === "auto") return engine.call("setBackground", {});
         if (value === "picture") return this.run("backgroundPicture");
         if (value === "solid") return engine.call("setBackground", { fill: { kind: "solid", color: data.slide.background.color ?? "#ffffff" } });
@@ -648,6 +714,14 @@ export class Inspector extends EventTarget {
       case "lineTail": return engine.call("setLine", { set: { tail: value } });
       case "shadow": return value !== "custom" && engine.call("setShadow", { id: value });
       case "reflection": return value !== "custom" && engine.call("setReflection", { id: value });
+      case "glow": return engine.call("setEffect", { glow: Number(value) });
+      case "glowColor": { const color = colorValue(); return color && engine.call("setEffect", { glowColor: color }); }
+      case "softEdge": return engine.call("setEffect", { softEdge: Number(value) });
+      case "innerShadow": return value !== "custom" && engine.call("setEffect", { innerShadow: value });
+      case "bevel": return engine.call("setEffect", { bevel: value });
+      case "depth": return engine.call("setEffect", { depth: Math.max(0, Number(value)) });
+      case "camera": return engine.call("setEffect", { camera: value });
+      case "warp": return engine.call("setEffect", { warp: value });
       // Table
       case "cellFill": {
         if (value === "none") return engine.call("setCellFill", { fill: { kind: "none" } });
@@ -676,9 +750,13 @@ export class Inspector extends EventTarget {
         if (value === "none") return engine.call("setLink", {});
         if (value === "url") return engine.call("setLink", { link: { url: shape.link?.url || "https://" } });
         if (value === "slide") return engine.call("setLink", { link: { slide: this.engine.info?.outline?.[0]?.id } });
+        if (value === "customShow") return engine.call("setLink", { link: { customShow: this.engine.info?.customShows?.[0]?.id, return: true } });
         return engine.call("setLink", { link: { action: value } });
       case "linkURL": return engine.call("setLink", { link: { url: value } });
       case "linkSlide": return engine.call("setLink", { link: { slide: value } });
+      case "linkTooltip": return engine.call("setLinkTooltip", { tooltip: value });
+      case "linkCustomShow": return engine.call("setLink", { link: { customShow: Number(value), return: shape.link?.return ?? true } });
+      case "linkCustomShowReturn": return engine.call("setLink", { link: { customShow: shape.link?.customShow, return: value } });
       // Slide
       case "layout": return engine.call("setLayout", { layout: value });
       case "hidden": return engine.call("toggleHidden", { ids: [data.slide.id] });
@@ -692,6 +770,15 @@ export class Inspector extends EventTarget {
         return engine.call("setSlideSize", { preset: value, scaling });
       }
       case "loop": return engine.call("loop", { on: value });
+      case "showRange": return engine.call("showSettings", { range: value });
+      case "showFrom": return engine.call("showSettings", { range: "slides", from: Number(value), to: Math.max(Number(value), this.engine.info?.show?.to ?? 1) });
+      case "showTo": return engine.call("showSettings", { range: "slides", from: Math.min(Number(value), this.engine.info?.show?.from ?? 1), to: Number(value) });
+      case "showCustomShow": return engine.call("showSettings", { range: "customShow", show: Number(value) });
+      case "showKiosk": return engine.call("showSettings", { kiosk: value });
+      case "showRestart": return Number(value) > 0 && engine.call("showSettings", { restart: Number(value) * 60 });
+      case "showTimings": return engine.call("showSettings", { timings: value });
+      case "showAnimations": return engine.call("showSettings", { animations: value });
+      case "showNarration": return engine.call("showSettings", { narration: value });
       // Animations
       case "addAnimation": {
         if (!value) return null;

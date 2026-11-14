@@ -73,7 +73,7 @@ struct DeckView: View {
                             .accessibilityIdentifier("closeMasterView")
                             .accessibilityLabel("MasterView.Close")
                         } else {
-                            PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
+                            PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }, customShows: document.presentation.customShows, playCustomShow: playCustomShow) {
                                 Image(systemName: "play.fill")
                                     .font(.system(size: 17))
                                     .frame(width: 44, height: 44)
@@ -109,10 +109,11 @@ struct DeckView: View {
                         }
                     }
             }
+            .environment(\.playCustomShow) { playCustomShow($0) }
             .navigationTransition(.zoom(sourceID: panel, in: panelTransition))
             // Formatting panels stay at half height, so the slide they change
             // is always in view; export needs the room for its slide picker.
-            .presentationDetents(panel == .export ? [.large] : ([.find, .chart, .comments, .headerFooter, .theme, .animations].contains(panel) ? [.medium, .large] : [.medium]))
+            .presentationDetents(panel == .export ? [.large] : ([.find, .chart, .comments, .headerFooter, .theme, .animations, .properties].contains(panel) ? [.medium, .large] : [.medium]))
             .presentationDragIndicator(.visible)
             // Swiping inside a panel scrolls its content rather than growing it.
             .presentationContentInteraction(.scrolls)
@@ -226,6 +227,7 @@ struct DeckView: View {
         case .comments: CommentsPanel(presentation: presentation, state: state)
         case .headerFooter: HeaderFooterPanel(presentation: presentation, state: state)
         case .theme: ThemePanel(presentation: presentation, state: state)
+        case .properties: PropertiesPanel(presentation: presentation, state: state)
         }
     }
 
@@ -244,6 +246,13 @@ struct DeckView: View {
         state.presentedPanel = nil
         state.isDrawing = false
         session.start(document.presentation, title: name, fromSlide: index, owner: editorID)
+    }
+
+    private func playCustomShow(_ id: CustomShow.ID) {
+        guard !session.isPresenting else { return }
+        state.presentedPanel = nil
+        state.isDrawing = false
+        session.start(document.presentation, title: name, fromSlide: 0, customShow: id, owner: editorID)
     }
 
     /// Lets the watch start this presentation, as the one most recently in front.
@@ -297,7 +306,7 @@ struct DeckView: View {
                     .buttonStyle(.glassProminent)
                     .accessibilityIdentifier("closeMasterView")
                 } else {
-                    PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }) {
+                    PlayMenu(play: play, current: { state.selectedIndex(in: document.presentation) }, customShows: document.presentation.customShows, playCustomShow: playCustomShow) {
                         Label("Toolbar.Play", systemImage: "play.fill")
                     }
                     .buttonStyle(.glassProminent)
@@ -524,6 +533,11 @@ struct DeckView: View {
                     .accessibilityIdentifier("editMasters")
                 }
             }
+            Button("Toolbar.Properties", systemImage: "info.circle") {
+                state.endEditingText()
+                state.presentedPanel = .properties
+            }
+            .accessibilityIdentifier("properties")
             Section {
                 Link(destination: URL(string: "https://github.com/AtelierSuite/Dazzle")!) {
                     Label("Toolbar.SourceCode", systemImage: "chevron.left.forwardslash.chevron.right")
@@ -613,16 +627,25 @@ struct DeckView: View {
     }
 }
 
-/// Play, from the slide being edited; held, from the beginning instead.
+/// Play, from the slide being edited; held, from the beginning or a custom show instead.
 private struct PlayMenu<Label: View>: View {
     let play: (Int) -> Void
     let current: () -> Int
+    var customShows: [CustomShow] = []
+    var playCustomShow: (CustomShow.ID) -> Void = { _ in }
     @ViewBuilder var label: () -> Label
 
     var body: some View {
         Menu {
             Button("Toolbar.PlayFromStart", systemImage: "backward.end") { play(0) }
             Button("Toolbar.PlayFromCurrent", systemImage: "play") { play(current()) }
+            if !customShows.isEmpty {
+                Menu("Toolbar.PlayCustomShow", systemImage: "list.bullet.rectangle") {
+                    ForEach(customShows) { show in
+                        Button(show.name) { playCustomShow(show.id) }
+                    }
+                }
+            }
         } label: {
             label()
         } primaryAction: {

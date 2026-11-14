@@ -24,6 +24,9 @@ public struct SlideTable: Equatable, Hashable, Sendable {
         public var borderRight: LineStyle?
         public var borderTop: LineStyle?
         public var borderBottom: LineStyle?
+        /// `lnTlToBr` and `lnBlToTr`: lines across the cell from corner to corner.
+        public var borderDiagonalDown: LineStyle?
+        public var borderDiagonalUp: LineStyle?
         /// The cell's `a:tcPr` and `a:txBody` as the file wrote them, so
         /// what Dazzle does not model survives a rewrite.
         public var sourceProperties: String?
@@ -137,7 +140,7 @@ public struct TableStyle: Equatable, Hashable, Sendable {
         public var textColor: DrawingColor?
         public var isBold: Bool?
         /// By edge: `left`, `right`, `top`, `bottom`, and `insideH`/`insideV`
-        /// for the lines between cells.
+        /// for the lines between cells, and `tl2br`/`tr2bl` for the diagonals.
         public var borders: [String: LineStyle] = [:]
     }
 
