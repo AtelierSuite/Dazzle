@@ -98,6 +98,7 @@ extension EditorState {
         presentation.addedParts = importer.target.addedParts
         presentation.addedContentTypes = importer.target.addedContentTypes
         presentation.isStructureModified = true
+        presentation.settleSections()
         selectSlide(lastID)
     }
 

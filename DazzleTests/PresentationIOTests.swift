@@ -173,6 +173,26 @@ struct RoundTripTests {
         #expect(final.package.parts.keys.filter { $0.hasPrefix("ppt/slides/slide") }.count == 1)
     }
 
+    @Test("Slide numbers stay the same when the slide list is written again, which sections and zooms name them by")
+    func slideNumbers() throws {
+        let slide = """
+            <p:sld xmlns:a="\(OOXML.drawingML)" xmlns:r="\(OOXML.relationshipsNS)" xmlns:p="\(OOXML.presentationML)">\
+            <p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>\
+            </p:spTree></p:cSld></p:sld>
+            """
+        let parts = PresentationTemplate.parts(size: .widescreen, slides: (0..<7).map { _ in
+            PresentationTemplate.SlidePart(xml: slide, relationships: [
+                Relationship(id: "rId1", type: OOXML.RelationshipType.slideLayout, target: "../slideLayouts/slideLayout1.xml"),
+            ])
+        })
+        var presentation = try PPTXReader.presentation(fromParts: parts)
+        presentation.isStructureModified = true
+        let data = try PPTXWriter.data(from: presentation)
+        let main = try #require(ZipArchive.entries(in: data)["ppt/presentation.xml"].flatMap { String(data: $0, encoding: .utf8) })
+        let numbers = main.matches(of: /<p:sldId id="(\d+)"/).map { String($0.output.1) }
+        #expect(numbers == (256..<263).map(String.init))
+    }
+
     @Test("Speaker notes are created, read and rewritten")
     func notes() throws {
         var presentation = Presentation.blank

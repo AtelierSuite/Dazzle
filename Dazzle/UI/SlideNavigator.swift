@@ -3,7 +3,8 @@ import SwiftUI
 
 /// The slides in order: a sidebar of thumbnails where there is room, a
 /// strip along the bottom where there is not. Tap to go to a slide, drag
-/// to reorder, press and hold for what else can be done to it.
+/// to reorder, press and hold for what else can be done to it. Slides in
+/// sections are grouped under each section's name, which folds them away.
 struct SlideNavigator: View {
     @Binding var presentation: Presentation
     @Bindable var state: EditorState
@@ -14,6 +15,37 @@ struct SlideNavigator: View {
     /// The layout being renamed, and the name typed for it so far.
     @State private var renamingID: Slide.ID?
     @State private var newName = ""
+    @State private var dropTargetSectionID: SlideSection.ID?
+    /// Sections whose slides are folded away.
+    @State private var collapsedSectionIDs: Set<SlideSection.ID> = []
+    @State private var renamingSectionID: SlideSection.ID?
+    @State private var sectionName = ""
+
+    /// What the navigator lists: section headers, and the slides of each
+    /// section that is open.
+    private enum Row: Identifiable {
+        case section(SlideSection)
+        case slide(Slide, index: Int)
+
+        var id: String {
+            switch self {
+            case .section(let section): "section." + section.id
+            case .slide(let slide, _): slide.id.uuidString
+            }
+        }
+    }
+
+    private var rows: [Row] {
+        let slides = Array(presentation.slides.enumerated())
+        guard !presentation.sections.isEmpty, !presentation.isInMasterView else { return slides.map { .slide($1, index: $0) } }
+        let indices = Dictionary(slides.map { ($1.id, $0) }) { first, _ in first }
+        return presentation.sections.flatMap { section -> [Row] in
+            let members: [Row] = collapsedSectionIDs.contains(section.id) ? [] : section.slideIDs.compactMap { id in
+                indices[id].map { .slide(presentation.slides[$0], index: $0) }
+            }
+            return [.section(section)] + members
+        }
+    }
 
     /// How far in from the strip's ends thumbnails blur: no further than its
     /// buttons reach, so as many thumbnails as fit stay sharp.
@@ -36,6 +68,10 @@ struct SlideNavigator: View {
             .scrollClipDisabled(axis == .horizontal)
             .onChange(of: state.selectedSlideID) { _, id in
                 guard let id else { return }
+                // A slide picked from elsewhere shows, even in a folded section.
+                if let section = presentation.section(of: id), collapsedSectionIDs.contains(section.id) {
+                    collapsedSectionIDs.remove(section.id)
+                }
                 withAnimation(.snappy(duration: 0.25)) { proxy.scrollTo(id, anchor: .center) }
             }
         }
@@ -46,6 +82,33 @@ struct SlideNavigator: View {
             Button("MasterView.Rename.Confirm") {
                 if let renamingID { state.renameLayout(renamingID, to: newName, in: &presentation) }
                 renamingID = nil
+            }
+        }
+        .alert("Section.Rename", isPresented: Binding(
+            get: { renamingSectionID != nil }, set: { if !$0 { renamingSectionID = nil } }
+        )) {
+            TextField("Section.Name", text: $sectionName)
+                .accessibilityIdentifier("sectionNameField")
+            Button("Common.Cancel", role: .cancel) { renamingSectionID = nil }
+            Button("Section.Rename.Confirm") {
+                if let id = renamingSectionID { state.renameSection(id, to: sectionName, in: &presentation) }
+                renamingSectionID = nil
+            }
+        }
+    }
+
+    private func rename(_ section: SlideSection) {
+        sectionName = section.name
+        renamingSectionID = section.id
+    }
+
+    /// Starts a section at a slide, and offers to name it straight away.
+    private func addSection(at slide: Slide) {
+        state.selectSlide(slide.id)
+        withAnimation(.snappy(duration: 0.22)) {
+            if let id = state.addSection(in: &presentation),
+               let section = presentation.sections.first(where: { $0.id == id }) {
+                rename(section)
             }
         }
     }
@@ -62,9 +125,14 @@ struct SlideNavigator: View {
 
     @ViewBuilder
     private var stack: some View {
-        let items = ForEach(Array(presentation.slides.enumerated()), id: \.element.id) { index, slide in
-            item(for: slide, at: index)
-                .id(slide.id)
+        let items = ForEach(rows) { row in
+            switch row {
+            case .section(let section):
+                header(for: section)
+            case .slide(let slide, let index):
+                item(for: slide, at: index)
+                    .id(slide.id)
+            }
         }
         if axis == .vertical {
             LazyVStack(spacing: 14) { items }
@@ -125,6 +193,128 @@ struct SlideNavigator: View {
             }
         }
         .accessibilityIdentifier("slideThumbnail.\(index + 1)")
+    }
+
+    // MARK: - Sections
+
+    private func header(for section: SlideSection) -> some View {
+        let isCollapsed = collapsedSectionIDs.contains(section.id)
+        let toggle = {
+            withAnimation(.snappy(duration: 0.22)) {
+                if isCollapsed { collapsedSectionIDs.remove(section.id) } else { collapsedSectionIDs.insert(section.id) }
+            }
+        }
+        return Group {
+            if axis == .vertical {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold))
+                        .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                        .frame(width: 22, alignment: .trailing)
+                    Text(section.name.isEmpty ? SlideSection.untitledName : section.name)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(String(section.slideIDs.count))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 6)
+            } else {
+                VStack(spacing: 2) {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.caption2.weight(.bold))
+                    Text(section.name.isEmpty ? SlideSection.untitledName : section.name)
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(width: 56, height: 52)
+                .background(.quaternary, in: .rect(cornerRadius: 8, style: .continuous))
+            }
+        }
+        .overlay {
+            // A dragged slide moves into the section.
+            if dropTargetSectionID == section.id {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                    .padding(-4)
+            }
+        }
+        .contentShape(.rect)
+        .onTapGesture(perform: toggle)
+        .contextMenu { menu(for: section) }
+        .draggable("section:" + section.id) {
+            Label(section.name, systemImage: "rectangle.stack")
+                .padding(8)
+        }
+        .dropDestination(for: String.self) { items, _ in
+            dropTargetSectionID = nil
+            guard let raw = items.first else { return false }
+            withAnimation(.snappy(duration: 0.22)) {
+                if raw.hasPrefix("section:") {
+                    let moving = String(raw.dropFirst("section:".count))
+                    if let target = presentation.sectionIndex(of: section.id), moving != section.id {
+                        state.moveSection(moving, to: target, in: &presentation)
+                    }
+                } else if let id = UUID(uuidString: raw) {
+                    state.moveSlides([id], toSection: section.id, in: &presentation)
+                }
+            }
+            return true
+        } isTargeted: { isTargeted in
+            if isTargeted {
+                dropTargetSectionID = section.id
+            } else if dropTargetSectionID == section.id {
+                dropTargetSectionID = nil
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(isCollapsed ? Text("Section.Collapsed") : Text("Section.Expanded"))
+        .accessibilityIdentifier("sectionHeader.\(section.name)")
+    }
+
+    @ViewBuilder
+    private func menu(for section: SlideSection) -> some View {
+        let index = presentation.sectionIndex(of: section.id) ?? 0
+        Button("Section.Rename", systemImage: "pencil") { rename(section) }
+        Section {
+            Button("Section.MoveUp", systemImage: axis == .vertical ? "arrow.up" : "arrow.left") {
+                withAnimation(.snappy(duration: 0.22)) { state.moveSection(section.id, to: index - 1, in: &presentation) }
+            }
+            .disabled(index == 0)
+            Button("Section.MoveDown", systemImage: axis == .vertical ? "arrow.down" : "arrow.right") {
+                withAnimation(.snappy(duration: 0.22)) { state.moveSection(section.id, to: index + 1, in: &presentation) }
+            }
+            .disabled(index == presentation.sections.count - 1)
+        }
+        Section {
+            Button("Section.Remove", systemImage: "minus.square") {
+                withAnimation(.snappy(duration: 0.22)) { state.removeSection(section.id, in: &presentation) }
+            }
+            Button("Section.RemoveAll", systemImage: "rectangle.stack.badge.minus") {
+                withAnimation(.snappy(duration: 0.22)) { state.removeAllSections(in: &presentation) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sectionMenu(for slide: Slide) -> some View {
+        Button("Section.Add", systemImage: "rectangle.stack.badge.plus") { addSection(at: slide) }
+        if presentation.sections.count > 1 {
+            let current = presentation.section(of: slide.id)?.id
+            Menu("Section.MoveSlideTo", systemImage: "arrow.right.square") {
+                ForEach(presentation.sections) { section in
+                    Button(section.name.isEmpty ? SlideSection.untitledName : section.name) {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            state.moveSlides([slide.id], toSection: section.id, in: &presentation)
+                        }
+                    }
+                    .disabled(section.id == current)
+                }
+            }
+        }
     }
 
     /// A master or layout in master view: a master at full width, its
@@ -206,6 +396,7 @@ struct SlideNavigator: View {
         Button(slide.isHidden ? "Slide.Menu.Show" : "Slide.Menu.Hide", systemImage: slide.isHidden ? "eye" : "eye.slash") {
             state.toggleHidden(slide.id, in: &presentation)
         }
+        Section { sectionMenu(for: slide) }
         Section {
             Button("Slide.Menu.MoveUp", systemImage: axis == .vertical ? "arrow.up" : "arrow.left") {
                 state.moveSlide(slide.id, to: index - 1, in: &presentation)

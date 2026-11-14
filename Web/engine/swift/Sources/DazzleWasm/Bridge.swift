@@ -189,6 +189,28 @@ final class Bridge {
         case "renameLayout":
             guard let id = uuids(r["ids"]).first, let name = r["name"] as? String else { throw Failure(message: "No layout was given.") }
             edit { state, presentation in state.renameLayout(id, to: name, in: &presentation) }
+        case "addSection":
+            // Starts a section at a slide; the result is its id, so the page can ask for its name.
+            if let id = uuid(r["slide"]) { session.select { $0.selectSlide(id) } }
+            var added: SlideSection.ID?
+            edit { state, presentation in added = state.addSection(in: &presentation) }
+            return added
+        case "renameSection":
+            guard let id = r["id"] as? String else { throw Failure(message: "No section.") }
+            edit { state, presentation in state.renameSection(id, to: r["name"] as? String ?? "", in: &presentation) }
+        case "removeSection":
+            guard let id = r["id"] as? String else { throw Failure(message: "No section.") }
+            edit { state, presentation in state.removeSection(id, in: &presentation) }
+        case "removeAllSections":
+            edit { state, presentation in state.removeAllSections(in: &presentation) }
+        case "moveSection":
+            guard let id = r["id"] as? String else { throw Failure(message: "No section.") }
+            let destination = r["to"] as? Int ?? 0
+            edit { state, presentation in state.moveSection(id, to: destination, in: &presentation) }
+        case "moveSlidesToSection":
+            guard let section = r["section"] as? String else { throw Failure(message: "No section.") }
+            let ids = uuids(r["ids"])
+            edit { state, presentation in state.moveSlides(ids, toSection: section, in: &presentation) }
         case "toggleHidden":
             let ids = uuids(r["ids"])
             edit { state, presentation in for id in ids { state.toggleHidden(id, in: &presentation) } }
@@ -619,7 +641,16 @@ final class Bridge {
             // The slide's transition as keyframes for each layer, for the
             // browser to animate: Reduce Motion asks for a cross-fade.
             guard let slide = slide(r["slide"]) else { throw Failure(message: "No such slide.") }
-            guard let transition = slide.transition?.played(
+            // A zoom flies into its picture, or back out into it, in place of the slide's own.
+            var replacement: SlideTransition?
+            if let zoom = r["zoom"] as? [String: Any], let duration = zoom["dur"] as? Double,
+               let frame = zoom["frame"] as? [Double], frame.count == 4 {
+                let size = presentation.slideSize.points
+                replacement = SlideTransition(effect: .zoomObject(SlideTransition.ZoomFrame(
+                    CGRect(x: frame[0], y: frame[1], width: frame[2], height: frame[3]), in: size
+                ), returning: zoom["returning"] as? Bool ?? false), duration: duration)
+            }
+            guard let transition = (replacement ?? slide.transition)?.played(
                 reduceMotion: r["reduceMotion"] as? Bool ?? false, seed: r["seed"] as? Int ?? 0
             ), transition.isAnimated else { return nil }
             var json = transitionJSON(transition, size: presentation.slideSize.points)
@@ -1110,6 +1141,10 @@ final class Bridge {
                     json["canDelete"] = editor.canDeleteLayout(slide.id, in: presentation)
                 }
                 return json
+            },
+            // In master view the slides, and so their sections, are set aside.
+            "sections": (presentation.isInMasterView ? [] : presentation.sections).map { section -> [String: Any] in
+                ["id": section.id, "name": section.name, "slides": section.slideIDs.map(\.uuidString)]
             },
             "sel": selection,
         ]

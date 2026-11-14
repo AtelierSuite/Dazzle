@@ -142,8 +142,13 @@ enum EditableText {
             .font: font as PlatformFont,
             .foregroundColor: platformColor(color.cgColor),
         ]
-        if run.isUnderlined == true { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
-        if run.isStruckThrough == true { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        if let underline = run.underline, underline != .none {
+            attributes[.underlineStyle] = underlineStyle(underline).rawValue
+            if let color = run.underlineColor { attributes[.underlineColor] = platformColor(style.color(color).cgColor) }
+        }
+        if let strike = run.strike, strike != .none {
+            attributes[.strikethroughStyle] = (strike == .double ? NSUnderlineStyle.double : .single).rawValue
+        }
         if let highlight = run.highlight?.color { attributes[.backgroundColor] = platformColor(style.color(highlight).cgColor) }
         if let baseline = run.baseline, baseline != 0 {
             attributes[.baselineOffset] = CGFloat(baseline) / 100_000 * size * 1.5
@@ -152,6 +157,20 @@ enum EditableText {
             attributes[.kern] = CGFloat(spacing) / 100 * scale
         }
         return attributes
+    }
+
+    /// The nearest TextKit has to an underline style; it has no wavy line.
+    private static func underlineStyle(_ underline: UnderlineStyle) -> NSUnderlineStyle {
+        var result: NSUnderlineStyle = underline.isDouble ? .double : underline.isHeavy ? .thick : .single
+        switch underline {
+        case .words: result.insert(.byWord)
+        case .dotted, .dottedHeavy: result.insert(.patternDot)
+        case .dash, .dashHeavy, .dashLong, .dashLongHeavy: result.insert(.patternDash)
+        case .dotDash, .dotDashHeavy: result.insert(.patternDashDot)
+        case .dotDotDash, .dotDotDashHeavy: result.insert(.patternDashDotDot)
+        default: break
+        }
+        return result
     }
 
     private static func platformColor(_ color: CGColor) -> PlatformColor {

@@ -32,6 +32,8 @@ enum TransitionXML {
         case .random: return ("<p:random/>", nil)
         case .morph: return ("<p:fade/>", "<p159:morph option=\"byObject\"/>")
         case .preset(let preset): return ("<p:fade/>", preset.xml)
+        // Only ever played, for a zoom; its slide keeps its own transition.
+        case .zoomObject: return ("<p:fade/>", nil)
         case .pattern(let filter):
             let vertical = ["vertical", "down"].contains(filter.subtype)
             switch filter.kind {

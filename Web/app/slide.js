@@ -256,7 +256,8 @@ export class SlideDrawer {
     const context = { defs: svg("defs", {}, defs), editing, interactive, hide, pending: [] };
 
     const background = svg("svg", { class: "slide__background", width: scene.w, height: scene.h, viewBox: `0 0 ${scene.w} ${scene.h}` }, root);
-    svg("rect", { width: scene.w, height: scene.h, fill: "#ffffff" }, background);
+    // A zoom's picture of a slide without its background has none (null).
+    if (scene.bg !== null) svg("rect", { width: scene.w, height: scene.h, fill: "#ffffff" }, background);
     const backdrop = svg("rect", { width: scene.w, height: scene.h }, background);
     this.paint(backdrop, scene.bg, { x: 0, y: 0, w: scene.w, h: scene.h }, context, background);
 
@@ -716,11 +717,21 @@ export class SlideDrawer {
     svg("path", { d: node.path }, svg("clipPath", { id: clip }, context.defs));
     this.depth(node, node.path, "nonzero", geometry);
     const group = svg("g", { "clip-path": `url(#${clip})` }, geometry);
-    const image = svg("image", {
-      x: node.image.x, y: node.image.y, width: node.image.w, height: node.image.h, preserveAspectRatio: "none",
-    }, group);
-    this.setImage(image, node.src);
-    this.effects(image, node.fx, context);
+    if (node.zoomScene) {
+      // A zoom shows the slide it leads to as it is now, in place of the picture saved with it.
+      const window = html("div", "shape__zoom");
+      window.style.clipPath = `path("${node.path}")`;
+      const slide = this.draw(node.zoomScene);
+      slide.style.transform = `scale(${node.w / node.zoomScene.w}, ${node.h / node.zoomScene.h})`;
+      window.append(slide);
+      parent.insertBefore(window, geometry);
+    } else {
+      const image = svg("image", {
+        x: node.image.x, y: node.image.y, width: node.image.w, height: node.image.h, preserveAspectRatio: "none",
+      }, group);
+      this.setImage(image, node.src);
+      this.effects(image, node.fx, context);
+    }
     this.bevel(node, node.path, "nonzero", geometry, context);
     if (node.line) this.stroke(node.path, node.line, geometry, context, node);
     if (node.media) {
@@ -1122,6 +1133,20 @@ export class SlideDrawer {
   }
 }
 
+/** The CSS text-decoration styles for each OOXML underline. */
+const underlineStyles = { dbl: "double", wavyDbl: "double", dotted: "dotted", dottedHeavy: "dotted", wavy: "wavy", wavyHeavy: "wavy" };
+
+/** Puts `lines` on `element` in the style `kind` gives: an underline style, or 2 for a double strikethrough. */
+function decorate(element, lines, kind, color) {
+  element.style.textDecorationLine = lines;
+  if (kind === 2) element.style.textDecorationStyle = "double";
+  else if (typeof kind === "string") {
+    element.style.textDecorationStyle = underlineStyles[kind] ?? (/^d(ash|ot)/.test(kind) ? "dashed" : "solid");
+    if (/Heavy$/.test(kind) || kind === "heavy") element.style.textDecorationThickness = "0.12em";
+  }
+  if (color) element.style.textDecorationColor = color;
+}
+
 /** A run's look, as CSS. */
 export function runStyle(element, run, scale = 1) {
   const size = run.sz * scale * (run.base ? 2 / 3 : 1);
@@ -1130,8 +1155,9 @@ export function runStyle(element, run, scale = 1) {
   element.style.color = run.c;
   if (run.b) element.style.fontWeight = "700";
   if (run.i) element.style.fontStyle = "italic";
+  // CSS gives one style to all of an element's lines; an underline's style wins over a strikethrough's.
   const lines = [run.u && "underline", run.s && "line-through"].filter(Boolean);
-  if (lines.length) element.style.textDecoration = lines.join(" ");
+  if (lines.length) decorate(element, lines.join(" "), run.u ?? run.s, run.uc);
   if (run.base) element.style.verticalAlign = run.base > 0 ? "super" : "sub";
   // Spacing shrinks with text fitted to its box, as Apple platforms kern it, but not with superscript.
   if (run.sp) element.style.letterSpacing = `${run.sp * scale}px`; // design-lint-allow (document content)
