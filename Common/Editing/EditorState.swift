@@ -12,7 +12,9 @@ enum EditorPanel: String, Identifiable, Hashable {
     case chart
     case comments
     case headerFooter
+    case theme
     case animations
+    case properties
 
     var id: String { rawValue }
 
@@ -22,7 +24,9 @@ enum EditorPanel: String, Identifiable, Hashable {
         case .chart: String(localized: "Panel.Chart.Title")
         case .comments: String(localized: "Panel.Comments.Title")
         case .headerFooter: String(localized: "Panel.HeaderFooter.Title")
+        case .theme: String(localized: "Panel.Theme.Title")
         case .animations: String(localized: "Panel.Animations.Title")
+        case .properties: String(localized: "Panel.Properties.Title")
         case .text: String(localized: "Panel.Text.Title")
         case .format: String(localized: "Panel.Format.Title")
         case .notes: String(localized: "Panel.Notes.Title")
@@ -521,6 +525,18 @@ final class EditorState {
         presentation.isShowSettingsModified = true
     }
 
+    /// Changes how every slideshow of the presentation plays.
+    func updateShowSettings(in presentation: inout Presentation, _ change: (inout SlideshowSettings) -> Void) {
+        change(&presentation.showSettings)
+        presentation.isShowSettingsModified = true
+    }
+
+    func setProperty(_ field: DocumentProperties.Field, to value: String, in presentation: inout Presentation) {
+        guard presentation.properties[field] != value else { return }
+        presentation.properties[field] = value
+        presentation.arePropertiesModified = true
+    }
+
     func setBackground(_ fill: Fill?, in presentation: inout Presentation) {
         let index = selectedIndex(in: presentation)
         guard presentation.slides.indices.contains(index) else { return }
@@ -833,13 +849,46 @@ final class EditorState {
         }
     }
 
+    /// Links the selected shape; taking its link away takes its ScreenTip too.
     func setShapeLink(_ link: Hyperlink?, in presentation: inout Presentation) {
-        updateShape(selectedShapeID, edits: [.link], in: &presentation) { $0.link = link }
+        updateShape(selectedShapeID, edits: [.link], in: &presentation) { shape in
+            shape.link = link
+            if link == nil { shape.linkTooltip = nil }
+        }
+    }
+
+    /// The ScreenTip shown when pointing at the selected shape's link.
+    func setShapeLinkTooltip(_ tooltip: String, in presentation: inout Presentation) {
+        updateShape(selectedShapeID, edits: [.link], in: &presentation) { $0.linkTooltip = tooltip.nilIfEmpty }
     }
 
     /// Links the selected text, or with none selected, all of the shape's.
     func setTextLink(_ link: Hyperlink?, in presentation: inout Presentation) {
-        updateRuns(in: &presentation) { $0.link = link }
+        updateRuns(in: &presentation) { properties in
+            properties.link = link
+            if link == nil { properties.linkTooltip = nil }
+        }
+    }
+
+    /// The ScreenTip shown when pointing at the selected text's link.
+    func setTextLinkTooltip(_ tooltip: String, in presentation: inout Presentation) {
+        updateRuns(in: &presentation) { $0.linkTooltip = tooltip.nilIfEmpty }
+    }
+
+    /// Changes how the selected video or sound plays.
+    func setMedia(in presentation: inout Presentation, _ change: (inout SlideShape.Media) -> Void) {
+        updateShape(selectedShapeID, edits: [.media], in: &presentation) { shape in
+            guard case .picture(var picture) = shape.kind, var media = picture.media else { return }
+            change(&media)
+            media.trimStart = max(media.trimStart, 0)
+            media.trimEnd = max(media.trimEnd, 0)
+            media.fadeIn = max(media.fadeIn, 0)
+            media.fadeOut = max(media.fadeOut, 0)
+            media.volume = min(max(media.volume, 0), 1)
+            if media.kind == .audio { media.playsFullScreen = false } else { media.playsAcrossSlides = false }
+            picture.media = media
+            shape.kind = .picture(picture)
+        }
     }
 
     func setAltText(_ text: String, in presentation: inout Presentation) {
@@ -1224,7 +1273,7 @@ final class EditorState {
             measured.text = body
             let frame = measured.frame.points
             #if canImport(CoreText)
-            let renderer = TextRenderer(style: style, slideNumber: 1)
+            let renderer = TextRenderer(style: style, slideNumber: 1, presentation: presentation)
             extent = properties.runsVertically
                 ? renderer.width(of: body, shape: measured, height: frame.height)
                 : renderer.height(of: body, shape: measured, width: frame.width)
@@ -1403,7 +1452,7 @@ final class EditorState {
 
     func listStyle(in presentation: Presentation) -> ListStyleChoice {
         switch effectiveParagraphProperties(in: presentation).bullet {
-        case .character?: .bullets
+        case .character?, .picture?: .bullets
         case .autoNumber?: .numbers
         default: .none
         }
@@ -1484,6 +1533,109 @@ final class EditorState {
             case .shape, .connector, .picture: shape.reflection = reflection
             default: break
             }
+        }
+    }
+
+    func setGlow(_ glow: Glow?, in presentation: inout Presentation) {
+        updateSelectedEffects(in: &presentation) { $0.effects.glow = glow }
+    }
+
+    /// The glow's colour, keeping its size; PowerPoint's glows are 60% see-through.
+    func setGlowColor(_ color: DrawingColor, in presentation: inout Presentation) {
+        updateSelectedEffects(in: &presentation) { shape in
+            guard let glow = shape.effects.glow else { return }
+            shape.effects.glow = Glow(radius: glow.radius, color: FormatChoices.glowColor(color))
+        }
+    }
+
+    /// Soft edges `radius` EMU wide, or none.
+    func setSoftEdge(_ radius: Int?, in presentation: inout Presentation) {
+        updateSelectedEffects(in: &presentation) { $0.effects.softEdge = radius.flatMap { $0 > 0 ? $0 : nil } }
+    }
+
+    func setInnerShadow(_ shadow: InnerShadow?, in presentation: inout Presentation) {
+        updateSelectedEffects(in: &presentation) { $0.effects.innerShadow = shadow }
+    }
+
+    /// Changes the effects of every selected shape that has them. A shape
+    /// whose effects come from its style takes them as its own first, so
+    /// adding one keeps the rest.
+    private func updateSelectedEffects(in presentation: inout Presentation, _ change: (inout SlideShape) -> Void) {
+        let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
+        updateSelectedShapes(edits: [.effects], in: &presentation) { shape in
+            switch shape.kind {
+            case .shape, .connector, .picture: break
+            default: return
+            }
+            if !shape.hasOwnEffects, !shape.edits.contains(.effects), let style {
+                let resolved = style.effects(for: shape, sources: style.sources(for: shape))
+                let before = shape
+                shape.shadow = resolved.shadow
+                shape.reflection = resolved.reflection
+                shape.effects = resolved.effects
+                change(&shape)
+                // Nothing changed after all: the shape stays as its style has it.
+                if shape.shadow == resolved.shadow, shape.reflection == resolved.reflection, shape.effects == resolved.effects {
+                    shape = before
+                }
+                return
+            }
+            change(&shape)
+        }
+    }
+
+    // MARK: - 3-D
+
+    /// The top bevel, or none.
+    func setBevel(_ bevel: Shape3D.Bevel?, in presentation: inout Presentation) {
+        updateSelected3D(in: &presentation) { shape3D, _ in shape3D.topBevel = bevel }
+    }
+
+    /// How far the shape stands out from the slide, in EMU.
+    func setDepth(_ height: Int, in presentation: inout Presentation) {
+        updateSelected3D(in: &presentation) { shape3D, _ in shape3D.extrusionHeight = max(height, 0) }
+    }
+
+    /// The camera the shape is seen through, by its `prst`; any turn of its own is dropped.
+    func setCamera(_ camera: String, in presentation: inout Presentation) {
+        updateSelected3D(in: &presentation) { _, scene in
+            scene.camera = camera
+            scene.cameraRotation = nil
+        }
+    }
+
+    /// The shape's own 3-D, starting from what it is drawn with now. One
+    /// left with nothing to draw goes, unless its style would give it some.
+    private func updateSelected3D(in presentation: inout Presentation, _ change: (inout Shape3D, inout Scene3D) -> Void) {
+        let style = selectedSlide(in: presentation).map { SlideStyleContext(presentation: presentation, slide: $0) }
+        updateSelectedShapes(edits: [.effects], in: &presentation) { shape in
+            switch shape.kind {
+            case .shape, .picture: break
+            default: return
+            }
+            let themed = style?.themedEffectStyle(for: shape, sources: style?.sources(for: shape) ?? [])
+            var shape3D = shape.shape3D ?? themed?.shape3D ?? Shape3D()
+            var scene = shape.scene3D ?? themed?.scene3D ?? Scene3D()
+            change(&shape3D, &scene)
+            let isPlain = shape3D.isEmpty && scene.camera == "orthographicFront" && scene.cameraRotation == nil
+            if isPlain, themed?.shape3D == nil, themed?.scene3D == nil {
+                shape.shape3D = nil
+                shape.scene3D = nil
+            } else {
+                shape.shape3D = shape3D
+                shape.scene3D = scene
+            }
+        }
+    }
+
+    // MARK: - Text warp
+
+    /// Lays the text along a WordArt warp, or flat.
+    func setTextWarp(_ warp: TextWarp?, in presentation: inout Presentation) {
+        updateSelectedShapes(edits: [.text], in: &presentation) { shape in
+            guard case .shape = shape.kind, shape.text != nil else { return }
+            // A warp that is changed starts from its own adjust values.
+            if shape.text?.properties.warp?.preset != warp?.preset { shape.text?.properties.warp = warp }
         }
     }
 

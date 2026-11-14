@@ -1,7 +1,8 @@
 import Foundation
 
 /// `a:scene3d`: the camera a shape is seen through and the lights on it.
-/// Dazzle draws an approximation of it and keeps it as the file had it.
+/// Dazzle draws an approximation of it, keeps it as the file had it, and
+/// writes it again when its bevel, depth or camera are changed.
 public struct Scene3D: Equatable, Hashable, Sendable {
     /// `a:camera prst`, such as `orthographicFront`, `obliqueTopLeft` or `perspectiveRelaxed`.
     public var camera: String
@@ -30,6 +31,11 @@ public struct Scene3D: Equatable, Hashable, Sendable {
             func degrees(_ key: String) -> Double { Double(element.attribute(key).flatMap(Int.init) ?? 0) / 60_000 }
             self.init(latitude: degrees("lat"), longitude: degrees("lon"), revolution: degrees("rev"))
         }
+
+        var xml: String {
+            func angle(_ degrees: Double) -> Int { Int((degrees * 60_000).rounded()) }
+            return "<a:rot lat=\"\(angle(latitude))\" lon=\"\(angle(longitude))\" rev=\"\(angle(revolution))\"/>"
+        }
     }
 
     public init(
@@ -55,10 +61,19 @@ public struct Scene3D: Equatable, Hashable, Sendable {
             lightRotation: Rotation(element: light?.firstChild(named: "rot"))
         )
     }
+
+    /// The scene as `a:scene3d`.
+    public var xml: String {
+        let camera = cameraRotation.map { "<a:camera prst=\"\(XMLLite.escape(self.camera))\">\($0.xml)</a:camera>" }
+            ?? "<a:camera prst=\"\(XMLLite.escape(self.camera))\"/>"
+        let rig = "<a:lightRig rig=\"\(XMLLite.escape(lightRig))\" dir=\"\(XMLLite.escape(lightDirection))\""
+        let light = lightRotation.map { rig + ">\($0.xml)</a:lightRig>" } ?? rig + "/>"
+        return "<a:scene3d>\(camera)\(light)</a:scene3d>"
+    }
 }
 
 /// `a:sp3d`: a shape's bevels, depth, contour and surface. Dazzle draws an
-/// approximation of it and keeps it as the file had it.
+/// approximation of it, and edits its top bevel and depth.
 public struct Shape3D: Equatable, Hashable, Sendable {
     /// `a:bevelT`: the bevel on the face that looks at the camera.
     public var topBevel: Bevel?
@@ -99,6 +114,10 @@ public struct Shape3D: Equatable, Hashable, Sendable {
                 preset: element.attribute("prst") ?? "circle"
             )
         }
+
+        func xml(named name: String) -> String {
+            "<a:\(name) w=\"\(width)\" h=\"\(height)\" prst=\"\(XMLLite.escape(preset))\"/>"
+        }
     }
 
     public init(
@@ -125,6 +144,21 @@ public struct Shape3D: Equatable, Hashable, Sendable {
             contourColor: DrawingColor.first(in: element.firstChild(named: "contourClr")),
             material: element.attribute("prstMaterial") ?? "warmMatte"
         )
+    }
+
+    /// Whether it gives the shape nothing to draw: no bevels, depth or contour.
+    public var isEmpty: Bool { topBevel == nil && bottomBevel == nil && extrusionHeight == 0 && contourWidth == 0 }
+
+    /// The shape's 3-D as `a:sp3d`.
+    public var xml: String {
+        var attributes = ""
+        if extrusionHeight > 0 { attributes += " extrusionH=\"\(extrusionHeight)\"" }
+        if contourWidth > 0 { attributes += " contourW=\"\(contourWidth)\"" }
+        if material != "warmMatte" { attributes += " prstMaterial=\"\(XMLLite.escape(material))\"" }
+        var children = (topBevel?.xml(named: "bevelT") ?? "") + (bottomBevel?.xml(named: "bevelB") ?? "")
+        if let extrusionColor { children += "<a:extrusionClr>\(extrusionColor.xml)</a:extrusionClr>" }
+        if let contourColor { children += "<a:contourClr>\(contourColor.xml)</a:contourClr>" }
+        return children.isEmpty ? "<a:sp3d\(attributes)/>" : "<a:sp3d\(attributes)>\(children)</a:sp3d>"
     }
 
     /// The same, with `phClr` standing for `color`.

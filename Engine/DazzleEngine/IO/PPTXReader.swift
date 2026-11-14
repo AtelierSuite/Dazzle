@@ -40,7 +40,7 @@ public enum PPTXReader {
         let templates = readTemplates(main: main, mainRelationships: mainRelationships, mainPart: mainPart, parts: parts)
         let resources = DeckResources(
             masters: templates.masters, layouts: templates.layouts, layoutOrder: templates.layoutOrder,
-            defaultTextStyle: ListStyle(element: main.firstChild(named: "defaultTextStyle")),
+            defaultTextStyle: ListStyle(element: main.firstChild(named: "defaultTextStyle"), image: { target($0) }),
             notesMasterPath: target(main.firstChild(named: "notesMasterIdLst")?.firstChild(named: "notesMasterId")?.relationshipID),
             tableStyles: readTableStyles(
                 mainRelationships.first { $0.type.hasSuffix("/tableStyles") }
@@ -92,10 +92,47 @@ public enum PPTXReader {
         presentation.commentAuthors = authors
         presentation.modernCommentAuthors = modernAuthors
         if let properties = part(of: OOXML.RelationshipType.presProps), let root = try? XMLLite.parse(properties) {
-            presentation.loopsSlideshow = root.firstChild(named: "showPr")?.attribute("loop") == "1"
+            if let settings = root.firstChild(named: "showPr") {
+                presentation.showSettings = readShowSettings(settings)
+            }
         }
+        presentation.customShows = readCustomShows(main.firstChild(named: "custShowLst"), slides: slides, target: target)
+        presentation.properties = DocumentPropertiesXML.properties(in: parts)
         presentation.resolveSlideLinks()
         return presentation
+    }
+
+    /// `p:showPr`: which slides play, and how.
+    static func readShowSettings(_ element: XMLElement) -> SlideshowSettings {
+        var settings = SlideshowSettings()
+        func flag(_ name: String, default value: Bool) -> Bool {
+            element.attribute(name).map { ["1", "true"].contains($0) } ?? value
+        }
+        settings.loops = flag("loop", default: false)
+        settings.usesTimings = flag("useTimings", default: true)
+        settings.showsAnimations = flag("showAnimation", default: true)
+        settings.playsNarration = flag("showNarration", default: false)
+        if let kiosk = element.firstChild(named: "kiosk") {
+            settings.isKiosk = true
+            if let restart = kiosk.attribute("restart").flatMap(Double.init) { settings.kioskRestartAfter = max(restart / 1_000, 1) }
+        }
+        if let range = element.firstChild(named: "sldRg") {
+            let from = range.attribute("st").flatMap(Int.init) ?? 1
+            settings.range = .slides(from: max(from, 1), to: max(range.attribute("end").flatMap(Int.init) ?? from, 1))
+        } else if let show = element.firstChild(named: "custShow")?.attribute("id").flatMap(Int.init) {
+            settings.range = .customShow(show)
+        }
+        return settings
+    }
+
+    /// `p:custShowLst`: each show's name, and its slides by relationship.
+    private static func readCustomShows(_ list: XMLElement?, slides: [Slide], target: (String?) -> String?) -> [CustomShow] {
+        let ids = Dictionary(slides.compactMap { slide in slide.partName.map { ($0, slide.id) } }) { first, _ in first }
+        return list?.children(named: "custShow").compactMap { show in
+            guard let id = show.attribute("id").flatMap(Int.init) else { return nil }
+            let slideIDs = show.firstChild(named: "sldLst")?.children(named: "sld").compactMap { target($0.relationshipID).flatMap { ids[$0] } }
+            return CustomShow(id: id, name: show.attribute("name") ?? "", slideIDs: slideIDs ?? [])
+        } ?? []
     }
 
     // MARK: - Embedded fonts
@@ -221,9 +258,9 @@ public enum PPTXReader {
             path: path, layoutPaths: layoutPaths, theme: theme, colorMap: colorMap,
             background: Background(element: common?.firstChild(named: "bg"), image: parser.target(of:)),
             shapes: parser.shapes(in: common?.firstChild(named: "spTree")),
-            titleStyle: ListStyle(element: styles?.firstChild(named: "titleStyle")),
-            bodyStyle: ListStyle(element: styles?.firstChild(named: "bodyStyle")),
-            otherStyle: ListStyle(element: styles?.firstChild(named: "otherStyle"))
+            titleStyle: ListStyle(element: styles?.firstChild(named: "titleStyle"), image: parser.target(of:)),
+            bodyStyle: ListStyle(element: styles?.firstChild(named: "bodyStyle"), image: parser.target(of:)),
+            otherStyle: ListStyle(element: styles?.firstChild(named: "otherStyle"), image: parser.target(of:))
         )
     }
 
@@ -349,6 +386,7 @@ public enum PPTXReader {
         if let timing = root.firstChild(named: "timing") {
             slide.animations = AnimationXML.animations(in: timing)
             markAutoplay(in: timing, shapes: &slide.shapes)
+            MediaXML.read(timing, into: &slide.shapes)
         }
 
         if let notesPath = relationships.first(where: { $0.type == OOXML.RelationshipType.notesSlide })
@@ -363,7 +401,12 @@ public enum PPTXReader {
     /// that runs with or after the slide's start rather than on a click.
     private static func markAutoplay(in timing: XMLElement, shapes: inout [SlideShape]) {
         var automatic: Set<Int> = []
+        var narrations: Set<Int> = []
         func visit(_ element: XMLElement) {
+            if element.name == "audio", ["1", "true"].contains(element.attribute("isNarration") ?? ""),
+               let target = element.firstDescendant(atPath: "cMediaNode/tgtEl/spTgt")?.attribute("spid").flatMap(Int.init) {
+                narrations.insert(target)
+            }
             if element.name == "cmd", element.attribute("cmd")?.hasPrefix("playFrom") == true,
                let target = element.firstDescendant(atPath: "cBhvr/tgtEl/spTgt")?.attribute("spid").flatMap(Int.init) {
                 var node = element.parent
@@ -377,9 +420,11 @@ public enum PPTXReader {
             element.children.forEach(visit)
         }
         visit(timing)
-        for index in shapes.indices where automatic.contains(shapes[index].shapeID) {
+        for index in shapes.indices where automatic.union(narrations).contains(shapes[index].shapeID) {
             if case .picture(var picture) = shapes[index].kind, picture.media != nil {
+                // A narration plays as its slide starts.
                 picture.media?.playsAutomatically = true
+                if narrations.contains(shapes[index].shapeID) { picture.media?.isNarration = true }
                 shapes[index].kind = .picture(picture)
             }
         }
