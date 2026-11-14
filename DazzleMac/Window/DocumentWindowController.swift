@@ -17,6 +17,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     /// The Custom Shows sheet, while it is open.
     var customShows: CustomShowsSheet?
     var propertiesSheet: PropertiesSheet?
+    /// The Theme Colours & Fonts sheet, while it is open.
+    var themeSheet: ThemeSheet?
 
     var canvas: CanvasViewController { split.editor.canvas }
     var presentationDocument: PresentationDocument? { document as? PresentationDocument }

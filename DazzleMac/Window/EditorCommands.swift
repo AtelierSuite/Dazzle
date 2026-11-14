@@ -135,6 +135,13 @@ extension DocumentWindowController: NSMenuItemValidation {
         sheet.present(over: window)
     }
 
+    @objc func showTheme(_ sender: Any?) {
+        guard let window else { return }
+        let sheet = ThemeSheet(deck: deck)
+        themeSheet = sheet
+        sheet.present(over: window)
+    }
+
     @objc func showProperties(_ sender: Any?) {
         guard let window else { return }
         let sheet = PropertiesSheet(deck: deck)
@@ -393,6 +400,8 @@ extension DocumentWindowController: NSMenuItemValidation {
             return deck.selectedSlide != nil
         case #selector(showHeaderFooter(_:)):
             return deck.selectedSlide != nil && !isInMasterView
+        case #selector(showTheme(_:)):
+            return state.canEditTheme(in: presentation)
         case #selector(toggleSlideHidden(_:)):
             menuItem.title = String(localized: deck.selectedSlide?.isHidden == true ? "Slide.Menu.Show" : "Slide.Menu.Hide")
             return deck.selectedSlide != nil && !isInMasterView

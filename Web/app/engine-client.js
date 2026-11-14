@@ -21,6 +21,7 @@ const DOCUMENT_COMMANDS = new Set([
   "new", "open", "rename", "save", "undo", "redo", "addSlide", "duplicateSlides", "deleteSlides", "moveSlides",
   "toggleHidden", "setLayout", "setSlideSize", "paste", "loop", "showSettings", "replace", "headerFooter", "masterView", "addLayout", "renameLayout",
   "addCustomShow", "renameCustomShow", "setCustomShowSlides", "duplicateCustomShow", "deleteCustomShow",
+  "setTheme",
 ]);
 
 export class EngineClient extends EventTarget {

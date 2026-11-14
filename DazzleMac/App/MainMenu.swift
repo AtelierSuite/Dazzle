@@ -180,6 +180,8 @@ enum MainMenu {
         menu.addItem(item(String(localized: "Picture.Crop"), #selector(Commands.toggleCropping(_:))))
         menu.addItem(item(String(localized: "Picture.ResetCrop"), #selector(Commands.resetCrop(_:))))
         menu.addItem(item(String(localized: "Picture.Replace"), #selector(Commands.replacePicture(_:))))
+        menu.addItem(.separator())
+        menu.addItem(item(String(localized: "Mac.Menu.Format.Theme"), #selector(Commands.showTheme(_:))))
         return menu
     }
 

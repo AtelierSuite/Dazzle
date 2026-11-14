@@ -8,8 +8,8 @@ import Foundation
 public struct Presentation: Equatable, Sendable {
     public var slideSize: EMUSize
     public var slides: [Slide]
-    /// Theme, masters and layouts. Read with the file, and read again once
-    /// master view has changed them.
+    /// Theme, masters and layouts. Read with the file, read again once
+    /// master view has changed them, and remade when the theme is edited.
     public var resources: DeckResources
     /// Every part of the file as it was read.
     public let package: Package

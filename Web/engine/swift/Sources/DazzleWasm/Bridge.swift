@@ -294,6 +294,15 @@ final class Bridge {
             settings.footer = r["footerText"] as? String ?? ""
             settings.hidesOnTitleSlide = r["hideOnTitle"] as? Bool ?? false
             edit { state, presentation in state.applyHeaderFooter(settings, toAll: r["toAll"] as? Bool ?? false, in: &presentation) }
+        case "setTheme":
+            guard editor.canEditTheme(in: presentation) else { throw Failure(message: "The theme can't be changed.") }
+            var theme = editor.theme(in: presentation)
+            for (slot, value) in r["colors"] as? [String: String] ?? [:] where Theme.colorSlots.contains(slot) {
+                if let color = UInt32(value.trimmingPrefix("#"), radix: 16) { theme.colors[slot] = color & 0xFFFFFF }
+            }
+            if let heading = (r["heading"] as? String)?.trimmingCharacters(in: .whitespaces), !heading.isEmpty { theme.majorFont = heading }
+            if let body = (r["body"] as? String)?.trimmingCharacters(in: .whitespaces), !body.isEmpty { theme.minorFont = body }
+            edit { state, presentation in state.setTheme(theme, in: &presentation) }
 
         // Inserting
         case "insertTextBox":
@@ -1113,6 +1122,7 @@ final class Bridge {
             "sizePreset": SlideSizeConverter.Preset.matching(presentation.slideSize)?.rawValue as Any,
             "layouts": presentation.resources.orderedLayouts.map { ["path": $0.path, "name": $0.name] },
             "loop": presentation.loopsSlideshow,
+            "canEditTheme": editor.canEditTheme(in: presentation),
             "show": showSettingsJSON(presentation.showSettings),
             "customShows": presentation.customShows.map { show -> [String: Any] in
                 [
@@ -1260,6 +1270,15 @@ final class Bridge {
             "fixedDate": headerFooter.fixedDate, "number": headerFooter.showsSlideNumber, "footer": headerFooter.showsFooter,
             "footerText": headerFooter.footer,
         ]
+        // The theme itself, for Theme Colors & Fonts.
+        let theme = editor.theme(in: presentation)
+        json["themeSettings"] = [
+            "canEdit": editor.canEditTheme(in: presentation),
+            "colors": ThemeColorSlot.all.map { slot, key in
+                ["slot": slot, "label": ThemeColorSlot.label(key), "color": css(RGBAColor(hex: theme.colors[slot] ?? 0))]
+            },
+            "heading": theme.majorFont, "body": theme.minorFont,
+        ] as [String: Any]
         // The theme's colours, offered first and written as theme references, as the Apple apps do.
         json["theme"] = [
             ("tx1", "Color.Theme.Text"), ("bg1", "Color.Theme.Background"), ("tx2", "Color.Theme.Text2"), ("bg2", "Color.Theme.Background2"),
