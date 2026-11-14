@@ -202,6 +202,8 @@ private struct PackageBuilder {
             // Animations name shapes by id; with one gone, some point at nothing.
             AnimationXML.write(slide.animations, shapes: slide.shapes, into: root)
         }
+        let mediaEdited = Set(slide.shapes.filter { $0.edits.contains(.media) }.map(\.shapeID))
+        if !mediaEdited.isEmpty { MediaXML.write(slide.shapes, changed: mediaEdited, into: root) }
         guard let xml = XMLLite.serialize(root) else { throw PresentationWriteError.unwritablePart(path) }
         return Data((PackagePath.declaration + xml).utf8)
     }

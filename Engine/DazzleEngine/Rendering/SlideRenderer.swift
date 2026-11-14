@@ -29,9 +29,14 @@ public struct SlideRenderer {
         /// How far through their animations the slide's shapes are, in a
         /// slideshow. Without one, every shape is drawn as it sits.
         public var animation: AnimationFrame?
+        /// Leave out videos and sounds set to be hidden while not playing, as
+        /// a slideshow does; its player shows them while they play.
+        public var hidesStoppedMedia = false
 
         public static let presentation = Options()
         public static let editing = Options(showsPlaceholderPrompts: true)
+        /// The slide as the audience sees it during a show.
+        public static let slideshow = Options(hidesStoppedMedia: true)
     }
 
     public let presentation: Presentation
@@ -112,6 +117,10 @@ public struct SlideRenderer {
         paragraphAppearances: [Int: AnimatedAppearance] = [:]
     ) {
         guard !shape.isHidden else { return }
+        // In a show, a video or sound hidden while not playing is left to the player.
+        if options.hidesStoppedMedia, case .picture(let picture) = shape.kind, picture.media?.hidesWhenNotPlaying == true {
+            return
+        }
         // Effects its style gives it, drawn as though its own.
         let shape = style.resolvingEffects(of: shape, sources: sources)
         if let appearance, appearance.opacity <= 0.001 || appearance.axisScale.width == 0 || appearance.axisScale.height == 0 { return }

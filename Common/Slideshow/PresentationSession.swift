@@ -320,10 +320,15 @@ final class PresentationSession {
 
     // MARK: - Media
 
-    /// The video or sound at a point on the current slide, in slide points.
+    /// The video or sound at a point on the current slide, in slide points:
+    /// anywhere, for a video playing full screen. One hidden while not
+    /// playing cannot be found until it plays.
     func mediaShape(at point: CGPoint) -> SlideShape.ID? {
         guard let slide = currentSlide, !isBlanked else { return nil }
-        return MediaPlayback.media(on: slide).reversed().first { $0.shape.frame.points.contains(point) }?.shape.id
+        if let id = media.fullScreenVideo { return id }
+        return MediaPlayback.media(on: slide).reversed().first { shape, settings in
+            shape.frame.points.contains(point) && (!settings.hidesWhenNotPlaying || media.started.contains(shape.id))
+        }?.shape.id
     }
 
     // MARK: - Links

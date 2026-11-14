@@ -860,6 +860,17 @@ body {
   background: #000;
 }
 
+/* A video set to play full screen covers the whole show while it plays. */
+.slideshow__media--full {
+  z-index: 5;
+}
+
+/* Media hidden while not playing is left out of the show; its player covers it once it plays. */
+.slideshow [data-media-hide] > svg,
+.audience__stage [data-media-hide] > svg {
+  visibility: hidden;
+}
+
 /* MARK: - Crop and chart data sheets */
 
 .app__crop {

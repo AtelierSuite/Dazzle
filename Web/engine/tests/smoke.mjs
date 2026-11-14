@@ -1330,6 +1330,31 @@ test("plays a Keynote movie as the slide appears and its sound on a tap, and sav
   assert.match(new TextDecoder().decode(saved.get("ppt/slides/slide1.xml")), /p14:media/);
 });
 
+test("passes a movie's trim, fades, volume, looping, full screen and hiding to the slideshow", () => {
+  call("open", { name: "Movies.key" }, keynoteWithMovies());
+  const entries = unzip(call("save", { format: "pptx", keep: true }).payload);
+  const name = "ppt/slides/slide1.xml";
+  let xml = new TextDecoder().decode(entries.get(name));
+  const pic = xml.match(/<p:pic>.*?<p:cNvPr id="(\d+)"[^]*?<a:videoFile/s);
+  assert.ok(pic, "the movie is saved as a picture with a video");
+  xml = xml.replace(/(<p14:media [^>]*?)\/>/, '$1><p14:trim st="1500" end="500"/><p14:fade in="250" out="1000"/></p14:media>');
+  const node = `<p:video fullScrn="1"><p:cMediaNode vol="40000" showWhenStopped="0"><p:cTn id="99" repeatCount="indefinite" fill="remove" display="0">`
+    + `<p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${pic[1]}"/></p:tgtEl></p:cMediaNode></p:video>`;
+  xml = xml.includes("<p:timing>")
+    ? xml.replace(/(<p:cTn [^>]*nodeType="tmRoot"[^>]*><p:childTnLst>)/, `$1${node}`)
+    : xml.replace("</p:sld>", `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>${node}</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing></p:sld>`);
+  entries.set(name, new TextEncoder().encode(xml));
+  const opened = call("open", { name: "Settings.pptx" }, zip(entries));
+  const movie = call("scene", { slide: opened.state.slides[0].id }).result.shapes.find((shape) => shape.media?.kind === "video");
+  assert.deepEqual(movie.media.trim, [1.5, 0.5]);
+  assert.deepEqual(movie.media.fade, [0.25, 1]);
+  assert.equal(movie.media.volume, 0.4);
+  assert.equal(movie.media.loop, true);
+  assert.equal(movie.media.rewind, true);
+  assert.equal(movie.media.full, true);
+  assert.equal(movie.media.hide, true);
+});
+
 /**
  * A Keynote deck of one slide of the objects beyond shapes, pictures, movies, charts and tables: a connection line,
  * a freehand drawing, a sound with no icon, an equation typeset into a PDF this platform can't draw, a 3D object with

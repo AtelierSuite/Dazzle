@@ -349,6 +349,7 @@ public enum PPTXReader {
         if let timing = root.firstChild(named: "timing") {
             slide.animations = AnimationXML.animations(in: timing)
             markAutoplay(in: timing, shapes: &slide.shapes)
+            MediaXML.read(timing, into: &slide.shapes)
         }
 
         if let notesPath = relationships.first(where: { $0.type == OOXML.RelationshipType.notesSlide })
