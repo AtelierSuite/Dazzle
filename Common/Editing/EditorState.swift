@@ -850,6 +850,22 @@ final class EditorState {
         updateRuns(in: &presentation) { $0.link = link }
     }
 
+    /// Changes how the selected video or sound plays.
+    func setMedia(in presentation: inout Presentation, _ change: (inout SlideShape.Media) -> Void) {
+        updateShape(selectedShapeID, edits: [.media], in: &presentation) { shape in
+            guard case .picture(var picture) = shape.kind, var media = picture.media else { return }
+            change(&media)
+            media.trimStart = max(media.trimStart, 0)
+            media.trimEnd = max(media.trimEnd, 0)
+            media.fadeIn = max(media.fadeIn, 0)
+            media.fadeOut = max(media.fadeOut, 0)
+            media.volume = min(max(media.volume, 0), 1)
+            if media.kind == .audio { media.playsFullScreen = false } else { media.playsAcrossSlides = false }
+            picture.media = media
+            shape.kind = .picture(picture)
+        }
+    }
+
     func setAltText(_ text: String, in presentation: inout Presentation) {
         updateShape(selectedShapeID, edits: [.altText], in: &presentation) { shape in
             shape.altText = text.nilIfEmpty
