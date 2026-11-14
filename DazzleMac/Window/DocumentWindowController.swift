@@ -14,6 +14,11 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     lazy var finder = FindController(deck: deck)
     /// The Header & Footer sheet, while it is open.
     var headerFooter: HeaderFooterSheet?
+    /// The Custom Shows sheet, while it is open.
+    var customShows: CustomShowsSheet?
+    var propertiesSheet: PropertiesSheet?
+    /// The Theme Colours & Fonts sheet, while it is open.
+    var themeSheet: ThemeSheet?
 
     var canvas: CanvasViewController { split.editor.canvas }
     var presentationDocument: PresentationDocument? { document as? PresentationDocument }
@@ -167,6 +172,7 @@ extension DocumentWindowController: NSToolbarDelegate {
                                          keyEquivalent: ""))
             item.menu.addItem(NSMenuItem(title: String(localized: "Toolbar.PlayFromStart"), action: #selector(playFromBeginning(_:)),
                                          keyEquivalent: ""))
+            item.menu.addItem(CustomShowMenuFiller.item())
             return item
         case .insertTextBox:
             return button(identifier, "Menu.Insert.TextBox", "character.textbox", #selector(insertTextBox(_:)))

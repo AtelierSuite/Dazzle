@@ -338,6 +338,8 @@ public enum Bullet: Equatable, Hashable, Sendable {
     case none
     case character(String)
     case autoNumber(scheme: String, startAt: Int)
+    /// A picture from the package, `a:buBlip`, drawn as tall as the text.
+    case picture(path: String)
 }
 
 /// Line or paragraph spacing.
@@ -388,7 +390,8 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
         // Every property unsaid: inherited.
     }
 
-    public init(element: XMLElement?) {
+    /// `image` gives the package path a relationship id points to, for picture bullets.
+    public init(element: XMLElement?, image: (String) -> String? = { _ in nil }) {
         guard let element else { return }
         level = element.attribute("lvl").flatMap(Int.init)
         alignment = ParagraphAlignment(attribute: element.attribute("algn"))
@@ -409,6 +412,9 @@ public struct ParagraphProperties: Equatable, Hashable, Sendable {
                 scheme: number.attribute("type") ?? "arabicPeriod",
                 startAt: number.attribute("startAt").flatMap(Int.init) ?? 1
             )
+        } else if let reference = element.firstChild(named: "buBlip")?.firstChild(named: "blip")?.attribute("embed"),
+                  let path = image(reference) {
+            bullet = .picture(path: path)
         }
         bulletColor = DrawingColor.first(in: element.firstChild(named: "buClr"))
         bulletSize = element.firstChild(named: "buSzPct")?.attribute("val").flatMap(Int.init).map { Double($0) / 100_000 }
@@ -472,8 +478,12 @@ public struct RunProperties: Equatable, Hashable, Sendable {
     public var outline: TextOutline?
     /// A shadow each letter casts.
     public var shadow: TextShadow?
+    /// A colour drawn behind the letters.
+    public var highlight: TextHighlight?
     /// Where clicking the text goes. Never inherited.
     public var link: Hyperlink?
+    /// The ScreenTip shown when pointing at the text's link. Never inherited.
+    public var linkTooltip: String?
 
     public init() {
         // Every property unsaid: inherited.
@@ -525,6 +535,7 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         shadow = element.firstChild(named: "effectLst").map {
             Shadow(element: $0.firstChild(named: "outerShdw")).map(TextShadow.shadow) ?? TextShadow.none
         }
+        highlight = DrawingColor.first(in: element.firstChild(named: "highlight")).map(TextHighlight.color)
     }
 
     /// Values left unsaid here are taken from `base`.
@@ -545,6 +556,7 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         result.capitalization = capitalization ?? base.capitalization
         result.outline = outline ?? base.outline
         result.shadow = shadow ?? base.shadow
+        result.highlight = highlight ?? base.highlight
         return result
     }
 }
@@ -654,6 +666,17 @@ public enum TextShadow: Equatable, Hashable, Sendable {
     }
 }
 
+/// `a:highlight` in run properties: a colour behind the letters, or none,
+/// which takes away one the text would inherit.
+public enum TextHighlight: Equatable, Hashable, Sendable {
+    case none
+    case color(DrawingColor)
+
+    public var color: DrawingColor? {
+        if case .color(let color) = self { color } else { nil }
+    }
+}
+
 /// `a:lstStyle` and the master's text styles: paragraph properties per
 /// outline level, 1 through 9.
 public struct ListStyle: Equatable, Hashable, Sendable {
@@ -663,16 +686,17 @@ public struct ListStyle: Equatable, Hashable, Sendable {
         // No levels: everything inherited.
     }
 
-    public init(element: XMLElement?) {
+    /// `image` gives the package path a relationship id points to, for picture bullets.
+    public init(element: XMLElement?, image: (String) -> String? = { _ in nil }) {
         guard let element else { return }
         for level in 1...9 {
             if let properties = element.firstChild(named: "lvl\(level)pPr") {
-                levels[level] = ParagraphProperties(element: properties)
+                levels[level] = ParagraphProperties(element: properties, image: image)
             }
         }
         // `defPPr` applies beneath every level.
         if let defaults = element.firstChild(named: "defPPr") {
-            let base = ParagraphProperties(element: defaults)
+            let base = ParagraphProperties(element: defaults, image: image)
             for level in 1...9 {
                 levels[level] = (levels[level] ?? ParagraphProperties()).merged(over: base)
             }

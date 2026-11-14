@@ -149,6 +149,7 @@ enum EditableText {
         if let strike = run.strike, strike != .none {
             attributes[.strikethroughStyle] = (strike == .double ? NSUnderlineStyle.double : .single).rawValue
         }
+        if let highlight = run.highlight?.color { attributes[.backgroundColor] = platformColor(style.color(highlight).cgColor) }
         if let baseline = run.baseline, baseline != 0 {
             attributes[.baselineOffset] = CGFloat(baseline) / 100_000 * size * 1.5
         }
@@ -200,7 +201,7 @@ enum EditableText {
         let margin = CGFloat(EMU.points(properties.marginLeft ?? 0)) * scale
         let firstLine = max(margin + CGFloat(EMU.points(properties.indent ?? 0)) * scale, 0)
         let hasBullet = switch properties.bullet {
-        case .character?, .autoNumber?: true
+        case .character?, .autoNumber?, .picture?: true
         default: false
         }
         style.headIndent = margin

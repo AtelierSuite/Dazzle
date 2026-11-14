@@ -74,6 +74,15 @@ struct TextPanel: View {
                 }
             }
 
+            Section("Format.Section.Highlight") {
+                ColorSwatches(
+                    identifier: "highlightColor", choices: themeChoices + ColorChoice.system, selected: style.highlight?.color,
+                    allowsNone: true, isNoneSelected: style.highlight?.color == nil
+                ) { color in
+                    state.setTextHighlight(color, in: &presentation)
+                }
+            }
+
             Section("Format.Section.Paragraph") {
                 Picker("Format.Alignment", selection: Binding(
                     get: { state.effectiveAlignment(in: presentation) },
@@ -119,7 +128,10 @@ struct TextPanel: View {
             }
 
             Section {
-                LinkEditor(link: style.link, presentation: presentation) { state.setTextLink($0, in: &presentation) }
+                LinkEditor(
+                    link: style.link, tooltip: style.linkTooltip, presentation: presentation,
+                    onTooltipChange: { state.setTextLinkTooltip($0, in: &presentation) }
+                ) { state.setTextLink($0, in: &presentation) }
             } header: {
                 Text("Format.Section.Link")
             } footer: {
@@ -145,9 +157,10 @@ struct TextPanel: View {
     }
 }
 
-/// Every typeface the device has, led by the theme's own two.
+/// Every typeface the device has, led by the theme's own two when there
+/// is a theme to refer to.
 struct FontPicker: View {
-    let theme: Theme
+    let theme: Theme?
     let selected: String?
     let onSelect: (String) -> Void
 
@@ -158,7 +171,7 @@ struct FontPicker: View {
 
     var body: some View {
         List {
-            if search.isEmpty {
+            if search.isEmpty, let theme {
                 Section("Format.Font.Theme") {
                     row(value: "+mj-lt", display: theme.majorFont,
                         label: String(format: String(localized: "Format.Font.Headings"), theme.majorFont))
@@ -235,6 +248,7 @@ struct FormatPanel: View {
         }
         if case .picture(let picture) = shape.kind, !state.hasMultipleSelection {
             pictureSection(shape, picture: picture)
+            if let media = picture.media { playbackSection(media) }
         }
         if case .shape = shape.kind {
             outlineSection(shape)
@@ -247,7 +261,15 @@ struct FormatPanel: View {
         case .shape, .connector, .picture:
             shadowSection(shape)
             reflectionSection(shape)
+            effectsSection(shape)
         default: EmptyView()
+        }
+        switch shape.kind {
+        case .shape, .picture: threeDSection(shape)
+        default: EmptyView()
+        }
+        if case .shape = shape.kind, shape.text != nil {
+            textWarpSection(shape)
         }
         Section("Format.Section.Arrange") {
             Button("Arrange.Front", systemImage: "square.3.layers.3d.top.filled") {
@@ -261,7 +283,10 @@ struct FormatPanel: View {
         GroupButtons(presentation: $presentation, state: state)
         if !state.hasMultipleSelection {
             Section {
-                LinkEditor(link: shape.link, presentation: presentation) { state.setShapeLink($0, in: &presentation) }
+                LinkEditor(
+                    link: shape.link, tooltip: shape.linkTooltip, presentation: presentation,
+                    onTooltipChange: { state.setShapeLinkTooltip($0, in: &presentation) }
+                ) { state.setShapeLink($0, in: &presentation) }
             } header: {
                 Text("Format.Section.Link")
             } footer: {
@@ -328,6 +353,72 @@ struct FormatPanel: View {
             }
             .disabled(picture.cropLeft == 0 && picture.cropTop == 0 && picture.cropRight == 0 && picture.cropBottom == 0)
         }
+    }
+
+    /// How a video or sound plays in the slideshow.
+    private func playbackSection(_ media: SlideShape.Media) -> some View {
+        Section {
+            secondsStepper("Media.TrimStart", value: media.trimStart, identifier: "trimStart") { $0.trimStart = $1 }
+            secondsStepper("Media.TrimEnd", value: media.trimEnd, identifier: "trimEnd") { $0.trimEnd = $1 }
+            secondsStepper("Media.FadeIn", value: media.fadeIn, identifier: "fadeIn") { $0.fadeIn = $1 }
+            secondsStepper("Media.FadeOut", value: media.fadeOut, identifier: "fadeOut") { $0.fadeOut = $1 }
+            LabeledContent("Media.Volume") {
+                HStack {
+                    Slider(value: Binding(
+                        get: { media.volume },
+                        set: { value in state.setMedia(in: &presentation) { $0.volume = value } }
+                    ), in: 0...1)
+                    .disabled(media.isMuted)
+                    Text(media.effectiveVolume, format: .percent.precision(.fractionLength(0)))
+                        .monospacedDigit()
+                        .frame(minWidth: 44, alignment: .trailing)
+                }
+            }
+            .accessibilityIdentifier("mediaVolume")
+            mediaToggle("Media.Mute", isOn: media.isMuted, identifier: "mediaMute") { $0.isMuted = $1 }
+            mediaToggle("Media.Loop", isOn: media.loops, identifier: "mediaLoop") { $0.loops = $1 }
+            mediaToggle("Media.Rewind", isOn: media.rewinds, identifier: "mediaRewind") { $0.rewinds = $1 }
+            if media.kind == .video {
+                mediaToggle("Media.FullScreen", isOn: media.playsFullScreen, identifier: "mediaFullScreen") {
+                    $0.playsFullScreen = $1
+                }
+            } else {
+                mediaToggle("Media.AcrossSlides", isOn: media.playsAcrossSlides, identifier: "mediaAcrossSlides") {
+                    $0.playsAcrossSlides = $1
+                }
+            }
+            mediaToggle("Media.HideWhenStopped", isOn: media.hidesWhenNotPlaying, identifier: "mediaHide") {
+                $0.hidesWhenNotPlaying = $1
+            }
+        } header: {
+            Text("Format.Section.Playback")
+        } footer: {
+            Text("Format.Playback.Footer")
+        }
+    }
+
+    private func secondsStepper(
+        _ title: LocalizedStringKey, value: Double, identifier: String,
+        set: @escaping (inout SlideShape.Media, Double) -> Void
+    ) -> some View {
+        LabeledContent(title) {
+            Stepper(
+                value: Binding(get: { value }, set: { new in state.setMedia(in: &presentation) { set(&$0, new) } }),
+                in: 0...3_600, step: 0.5
+            ) {
+                Text(String(format: String(localized: "Media.Seconds"), value.formatted(.number.precision(.fractionLength(1)))))
+                    .monospacedDigit()
+            }
+            .fixedSize()
+            .accessibilityIdentifier(identifier)
+        }
+    }
+
+    private func mediaToggle(
+        _ title: LocalizedStringKey, isOn: Bool, identifier: String, set: @escaping (inout SlideShape.Media, Bool) -> Void
+    ) -> some View {
+        Toggle(title, isOn: Binding(get: { isOn }, set: { new in state.setMedia(in: &presentation) { set(&$0, new) } }))
+            .accessibilityIdentifier(identifier)
     }
 
     /// What a screen reader says in place of the shape.
@@ -465,6 +556,132 @@ struct FormatPanel: View {
         }
     }
 
+    /// Glow, soft edges and inner shadow.
+    private func effectsSection(_ shape: SlideShape) -> some View {
+        Section("Format.Section.Effects") {
+            Picker("Format.Glow", selection: Binding(
+                get: { shape.effects.glow.map { EMU.points($0.radius) } ?? 0 },
+                set: { points in
+                    let color = shape.effects.glow?.color ?? FormatChoices.glowColor(.scheme("accent1"))
+                    state.setGlow(points > 0 ? Glow(radius: EMU.from(points: points), color: color) : nil, in: &presentation)
+                }
+            )) {
+                Text("Effect.None").tag(0.0)
+                ForEach(FormatChoices.glowSizes, id: \.self) { points in
+                    Text(verbatim: Self.points(points)).tag(points)
+                }
+                if let glow = shape.effects.glow, !FormatChoices.glowSizes.contains(EMU.points(glow.radius)) {
+                    Text(verbatim: Self.points(EMU.points(glow.radius))).tag(EMU.points(glow.radius))
+                }
+            }
+            .accessibilityIdentifier("glow")
+            if let glow = shape.effects.glow {
+                Text("Format.Glow.Color").font(.footnote).foregroundStyle(.secondary)
+                ColorSwatches(
+                    identifier: "glowColor", choices: themeChoices + ColorChoice.system,
+                    selected: { var color = glow.color; color.transforms.removeAll { $0.name == "alpha" }; return color }()
+                ) { color in
+                    if let color { state.setGlowColor(color, in: &presentation) }
+                }
+            }
+            Picker("Format.SoftEdges", selection: Binding(
+                get: { shape.effects.softEdge.map(EMU.points) ?? 0 },
+                set: { points in state.setSoftEdge(points > 0 ? EMU.from(points: points) : nil, in: &presentation) }
+            )) {
+                Text("Effect.None").tag(0.0)
+                ForEach(FormatChoices.softEdgeSizes, id: \.self) { points in
+                    Text(verbatim: Self.points(points)).tag(points)
+                }
+                if let softEdge = shape.effects.softEdge, !FormatChoices.softEdgeSizes.contains(EMU.points(softEdge)) {
+                    Text(verbatim: Self.points(EMU.points(softEdge))).tag(EMU.points(softEdge))
+                }
+            }
+            .accessibilityIdentifier("softEdges")
+            Picker("Format.InnerShadow", selection: Binding(
+                get: {
+                    FormatChoices.innerShadows.first { $0.shadow == shape.effects.innerShadow }?.id
+                        ?? (shape.effects.innerShadow == nil ? "none" : "custom")
+                },
+                set: { id in
+                    guard let choice = FormatChoices.innerShadows.first(where: { $0.id == id }) else { return }
+                    state.setInnerShadow(choice.shadow, in: &presentation)
+                }
+            )) {
+                ForEach(FormatChoices.innerShadows, id: \.id) { choice in
+                    Text(choice.label).tag(choice.id)
+                }
+                if shape.effects.innerShadow != nil,
+                   !FormatChoices.innerShadows.contains(where: { $0.shadow == shape.effects.innerShadow }) {
+                    Text("Shadow.Custom").tag("custom")
+                }
+            }
+            .accessibilityIdentifier("innerShadow")
+        }
+    }
+
+    /// Bevel, depth and the camera that shows the depth.
+    private func threeDSection(_ shape: SlideShape) -> some View {
+        Section("Format.Section.ThreeD") {
+            Picker("Format.Bevel", selection: Binding(
+                get: { shape.shape3D?.topBevel?.preset ?? "none" },
+                set: { preset in state.setBevel(preset == "none" ? nil : Shape3D.Bevel(preset: preset), in: &presentation) }
+            )) {
+                Text("Effect.None").tag("none")
+                ForEach(FormatChoices.bevels, id: \.0) { value, label in Text(label).tag(value) }
+                if let preset = shape.shape3D?.topBevel?.preset, !FormatChoices.bevels.contains(where: { $0.0 == preset }) {
+                    Text(verbatim: preset).tag(preset)
+                }
+            }
+            .accessibilityIdentifier("bevel")
+            LabeledContent("Format.Depth") {
+                let depth = EMU.points(shape.shape3D?.extrusionHeight ?? 0)
+                Stepper(
+                    value: Binding(
+                        get: { depth },
+                        set: { value in state.setDepth(EMU.from(points: value), in: &presentation) }
+                    ),
+                    in: FormatChoices.depthRange, step: 6
+                ) {
+                    Text(verbatim: Self.points(depth)).monospacedDigit()
+                }
+                .fixedSize()
+                .accessibilityIdentifier("depth")
+            }
+            Picker("Format.Camera", selection: Binding(
+                get: { shape.scene3D?.camera ?? "orthographicFront" },
+                set: { state.setCamera($0, in: &presentation) }
+            )) {
+                ForEach(FormatChoices.cameras, id: \.0) { value, label in Text(label).tag(value) }
+                if let camera = shape.scene3D?.camera, !FormatChoices.cameras.contains(where: { $0.0 == camera }) {
+                    Text("Shadow.Custom").tag(camera)
+                }
+            }
+            .accessibilityIdentifier("camera")
+        }
+    }
+
+    /// The WordArt warp the text is laid along.
+    private func textWarpSection(_ shape: SlideShape) -> some View {
+        Section("Format.Section.TextWarp") {
+            Picker("Format.TextWarp", selection: Binding(
+                get: { shape.text?.properties.warp?.preset ?? "textNoShape" },
+                set: { preset in state.setTextWarp(preset == "textNoShape" ? nil : TextWarp(preset: preset), in: &presentation) }
+            )) {
+                Text("Effect.None").tag("textNoShape")
+                ForEach(FormatChoices.textWarps, id: \.0) { value, label in Text(label).tag(value) }
+                if let preset = shape.text?.properties.warp?.preset, preset != "textNoShape",
+                   !FormatChoices.textWarps.contains(where: { $0.0 == preset }) {
+                    Text(verbatim: preset).tag(preset)
+                }
+            }
+            .accessibilityIdentifier("textWarp")
+        }
+    }
+
+    private static func points(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1))) + " pt"
+    }
+
     @ViewBuilder
     private var slideSections: some View {
         if let slide {
@@ -505,11 +722,20 @@ struct FormatPanel: View {
                         }
                     }
                     .accessibilityIdentifier("slideSize")
-                    Toggle("Format.LoopSlideshow", isOn: Binding(
-                        get: { presentation.loopsSlideshow },
-                        set: { state.setLoopsSlideshow($0, in: &presentation) }
-                    ))
-                    .accessibilityIdentifier("loopSlideshow")
+                    NavigationLink {
+                        SlideshowSettingsView(presentation: $presentation, state: state)
+                    } label: {
+                        Text("Show.Title")
+                    }
+                    .accessibilityIdentifier("slideshowSettings")
+                    NavigationLink {
+                        CustomShowsView(presentation: $presentation, state: state)
+                    } label: {
+                        LabeledContent("CustomShow.Title") {
+                            if !presentation.customShows.isEmpty { Text(verbatim: "\(presentation.customShows.count)") }
+                        }
+                    }
+                    .accessibilityIdentifier("customShows")
                     .confirmationDialog(
                         "SlideSize.Scaling.Title", isPresented: Binding(get: { pendingSize != nil }, set: { if !$0 { pendingSize = nil } }),
                         titleVisibility: .visible

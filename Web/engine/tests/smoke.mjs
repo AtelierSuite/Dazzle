@@ -1330,6 +1330,31 @@ test("plays a Keynote movie as the slide appears and its sound on a tap, and sav
   assert.match(new TextDecoder().decode(saved.get("ppt/slides/slide1.xml")), /p14:media/);
 });
 
+test("passes a movie's trim, fades, volume, looping, full screen and hiding to the slideshow", () => {
+  call("open", { name: "Movies.key" }, keynoteWithMovies());
+  const entries = unzip(call("save", { format: "pptx", keep: true }).payload);
+  const name = "ppt/slides/slide1.xml";
+  let xml = new TextDecoder().decode(entries.get(name));
+  const pic = xml.match(/<p:pic>.*?<p:cNvPr id="(\d+)"[^]*?<a:videoFile/s);
+  assert.ok(pic, "the movie is saved as a picture with a video");
+  xml = xml.replace(/(<p14:media [^>]*?)\/>/, '$1><p14:trim st="1500" end="500"/><p14:fade in="250" out="1000"/></p14:media>');
+  const node = `<p:video fullScrn="1"><p:cMediaNode vol="40000" showWhenStopped="0"><p:cTn id="99" repeatCount="indefinite" fill="remove" display="0">`
+    + `<p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${pic[1]}"/></p:tgtEl></p:cMediaNode></p:video>`;
+  xml = xml.includes("<p:timing>")
+    ? xml.replace(/(<p:cTn [^>]*nodeType="tmRoot"[^>]*><p:childTnLst>)/, `$1${node}`)
+    : xml.replace("</p:sld>", `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>${node}</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing></p:sld>`);
+  entries.set(name, new TextEncoder().encode(xml));
+  const opened = call("open", { name: "Settings.pptx" }, zip(entries));
+  const movie = call("scene", { slide: opened.state.slides[0].id }).result.shapes.find((shape) => shape.media?.kind === "video");
+  assert.deepEqual(movie.media.trim, [1.5, 0.5]);
+  assert.deepEqual(movie.media.fade, [0.25, 1]);
+  assert.equal(movie.media.volume, 0.4);
+  assert.equal(movie.media.loop, true);
+  assert.equal(movie.media.rewind, true);
+  assert.equal(movie.media.full, true);
+  assert.equal(movie.media.hide, true);
+});
+
 /**
  * A Keynote deck of one slide of the objects beyond shapes, pictures, movies, charts and tables: a connection line,
  * a freehand drawing, a sound with no icon, an equation typeset into a PDF this platform can't draw, a 3D object with
@@ -1648,6 +1673,150 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(text(wave), "Typed\nOver");
   assert.deepEqual(wave.warp, waved.text.warp, "warped just as before");
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
+});
+
+test("edits glow, soft edges, inner shadow, bevel, depth, text warp and pattern fills, and saves them", () => {
+  call("new", { name: "Untitled.pptx" });
+  const opened = call("open", { name: "Effects.pptx" }, deckWithShapes());
+  const slide = opened.state.slides[0].id;
+  const choices = opened.result.choices;
+  assert.equal(choices.patterns.length, 48, "offers PowerPoint's patterns");
+  assert.ok(choices.textWarps.some((warp) => warp.id === "textArchUp"), "offers the warps");
+  const lined = call("scene", { slide }).result.shapes.find((node) => node.name === "Lined");
+  call("select", { slide, shapes: [lined.id] });
+  call("setEffect", { glow: 8 });
+  call("setEffect", { glowColor: "#00ff00" });
+  call("setEffect", { softEdge: 5 });
+  call("setEffect", { innerShadow: "topLeft" });
+  call("setEffect", { bevel: "artDeco" });
+  call("setEffect", { depth: 18 });
+  call("setEffect", { camera: "obliqueTopLeft" });
+  call("setEffect", { warp: "textArchUp" });
+  call("setFill", { fill: { kind: "pattern", preset: "smCheck", color: "#ff0000", background: "#ffffff" } });
+  const shape = call("inspect").result.shape;
+  assert.deepEqual([shape.glow, shape.glowColor, shape.softEdge, shape.innerShadow], [8, "#00ff00", 5, "topLeft"]);
+  assert.deepEqual([shape.bevel, shape.depth, shape.camera, shape.warp], ["artDeco", 18, "obliqueTopLeft", "textArchUp"]);
+  assert.equal(shape.fill.preset, "smCheck");
+
+  const saved = call("save", { format: "pptx" }).payload;
+  const xml = new TextDecoder().decode(unzip(saved).get("ppt/slides/slide1.xml"));
+  const lines = xml.slice(xml.indexOf('name="Lined"'), xml.indexOf("</p:sp>", xml.indexOf('name="Lined"')));
+  assert.match(lines, /<a:pattFill prst="smCheck">/);
+  assert.match(lines, /<a:effectLst><a:glow rad="101600"><a:srgbClr val="00FF00"><a:alpha val="40000"\/><\/a:srgbClr><\/a:glow><a:innerShdw [^>]*dir="13500000"[^>]*>.*<\/a:innerShdw><a:softEdge rad="63500"\/><\/a:effectLst>/);
+  assert.match(lines, /<a:scene3d><a:camera prst="obliqueTopLeft"\/><a:lightRig dir="t" rig="threePt"\/><\/a:scene3d><a:sp3d extrusionH="228600"><a:bevelT h="76200" prst="artDeco" w="76200"\/><\/a:sp3d>/);
+  assert.match(lines, /<a:prstTxWarp prst="textArchUp">/);
+
+  // Taken off again, nothing is left behind.
+  call("setEffect", { glow: 0, softEdge: 0, innerShadow: "none", bevel: "none", depth: 0, camera: "orthographicFront", warp: "textNoShape" });
+  const plain = call("inspect").result.shape;
+  assert.deepEqual([plain.glow, plain.softEdge, plain.innerShadow, plain.bevel, plain.depth, plain.warp], [0, 0, "none", "none", 0, "textNoShape"]);
+  const again = new TextDecoder().decode(unzip(call("save", { format: "pptx" }).payload).get("ppt/slides/slide1.xml"));
+  const after = again.slice(again.indexOf('name="Lined"'), again.indexOf("</p:sp>", again.indexOf('name="Lined"')));
+  assert.doesNotMatch(after, /<a:glow|<a:softEdge|<a:innerShdw|<a:sp3d|<a:scene3d|prstTxWarp/);
+});
+
+test("makes custom shows, plays them in their order and keeps them on saving", () => {
+  call("new", { name: "Shows.pptx" });
+  const layout = call("info").result.layouts[1].path;
+  call("addSlide", { layout });
+  call("addSlide", { layout });
+  const slides = call("info").state.slides.map((slide) => slide.id);
+  const id = call("addCustomShow", { slides: [slides[2]] }).result;
+  call("setCustomShowSlides", { id, slides: [slides[2], slides[0]] });
+  call("renameCustomShow", { id, name: "Highlights" });
+  const info = call("info").result;
+  assert.deepEqual(info.customShows, [{ id, name: "Highlights", slides: [slides[2], slides[0]] }]);
+  assert.deepEqual(call("slideshowOrder", { customShow: id }).result, [slides[2], slides[0]]);
+  assert.deepEqual(call("slideshowOrder").result, slides);
+
+  call("insertTextBox");
+  call("setLink", { link: { customShow: id, return: true } });
+  const linked = call("scene", { slide: slides[2] }).result.shapes.find((node) => node.link);
+  assert.deepEqual(linked.link, { customShow: id, return: true });
+
+  const saved = call("save", { format: "pptx", keep: true }).payload;
+  const reopened = call("open", { name: "Shows again.pptx" }, saved);
+  const again = reopened.state.slides.map((slide) => slide.id);
+  assert.deepEqual(call("info").result.customShows.map((show) => show.slides), [[again[2], again[0]]]);
+  call("duplicateCustomShow", { id });
+  call("deleteCustomShow", { id });
+  assert.deepEqual(call("info").result.customShows.map((show) => show.name), ["Highlights Copy"]);
+});
+
+test("honours and keeps the slideshow settings", () => {
+  call("new", { name: "Settings.pptx" });
+  const layout = call("info").result.layouts[1].path;
+  call("addSlide", { layout });
+  call("addSlide", { layout });
+  const slides = call("info").state.slides.map((slide) => slide.id);
+  call("toggleHidden", { ids: [slides[1]] });
+  call("showSettings", { range: "slides", from: 2, to: 3 });
+  assert.deepEqual(call("slideshowOrder").result, [slides[2]], "plays the range, without its hidden slide");
+  call("showSettings", { kiosk: true, restart: 120, timings: false, animations: false, narration: false });
+  const show = call("info").result.show;
+  assert.deepEqual(show, { range: "slides", from: 2, to: 3, kiosk: true, restart: 120, loop: true, timings: true, animations: false, narration: false });
+  assert.equal(call("timeline", { slide: slides[0] }).result.loop, true, "a kiosk show loops");
+
+  const saved = call("save", { format: "pptx", keep: true }).payload;
+  call("open", { name: "Settings again.pptx" }, saved);
+  assert.deepEqual(call("info").result.show, show);
+  call("showSettings", { range: "all", kiosk: false });
+  assert.equal(call("info").result.show.timings, false);
+});
+
+test("reads, edits and saves document properties", () => {
+  call("new", { name: "Properties.pptx" });
+  call("setProperties", { title: "Quarterly <Review>", author: "Ada", keywords: "plans, numbers", comments: "Line one\nLine two" });
+  assert.equal(call("properties").result.title, "Quarterly <Review>");
+  const before = Date.now() - 1000;
+  const saved = unzip(call("save", { format: "pptx", author: "Grace" }).payload);
+  const core = new TextDecoder().decode(saved.get("docProps/core.xml"));
+  assert.match(core, /<dc:title>Quarterly &lt;Review&gt;<\/dc:title>/);
+  assert.match(core, /<cp:lastModifiedBy>Grace<\/cp:lastModifiedBy>/);
+  const reopened = call("open", { name: "Properties.pptx" }, zip(saved));
+  assert.ok(reopened);
+  const properties = call("properties").result;
+  assert.equal(properties.author, "Ada");
+  assert.equal(properties.comments, "Line one\nLine two");
+  assert.equal(properties.lastModifiedBy, "Grace");
+  assert.ok(Date.parse(properties.modified) >= before, "modified when saved");
+  // A draft kept on the device leaves the saving stamp alone.
+  const draft = new TextDecoder().decode(unzip(call("save", { keep: true, draft: true, author: "Someone" }).payload).get("docProps/core.xml"));
+  assert.match(draft, /<cp:lastModifiedBy>Grace<\/cp:lastModifiedBy>/);
+});
+
+test("changes the theme's colours and fonts, every slide follows, and saves them", () => {
+  call("new", { name: "Theme.pptx" });
+  const { result: info } = call("info");
+  assert.equal(info.canEditTheme, true);
+  call("addSlide", { layout: info.layouts[1].path });
+  call("insertShape", { preset: "rect" });
+  const before = call("inspect").result.themeSettings;
+  assert.equal(before.colors.length, 12);
+  assert.deepEqual(before.colors.map((color) => color.slot).slice(0, 5), ["dk1", "lt1", "dk2", "lt2", "accent1"]);
+  assert.ok(before.colors.every((color) => color.label && /^#[0-9a-f]{6}$/.test(color.color)));
+  assert.ok(JSON.stringify(call("scene").result).includes(before.colors[4].color), "the shape is filled with accent 1");
+
+  call("setTheme", { colors: { accent1: "#8e44ad" }, heading: "Georgia", body: "" });
+  const after = call("inspect").result.themeSettings;
+  assert.equal(after.colors[4].color, "#8e44ad");
+  assert.equal(after.colors[5].color, before.colors[5].color, "other colours stay");
+  assert.equal(after.heading, "Georgia");
+  assert.equal(after.body, before.body, "an empty font leaves the body font alone");
+  assert.ok(call("info").result.fonts.includes("Georgia"));
+  for (const slide of call("info").state.slides) {
+    assert.ok(!JSON.stringify(call("scene", { slide: slide.id }).result).includes(before.colors[4].color), "no slide keeps the old accent");
+  }
+  assert.ok(JSON.stringify(call("scene").result).includes("#8e44ad"), "the shape follows the new accent");
+
+  call("undo");
+  assert.equal(call("inspect").result.themeSettings.colors[4].color, before.colors[4].color);
+  call("redo");
+  const { payload } = call("save", { format: "pptx" });
+  call("open", { name: "Theme.pptx" }, payload);
+  const reopened = call("inspect").result.themeSettings;
+  assert.equal(reopened.colors[4].color, "#8e44ad");
+  assert.equal(reopened.heading, "Georgia");
 });
 
 function deckWithLineStyles() {
