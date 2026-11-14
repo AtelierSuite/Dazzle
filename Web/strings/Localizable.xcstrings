@@ -1862,31 +1862,31 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Downloading the new version. Libretto will reload when it’s done."
+            "value": "Downloading the new version. Dazzle will reload when it’s done."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "新しいバージョンをダウンロードしています。完了すると Libretto が再読み込みされます。"
+            "value": "新しいバージョンをダウンロードしています。完了すると Dazzle が再読み込みされます。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "새로운 버전을 다운로드하고 있습니다. 완료되면 Libretto가 다시 로드됩니다."
+            "value": "새로운 버전을 다운로드하고 있습니다. 완료되면 Dazzle가 다시 로드됩니다."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在下载新版本。完成后 Libretto 将重新载入。"
+            "value": "正在下载新版本。完成后 Dazzle 将重新载入。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在下載新版本。完成後 Libretto 將重新載入。"
+            "value": "正在下載新版本。完成後 Dazzle 將重新載入。"
           }
         }
       }
@@ -1932,31 +1932,31 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Updating Libretto"
+            "value": "Updating Dazzle"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Libretto をアップデート中"
+            "value": "Dazzle をアップデート中"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Libretto 업데이트 중"
+            "value": "Dazzle 업데이트 중"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在更新 Libretto"
+            "value": "正在更新 Dazzle"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在更新 Libretto"
+            "value": "正在更新 Dazzle"
           }
         }
       }
