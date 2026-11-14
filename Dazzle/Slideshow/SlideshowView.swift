@@ -349,6 +349,10 @@ private struct TransitionPlayer: View {
                             renderer(for: content).draw(in: cgContext, size: slideSize)
                         }
                     }
+                    // A Morph's shared shapes, on their way, over the rest cross-fading.
+                    showing.morph?.draw(
+                        progress: showing.progress(at: timeline.date), in: cgContext, size: slideSize, presentation: presentation
+                    )
                 }
             }
         }
@@ -360,6 +364,8 @@ private struct TransitionPlayer: View {
     private func renderer(for content: TransitionFrame.Content) -> SlideRenderer {
         var options = SlideRenderer.Options.slideshow
         options.animation = content == .outgoing ? showing.outgoingFrame : showing.incomingFrame
+        // A Morph draws the shapes the slides share itself.
+        if let morph = showing.morph { options.animation = morph.rest(of: content) }
         return SlideRenderer(presentation: presentation, slide: content == .outgoing ? showing.outgoing : incoming, options: options)
     }
 

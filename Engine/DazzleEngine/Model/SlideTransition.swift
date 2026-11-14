@@ -59,6 +59,9 @@ public struct SlideTransition: Equatable, Hashable, Sendable {
         /// A pattern of the new slide filling in: blinds, a checkerboard,
         /// random bars, a dissolve, a circle, a wheel…
         case pattern(AnimationFilter)
+        /// Shapes the two slides share move, resize, turn and recolour into
+        /// their new places, and the rest cross-fades (`SlideMorph`).
+        case morph
         /// One of PowerPoint 2010's or 2013's own: a vortex, a page curl,
         /// curtains…
         case preset(Preset)
@@ -93,7 +96,7 @@ public struct SlideTransition: Equatable, Hashable, Sendable {
     /// Seconds the effect takes.
     public var duration: Double
     /// The effect the file asked for, when Dazzle plays something else
-    /// because it cannot draw it (a morph…).
+    /// because it cannot draw it.
     public var approximates: String?
 
     public init(effect: Effect, duration: Double? = nil, approximates: String? = nil) {
@@ -221,10 +224,12 @@ extension SlideTransition {
         case "reveal": return (.fade(throughBlack: true), nil)
         case "warp", "flythrough": return (.zoom(outward: dir == "out"), nil)
         case "pan", "prism": return (.push(side(.up)), nil)
+        // PowerPoint 2019's (p159). By word and by character are played by object.
+        case "morph": return (.morph, nil)
         default:
             // A vortex, ripple, page curl and the rest, each as itself.
             if let preset = Preset(element: element) { return (.preset(preset), nil) }
-            // A morph, and anything newer still.
+            // Anything newer still.
             let name = element.name == "prstTrans" ? element.attribute("prst") ?? element.name : element.name
             return (.fade(throughBlack: false), name)
         }
@@ -350,6 +355,9 @@ extension SlideTransition {
             }
         case .pattern(let filter):
             layers = [Layer(content: .outgoing), Layer(content: .incoming, clip: filter.path(progress: t, frame: bounds))]
+        case .morph:
+            // What the slides do not share; `SlideMorph` places what they do, over this.
+            layers = [Layer(content: .outgoing), Layer(content: .incoming, opacity: eased)]
         case .preset(let preset):
             layers = preset.layers(progress: t, size: size)
         case .random:

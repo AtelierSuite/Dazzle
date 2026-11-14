@@ -1209,6 +1209,29 @@ body {
   background: #fff;
 }
 
+/* A Morph's pair of shapes: both placed in the same spot, the arriving one
+   added to the one being left, so a pair that looks the same stays solid. */
+.slideshow__morph {
+  position: absolute;
+  inset: 0;
+  isolation: isolate;
+  color: #000;
+}
+
+.slideshow__morph-shape {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
+}
+
+.slideshow__morph-shape--to {
+  mix-blend-mode: plus-lighter;
+}
+
+.shape.is-morphing {
+  visibility: hidden;
+}
+
 .slideshow__blank,
 .audience__blank {
   position: absolute;

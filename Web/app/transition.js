@@ -7,6 +7,10 @@
 // Web Animations API plays the keyframes. A transition is the deck's own
 // content rather than the interface's motion, so it plays even when motion is
 // reduced, but then as a cross-fade, which the engine is asked for instead.
+//
+// A Morph also has pairs of shapes the two slides share. Each pair's two
+// shapes are copied onto a layer of their own, over the cross-fade of the
+// rest, placed in the same spot and dissolving from one to the other.
 
 /** Whether the viewer asks for less motion: transitions then cross-fade. */
 export function prefersReducedMotion() {
@@ -70,6 +74,7 @@ export class TransitionPlayer {
         inner.animate(layer.keyframes.map(({ offset, transform }) => ({ offset, transform })), timing),
       );
     }
+    if (transition.morph?.length) this.morph(transition.morph, outgoing, incoming, scene, placement, timing);
     // What else was on the stage, the slide being left included, is now in the layers or gone.
     for (const child of [...this.stage.children]) if (!this.layers.includes(child)) child.remove();
     const animations = this.animations;
@@ -88,10 +93,43 @@ export class TransitionPlayer {
     for (const animation of animations) animation.cancel();
     for (const layer of this.layers) layer.remove();
     this.layers = [];
+    for (const shape of incoming?.querySelectorAll(".is-morphing") ?? []) shape.classList.remove("is-morphing");
     if (incoming) {
       this.stage.replaceChildren(incoming);
       this.fit(incoming);
     }
+  }
+
+  /**
+   * A Morph's shared shapes on a layer over the others: for each pair, a copy
+   * of the shape being left and of the shape arriving, the originals hidden.
+   */
+  morph(pairs, outgoing, incoming, scene, placement, timing) {
+    const layer = document.createElement("div");
+    layer.className = "slideshow__transition";
+    layer.style.width = `${scene.w}px`;
+    layer.style.height = `${scene.h}px`;
+    layer.style.transform = placement;
+    const find = (slide, id) => [...slide.querySelectorAll(":scope > .shape.is-own")].find((shape) => shape.dataset.id === id);
+    for (const pair of pairs) {
+      const sides = [[find(outgoing, pair.from), "from"], [find(incoming, pair.to), "to"]];
+      if (sides.some(([shape]) => !shape)) continue;
+      const group = document.createElement("div");
+      group.className = "slideshow__morph";
+      for (const [shape, side] of sides) {
+        const holder = document.createElement("div");
+        holder.className = `slideshow__morph-shape slideshow__morph-shape--${side}`;
+        holder.append(shape.cloneNode(true));
+        shape.classList.add("is-morphing");
+        group.append(holder);
+        this.animations.push(holder.animate(pair.keyframes.map((keyframe) => ({
+          offset: keyframe.offset, transform: keyframe[side], opacity: side === "to" ? keyframe.mix : 1 - keyframe.mix,
+        })), timing));
+      }
+      layer.append(group);
+    }
+    this.stage.append(layer);
+    this.layers.push(layer);
   }
 
   /** The stage's transform for a slide of `scene`, fitted and centred, as slideshow.js fits slides. */

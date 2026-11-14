@@ -402,6 +402,8 @@ export class Slideshow extends EventTarget {
    */
   async showSlide({ fullyBuilt, transition: withTransition = false, zoom = null }) {
     const id = this.slideID;
+    // How far through its animations the slide being left is, for a Morph.
+    const leftAt = this.builds;
     const timeline = await this.timeline(id);
     // Without animations, every slide shows as it ends up.
     const built = fullyBuilt || this.settings.animations === false;
@@ -411,10 +413,13 @@ export class Slideshow extends EventTarget {
     const scene = await this.engine.call("scene", { slide: id });
     if (id !== this.slideID) return;
     const transition = withTransition && this.scene && (zoom || timeline.transition > 0)
-      ? await this.engine.call("transition", { slide: id, reduceMotion: prefersReducedMotion(), seed: this.position, zoom })
+      ? await this.engine.call("transition", {
+        slide: id, reduceMotion: prefersReducedMotion(), seed: this.position, from: this.sceneID, fromBegun: leftAt, zoom,
+      })
       : null;
     if (id !== this.slideID) return;
     this.scene = scene;
+    this.sceneID = id;
     const frame = await this.frame(0);
     if (id !== this.slideID) return;
     // To the audience: the slide, the pictures and movies on it, and how it starts.
