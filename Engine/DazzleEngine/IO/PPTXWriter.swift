@@ -68,7 +68,7 @@ private struct PackageBuilder {
         if slides.contains(where: \.areCommentsModified) {
             writeCommentAuthors()
         }
-        if presentation.isStructureModified || presentation.areCustomShowsModified || createdNotesMasterRelationship != nil {
+        if presentation.isStructureModified || presentation.areSectionsModified || presentation.areCustomShowsModified || createdNotesMasterRelationship != nil {
             try writePresentationPart()
         }
         if presentation.isShowSettingsModified {
@@ -521,7 +521,8 @@ private struct PackageBuilder {
             }
         }
 
-        if presentation.isStructureModified, let list = root.firstChild(named: "sldIdLst") ?? {
+        if presentation.isStructureModified || presentation.areSectionsModified,
+           let list = root.firstChild(named: "sldIdLst") ?? {
             let created = XMLLite.fragment("<p:sldIdLst/>", namespaces: namespaces)
             let after = root.children.lastIndex { ["sldMasterIdLst", "notesMasterIdLst", "handoutMasterIdLst"].contains($0.name) }
             if let created { root.insertChild(created, at: (after ?? 0) + 1) }
@@ -529,13 +530,14 @@ private struct PackageBuilder {
         }() {
             var listIDs: [String: Int] = [:]
             for entry in list.children(named: "sldId") {
-                if let relationship = entry.relationshipID, let id = entry.attribute("id").flatMap(Int.init) {
+                if let relationship = entry.relationshipID, let id = entry.unprefixedID.flatMap(Int.init) {
                     listIDs[relationship] = id
                 }
             }
             for entry in list.children { list.removeChild(entry) }
             var nextID = max(256, (listIDs.values.max() ?? 255) + 1)
             var keptIDs: Set<Int> = []
+            var numbers: [Slide.ID: Int] = [:]
             for slide in slides {
                 guard let path = slide.partName, let relationship = mainRelationships.first(where: {
                     $0.type == OOXML.RelationshipType.slide && PackagePath.resolve($0.target, from: mainPart) == path
@@ -545,9 +547,11 @@ private struct PackageBuilder {
                     return nextID
                 }()
                 keptIDs.insert(id)
+                numbers[slide.id] = id
                 insert("<p:sldId id=\"\(id)\" r:id=\"\(relationship.id)\"/>", into: list, at: list.children.count)
             }
             pruneSlideReferences(in: root, keeping: keptIDs)
+            writeSections(into: root, numbers: numbers)
         }
 
         if presentation.isStructureModified || presentation.areCustomShowsModified {
@@ -603,9 +607,7 @@ private struct PackageBuilder {
         root.insertChild(list, at: (after ?? -1) + 1)
     }
 
-    /// Custom shows and sections list slides too. Entries for slides that
-    /// are gone are dropped, and sections — which must cover every slide,
-    /// and which Dazzle cannot place a new slide into — are dropped whole.
+    /// Custom shows list slides too. Entries for slides that are gone are dropped.
     private func pruneSlideReferences(in root: XMLElement, keeping keptIDs: Set<Int>) {
         let livingRelationships = Set(mainRelationships.map(\.id))
         for show in root.firstChild(named: "custShowLst")?.children(named: "custShow") ?? [] {
@@ -614,11 +616,41 @@ private struct PackageBuilder {
                 list.removeChild(entry)
             }
         }
-        if let extensions = root.firstChild(named: "extLst") {
-            for item in extensions.children where item.firstChild(named: "sectionLst") != nil {
-                extensions.removeChild(item)
-            }
+    }
+
+    static let sectionsExtension = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"
+    static let sectionsNamespace = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+
+    /// `p14:sectionLst`, in the presentation's extensions, in place of the
+    /// one read; removed when there are no sections. Sections name slides by
+    /// their `p:sldId` number.
+    private func writeSections(into root: XMLElement, numbers: [Slide.ID: Int]) {
+        var settled = presentation
+        settled.slides = slides
+        settled.settleSections()
+        let existing = root.firstChild(named: "extLst")
+        let old = existing?.children.first { $0.firstChild(named: "sectionLst") != nil }
+        let index = old.flatMap { item in existing?.children.firstIndex { $0 === item } } ?? 0
+        if let old { existing?.removeChild(old) }
+        if settled.sections.isEmpty {
+            if let existing, existing.children.isEmpty { root.removeChild(existing) }
+            return
         }
+        let sections = settled.sections.map { section in
+            let entries = section.slideIDs.compactMap { numbers[$0] }.map { "<p14:sldId id=\"\($0)\"/>" }.joined()
+            return "<p14:section name=\"\(XMLLite.escape(section.name))\" id=\"\(XMLLite.escape(section.id))\">"
+                + "<p14:sldIdLst>\(entries)</p14:sldIdLst></p14:section>"
+        }.joined()
+        let xml = "<p:ext uri=\"\(Self.sectionsExtension)\"><p14:sectionLst>\(sections)</p14:sectionLst></p:ext>"
+        guard let item = XMLLite.fragment(xml, namespaces: ["p": OOXML.presentationML, "p14": Self.sectionsNamespace])
+        else { return }
+        let extensions = existing ?? {
+            let created = XMLLite.fragment("<p:extLst/>", namespaces: ["p": OOXML.presentationML])
+            // The extensions come last.
+            if let created { root.insertChild(created, at: root.children.count) }
+            return created
+        }()
+        extensions?.insertChild(item, at: index)
     }
 }
 

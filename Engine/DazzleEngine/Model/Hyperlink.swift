@@ -13,6 +13,9 @@ public enum Hyperlink: Equatable, Hashable, Sendable {
     case firstSlide
     case lastSlide
     case endShow
+    /// A slide, section or summary zoom: into its slides and, as it says,
+    /// back. Kept in the file as it was.
+    case zoom(SlideZoom)
     /// A custom show, played from its first slide. With `returns`, the
     /// slideshow comes back to the slide the link is on once it ends.
     case customShow(CustomShow.ID, returns: Bool)
@@ -82,7 +85,7 @@ public enum Hyperlink: Equatable, Hashable, Sendable {
         case .endShow: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)endshow\"\(tip)/>"
         case .customShow(let id, let returns):
             return "<a:hlinkClick r:id=\"\" action=\"\(Self.customShowAction)id=\(id)\(returns ? "&amp;return=true" : "")\"\(tip)/>"
-        case .slidePart, .other: return nil
+        case .slidePart, .zoom, .other: return nil
         }
     }
 }

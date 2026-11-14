@@ -1,27 +1,36 @@
 // The slides down the side of the window: a thumbnail of each, drawn when it
 // scrolls into view and again only when its slide changes. Slides are picked,
 // several at once with Shift or ⌘, dragged into another order, and changed
-// from their context menu.
+// from their context menu. Slides in sections are grouped under each
+// section's name, which folds them away and is dragged to move the section.
 
 import { SlideDrawer } from "./slide.js";
 import { attachContextMenu } from "../design/menus.js";
 
 const isApple = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+const triangle = '<svg class="ds-icon navigator__triangle" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
+const slidesType = "application/x-dazzle-slides";
+const sectionType = "application/x-dazzle-section";
 
 export class SlideNavigator extends EventTarget {
   /**
    * @param {HTMLElement} element
    * @param {import("./engine-client.js").EngineClient} engine
    * @param {import("./slide.js").MediaStore} media
-   * @param {{ t: (key: string, ...values: any[]) => string, menu: (ids: string[]) => object[] }} options
+   * @param {{ t: (key: string, ...values: any[]) => string, menu: (ids: string[]) => object[], sectionMenu: (id: string) => object[] }} options
    */
-  constructor(element, engine, media, { t, menu }) {
+  constructor(element, engine, media, { t, menu, sectionMenu }) {
     super();
     this.element = element;
     this.engine = engine;
     this.drawer = new SlideDrawer(media);
     this.t = t;
     this.menuFor = menu;
+    this.sectionMenuFor = sectionMenu;
+    /** Section headers, by section id. */
+    this.headers = new Map();
+    /** Sections whose slides are folded away. */
+    this.collapsed = new Set();
     this.selected = new Set();
     this.anchor = null;
     /** Thumbnails drawn, by slide id: { rev, element }. */
@@ -39,6 +48,8 @@ export class SlideNavigator extends EventTarget {
     new ResizeObserver(() => this.sizeThumbnails()).observe(this.element);
     this.bindKeyboard();
     attachContextMenu(this.element, (event) => {
+      const header = event.target.closest?.(".navigator__section");
+      if (header) return this.sectionMenuFor(header.dataset.section);
       const row = event.target.closest?.(".navigator__slide");
       if (row && !this.selected.has(row.dataset.id)) this.pick(row.dataset.id);
       return this.menuFor([...this.selected]);
@@ -49,12 +60,33 @@ export class SlideNavigator extends EventTarget {
     return this.engine.state?.slides ?? [];
   }
 
+  get sections() {
+    return this.engine.state?.sections ?? [];
+  }
+
   /** Brings the list in step with the engine's slides, drawing again only what changed. */
   update() {
     const slides = this.slides;
     const current = this.engine.state?.sel?.slide;
-    const rows = new Map([...this.list.children].map((row) => [row.dataset.id, row]));
+    const rows = new Map([...this.list.querySelectorAll(".navigator__slide")].map((row) => [row.dataset.id, row]));
     const ids = new Set(slides.map((slide) => slide.id));
+    const sections = this.sections;
+    const sectionIDs = new Set(sections.map((section) => section.id));
+    for (const [id, header] of this.headers) {
+      if (!sectionIDs.has(id)) {
+        header.remove();
+        this.headers.delete(id);
+        this.collapsed.delete(id);
+      }
+    }
+    // A slide picked from elsewhere shows, even in a folded section.
+    if (current && current !== this.lastCurrent) {
+      const owner = sections.find((section) => section.slides.includes(current));
+      if (owner) this.collapsed.delete(owner.id);
+    }
+    this.lastCurrent = current;
+    const sectionOf = new Map();
+    for (const section of sections) for (const id of section.slides) sectionOf.set(id, section);
     for (const [id, row] of rows) {
       if (!ids.has(id)) {
         this.visible.unobserve(row);
@@ -64,12 +96,25 @@ export class SlideNavigator extends EventTarget {
       }
     }
     let previous = null;
+    const place = (element) => {
+      const expected = previous ? previous.nextSibling : this.list.firstChild;
+      if (element !== expected) this.list.insertBefore(element, expected);
+      previous = element;
+    };
+    let section = null;
     slides.forEach((slide, index) => {
+      const owner = sectionOf.get(slide.id);
+      // Headers of the sections up to this slide's, empty ones included.
+      while (owner && owner !== section) {
+        const next = sections[section ? sections.indexOf(section) + 1 : 0];
+        if (!next) break;
+        section = next;
+        place(this.header(section));
+      }
       let row = rows.get(slide.id);
       if (!row) row = this.makeRow(slide.id);
-      const expected = previous ? previous.nextSibling : this.list.firstChild;
-      if (row !== expected) this.list.insertBefore(row, expected);
-      previous = row;
+      place(row);
+      row.hidden = Boolean(owner && this.collapsed.has(owner.id));
       // In master view a master has no number, and its layouts count from it; each goes by its name.
       if (slide.role) {
         const master = slides.slice(0, index + 1).map((entry) => entry.role).lastIndexOf("master");
@@ -87,18 +132,78 @@ export class SlideNavigator extends EventTarget {
       const drawn = this.drawn.get(slide.id);
       if (drawn && drawn.rev !== slide.rev) this.drawThumbnail(row, { force: true });
     });
+    for (const rest of sections.slice(section ? sections.indexOf(section) + 1 : 0)) place(this.header(rest));
     if (current && !this.selected.has(current)) {
       this.selected = new Set([current]);
       this.anchor = current;
     }
     if (!this.selected.size && current) this.selected.add(current);
-    for (const row of this.list.children) {
+    for (const row of this.list.querySelectorAll(".navigator__slide")) {
       const isSelected = this.selected.has(row.dataset.id);
       row.classList.toggle("is-selected", isSelected);
       row.classList.toggle("is-current", row.dataset.id === current);
       row.setAttribute("aria-selected", String(isSelected));
     }
     this.sizeThumbnails();
+  }
+
+  /** The header of a section, made the first time, brought up to date. */
+  header(section) {
+    let header = this.headers.get(section.id);
+    if (!header) {
+      header = document.createElement("li");
+      header.className = "navigator__section";
+      header.dataset.section = section.id;
+      header.setAttribute("role", "presentation");
+      header.draggable = true;
+      header.innerHTML = `<button class="navigator__disclosure" type="button">${triangle}<span class="navigator__section-name"></span></button><span class="ds-source-list__count"></span>`;
+      const id = section.id;
+      header.querySelector("button").addEventListener("click", () => {
+        if (this.collapsed.has(id)) this.collapsed.delete(id);
+        else this.collapsed.add(id);
+        this.update();
+      });
+      header.addEventListener("dblclick", () => this.dispatchEvent(new CustomEvent("renameSection", { detail: id })));
+      header.addEventListener("dragstart", (event) => {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData(sectionType, id);
+        this.draggingSection = id;
+      });
+      header.addEventListener("dragend", () => {
+        this.draggingSection = null;
+        this.clearDropMarker();
+      });
+      header.addEventListener("dragover", (event) => {
+        if (!this.dragging && !this.draggingSection) return;
+        event.preventDefault();
+        this.clearDropMarker();
+        // A section goes before this one; slides go into it.
+        header.classList.add(this.draggingSection ? "is-drop-before" : "is-drop-target");
+      });
+      header.addEventListener("drop", (event) => {
+        event.preventDefault();
+        this.clearDropMarker();
+        if (this.draggingSection) {
+          const order = this.sections.map((other) => other.id);
+          const from = order.indexOf(this.draggingSection);
+          let to = order.indexOf(id);
+          if (from < 0 || to < 0 || from === to) return;
+          if (to > from) to -= 1;
+          this.dispatchEvent(new CustomEvent("moveSection", { detail: { id: this.draggingSection, to } }));
+        } else if (this.dragging) {
+          const ordered = this.slides.map((slide) => slide.id).filter((other) => this.dragging.includes(other));
+          this.dispatchEvent(new CustomEvent("moveToSection", { detail: { ids: ordered, section: id } }));
+        }
+      });
+      this.headers.set(section.id, header);
+    }
+    const name = section.name || this.t("Section.Untitled");
+    const open = !this.collapsed.has(section.id);
+    header.querySelector(".navigator__section-name").textContent = name;
+    header.querySelector(".ds-source-list__count").textContent = String(section.slides.length);
+    header.querySelector("button").setAttribute("aria-expanded", String(open));
+    header.classList.toggle("is-collapsed", !open);
+    return header;
   }
 
   makeRow(id) {
@@ -113,7 +218,7 @@ export class SlideNavigator extends EventTarget {
     row.addEventListener("dragstart", (event) => {
       if (!this.selected.has(id)) this.pick(id);
       event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("application/x-dazzle-slides", JSON.stringify([...this.selected]));
+      event.dataTransfer.setData(slidesType, JSON.stringify([...this.selected]));
       this.dragging = [...this.selected];
     });
     row.addEventListener("dragend", () => {
@@ -148,8 +253,8 @@ export class SlideNavigator extends EventTarget {
   }
 
   clearDropMarker() {
-    for (const row of this.list.querySelectorAll(".is-drop-before, .is-drop-after")) {
-      row.classList.remove("is-drop-before", "is-drop-after");
+    for (const row of this.list.querySelectorAll(".is-drop-before, .is-drop-after, .is-drop-target")) {
+      row.classList.remove("is-drop-before", "is-drop-after", "is-drop-target");
     }
   }
 
@@ -228,6 +333,7 @@ export class SlideNavigator extends EventTarget {
     this.element.addEventListener("keydown", (event) => {
       const ids = this.slides.map((slide) => slide.id);
       const current = ids.indexOf(this.engine.state?.sel?.slide);
+      if (event.target.closest?.(".navigator__section")) return;
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         const next = Math.min(Math.max(current + (event.key === "ArrowDown" ? 1 : -1), 0), ids.length - 1);
@@ -254,6 +360,8 @@ export class SlideNavigator extends EventTarget {
   clear() {
     for (const row of this.list.children) this.visible.unobserve(row);
     this.list.replaceChildren();
+    this.headers.clear();
+    this.collapsed.clear();
     this.drawn.clear();
     this.selected.clear();
   }

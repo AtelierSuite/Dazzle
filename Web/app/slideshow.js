@@ -126,6 +126,8 @@ export class Slideshow extends EventTarget {
     this.startingOrder = [...this.order];
     this.active = true;
     this.blanked = false;
+    /** Zooms followed that come back to their slide, the latest last. */
+    this.zoomReturns = [];
     this.startedAt = Date.now();
     this.timelines = new Map();
 
@@ -236,6 +238,7 @@ export class Slideshow extends EventTarget {
     this.restartTimer = setTimeout(async () => {
       if (!this.active) return;
       this.returnPoints = [];
+      this.zoomReturns = [];
       this.order = [...this.startingOrder];
       this.setBlank(false, { quiet: true });
       const moving = this.position !== 0;
@@ -265,6 +268,26 @@ export class Slideshow extends EventTarget {
       this.animate();
       this.updatePresenter();
       return;
+    }
+    const back = this.zoomReturns.at(-1);
+    if (back && this.slideID === back.last) {
+      // The zoom's slides are done: back out to the slide it is on.
+      this.zoomReturns.pop();
+      let index = this.order.indexOf(back.parent);
+      if (index < 0) {
+        this.order.splice(this.position + 1, 0, back.parent);
+        index = this.position + 1;
+      }
+      this.position = index;
+      // Hidden slides put into the show for the zoom are taken out again.
+      for (const id of back.added) {
+        const at = this.order.indexOf(id);
+        if (id === back.parent || at < 0) continue;
+        this.order.splice(at, 1);
+        if (at < this.position) this.position -= 1;
+      }
+      const zoom = back.dur == null ? null : { frame: back.frame, dur: back.dur, returning: true };
+      return this.showSlide({ fullyBuilt: true, transition: true, zoom });
     }
     let fullyBuilt = false;
     if (this.position < this.order.length - 1) {
@@ -321,6 +344,39 @@ export class Slideshow extends EventTarget {
     await this.go(index);
   }
 
+  /**
+   * Flies into a zoom's slide or section, showing slides that are hidden as
+   * a link to them does, and remembers to come back if the zoom says to.
+   */
+  async followZoom(zoom, frame = null) {
+    const state = this.engine.state;
+    let targets = zoom.slide ? [zoom.slide] : [];
+    if (zoom.section) {
+      const all = state.sections?.find((section) => section.id === zoom.section)?.slides ?? [];
+      const visible = all.filter((id) => !state.slides.find((slide) => slide.id === id)?.hidden);
+      targets = visible.length ? visible : all;
+    }
+    if (!targets.length) return;
+    let insertion = this.position + 1;
+    const added = [];
+    for (const id of targets) {
+      const existing = this.order.indexOf(id);
+      if (existing >= 0) {
+        insertion = existing + 1;
+      } else {
+        this.order.splice(insertion, 0, id);
+        added.push(id);
+        insertion += 1;
+      }
+    }
+    const size = this.engine.info?.size ?? { w: 960, h: 540 };
+    const place = frame ?? [size.w / 4, size.h / 4, size.w / 2, size.h / 2];
+    if (zoom.returns) this.zoomReturns.push({ parent: this.slideID, last: targets.at(-1), frame: place, dur: zoom.dur, added });
+    this.position = this.order.indexOf(targets[0]);
+    this.setBlank(false, { quiet: true });
+    await this.showSlide({ fullyBuilt: false, transition: true, zoom: zoom.dur == null ? null : { frame: place, dur: zoom.dur } });
+  }
+
   /** Plays a custom show from its start, coming back afterwards when `returns`. */
   async playCustomShow(id, returns) {
     const order = await this.engine.call("slideshowOrder", { customShow: id });
@@ -344,7 +400,7 @@ export class Slideshow extends EventTarget {
    * Draws the slide now showing, its first animations beginning once its
    * transition, if it plays one, has brought it on.
    */
-  async showSlide({ fullyBuilt, transition: withTransition = false }) {
+  async showSlide({ fullyBuilt, transition: withTransition = false, zoom = null }) {
     const id = this.slideID;
     const timeline = await this.timeline(id);
     // Without animations, every slide shows as it ends up.
@@ -354,8 +410,8 @@ export class Slideshow extends EventTarget {
     this.stopMedia();
     const scene = await this.engine.call("scene", { slide: id });
     if (id !== this.slideID) return;
-    const transition = withTransition && this.scene && timeline.transition > 0
-      ? await this.engine.call("transition", { slide: id, reduceMotion: prefersReducedMotion(), seed: this.position })
+    const transition = withTransition && this.scene && (zoom || timeline.transition > 0)
+      ? await this.engine.call("transition", { slide: id, reduceMotion: prefersReducedMotion(), seed: this.position, zoom })
       : null;
     if (id !== this.slideID) return;
     this.scene = scene;
@@ -552,6 +608,8 @@ export class Slideshow extends EventTarget {
     this.noteActivity();
     if (link.url) {
       window.open(link.url, "_blank", "noopener");
+    } else if (link.zoom) {
+      this.followZoom(link.zoom, link.frame);
     } else if (link.slide) {
       this.goToSlide(link.slide);
     } else if (link.customShow != null) {

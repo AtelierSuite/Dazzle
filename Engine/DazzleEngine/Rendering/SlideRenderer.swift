@@ -29,6 +29,9 @@ public struct SlideRenderer {
         /// How far through their animations the slide's shapes are, in a
         /// slideshow. Without one, every shape is drawn as it sits.
         public var animation: AnimationFrame?
+        /// Zooms show the slide they lead to as it is now. Off inside such a
+        /// picture, so a zoom to its own slide does not go on forever.
+        public var drawsZoomPreviews = true
         /// Leave out videos and sounds set to be hidden while not playing, as
         /// a slideshow does; its player shows them while they play.
         public var hidesStoppedMedia = false
@@ -115,6 +118,14 @@ public struct SlideRenderer {
                 areas += renderer.linkAreas(text, shape: shape, sources: sources, in: textFrame)
             }
             if let link = shape.link { areas.append((shape.frame.points, link, shape.linkTooltip)) }
+            // Each picture of a summary zoom leads to its own section.
+            if case .group(let group) = shape.kind {
+                for member in group.children.reversed() where !member.isHidden {
+                    if case .zoom? = member.link, let link = member.link {
+                        areas.insert((Self.placed(member, from: group.childFrame, into: shape.frame).frame.points, link, member.linkTooltip), at: 0)
+                    }
+                }
+            }
         }
         return areas
     }
@@ -1006,7 +1017,17 @@ public struct SlideRenderer {
         context.setAlpha(picture.effects.opacity)
         context.addPath(outlinePath)
         context.clip()
-        drawImage(image, in: imageRect, context: context)
+        if case .zoom(let zoom)? = shape.link, zoom.showsPreview, options.drawsZoomPreviews,
+           let target = zoom.previewSlide(in: presentation) {
+            // A zoom shows the slide it leads to as it is now, in place of the picture saved with it.
+            var preview = SlideRenderer(presentation: presentation, slide: target)
+            preview.options.drawsZoomPreviews = false
+            preview.options.drawsBackground = zoom.showsBackground
+            context.translateBy(x: frame.minX, y: frame.minY)
+            preview.draw(in: context, size: frame.size)
+        } else {
+            drawImage(image, in: imageRect, context: context)
+        }
         context.restoreGState()
         if let look { drawBevel(look, on: outlinePath, context: context) }
         if let (line, placeholderColor) = style.line(for: shape, sources: []) {

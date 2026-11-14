@@ -14,6 +14,9 @@ struct WebRenderer {
     struct Options {
         /// Prompts in empty placeholders and badges on media, as the editor shows them.
         var editing = false
+        /// Zooms show the slide they lead to as it is now. Off inside such a
+        /// picture, so a zoom to its own slide does not go on forever.
+        var drawsZoomPreviews = true
     }
 
     let presentation: Presentation
@@ -86,7 +89,11 @@ struct WebRenderer {
             ]
         }
         if let effects = effects(shape.effects, size: frame.size, style: style) { node["effects"] = effects }
-        if let link = shape.link, let json = Self.link(link, tooltip: shape.linkTooltip) { node["link"] = json }
+        if let link = shape.link, var json = Self.link(link, tooltip: shape.linkTooltip) {
+            // A zoom flies out of where it sits, and back into it.
+            if case .zoom = link { json["frame"] = [n(frame.minX), n(frame.minY), n(frame.width), n(frame.height)] }
+            node["link"] = json
+        }
 
         switch shape.kind {
         case .group(let group):
@@ -103,6 +110,17 @@ struct WebRenderer {
         case .picture(let picture):
             node["kind"] = "picture"
             picturePart(picture, shape: shape, frame: frame, style: style, into: &node)
+            if case .zoom(let zoom)? = shape.link, zoom.showsPreview, options.drawsZoomPreviews,
+               let target = zoom.previewSlide(in: presentation) {
+                var preview = WebRenderer(presentation: presentation, slide: target)
+                preview.options.drawsZoomPreviews = false
+                var scene = preview.scene()
+                if !zoom.showsBackground {
+                    scene["bg"] = NSNull()
+                    scene["art"] = [[String: Any]]()
+                }
+                node["zoomScene"] = scene
+            }
         case .table(let table):
             node["kind"] = "table"
             node["table"] = self.table(table, shape: shape, frame: frame, style: style)
@@ -874,10 +892,26 @@ struct WebRenderer {
         case .lastSlide: json = ["action": "last"]
         case .endShow: json = ["action": "end"]
         case .customShow(let id, let returns): json = ["customShow": id, "return": returns]
+        case .zoom(let zoom):
+            guard let zoomJSON = zoomLink(zoom) else { return nil }
+            json = zoomJSON
         case .slidePart, .other: return nil
         }
         if let tooltip = tooltip?.nilIfEmpty { json["tooltip"] = tooltip }
         return json
+    }
+
+    /// Where a zoom leads, for the slideshow page to follow: the slide or
+    /// section, whether it comes back, and how long it flies.
+    private static func zoomLink(_ zoom: SlideZoom) -> [String: Any]? {
+        var json: [String: Any] = ["returns": zoom.returnsToParent]
+        switch zoom.target {
+        case .slide(let id): json["slide"] = id.uuidString
+        case .section(let id): json["section"] = id
+        case .slideNumber: return nil
+        }
+        if let duration = zoom.transitionDuration { json["dur"] = duration }
+        return ["zoom": json]
     }
 
     // MARK: - Numbers

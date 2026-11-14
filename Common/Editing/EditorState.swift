@@ -258,6 +258,7 @@ final class EditorState {
         let index = min(selectedIndex(in: presentation) + 1, presentation.slides.count)
         presentation.slides.insert(slide, at: index)
         presentation.isStructureModified = true
+        presentation.settleSections()
         selectSlide(slide.id)
     }
 
@@ -283,6 +284,7 @@ final class EditorState {
         let copy = Self.duplicate(of: presentation.slides[index])
         presentation.slides.insert(copy, at: index + 1)
         presentation.isStructureModified = true
+        presentation.settleSections()
         selectSlide(copy.id)
     }
 
@@ -296,6 +298,7 @@ final class EditorState {
         }
         presentation.slides.remove(at: index)
         presentation.refreshTemplates()
+        presentation.settleSections()
         if selectedSlideID == id {
             selectSlide(presentation.slides[min(index, presentation.slides.count - 1)].id)
         }
@@ -309,6 +312,47 @@ final class EditorState {
         let slide = presentation.slides.remove(at: index)
         presentation.slides.insert(slide, at: target)
         presentation.isStructureModified = true
+        // It joins the section of the slide it took the place of.
+        let neighbour = target > index ? target - 1 : target + 1
+        if presentation.slides.indices.contains(neighbour) {
+            presentation.placeSlide(id, inSectionOf: presentation.slides[neighbour].id)
+        }
+        presentation.settleSections()
+    }
+
+    // MARK: - Sections
+
+    /// Starts a section at the selected slide.
+    @discardableResult
+    func addSection(in presentation: inout Presentation) -> SlideSection.ID? {
+        guard !presentation.isInMasterView, let slide = selectedSlide(in: presentation) else { return nil }
+        return presentation.addSection(at: slide.id)
+    }
+
+    func renameSection(_ id: SlideSection.ID, to name: String, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        presentation.renameSection(id, to: trimmed.isEmpty ? SlideSection.untitledName : trimmed)
+    }
+
+    func removeSection(_ id: SlideSection.ID, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        presentation.removeSection(id)
+    }
+
+    func removeAllSections(in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        presentation.removeAllSections()
+    }
+
+    func moveSection(_ id: SlideSection.ID, to destination: Int, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        presentation.moveSection(id, to: destination)
+    }
+
+    func moveSlides(_ ids: [Slide.ID], toSection sectionID: SlideSection.ID, in presentation: inout Presentation) {
+        guard !presentation.isInMasterView else { return }
+        presentation.moveSlides(ids, toSection: sectionID)
     }
 
     func toggleHidden(_ id: Slide.ID, in presentation: inout Presentation) {

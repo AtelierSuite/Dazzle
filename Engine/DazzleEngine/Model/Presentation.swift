@@ -26,6 +26,11 @@ public struct Presentation: Equatable, Sendable {
     /// Whether slides were added, removed or reordered, which means the
     /// slide list itself has to be written again.
     public var isStructureModified = false
+    /// The named runs the slides are organised into; empty for none.
+    public var sections: [SlideSection] = []
+    /// Whether the sections were edited, which means they have to be
+    /// written again.
+    public var areSectionsModified = false
     /// Everyone who has commented, in each of PowerPoint's two formats.
     public var commentAuthors: [CommentAuthor] = []
     public var modernCommentAuthors: [ModernCommentAuthor] = []
