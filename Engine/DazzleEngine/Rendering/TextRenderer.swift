@@ -11,6 +11,8 @@ import Foundation
 public struct TextRenderer {
     public let style: SlideStyleContext
     public let slideNumber: Int
+    /// The picture at a package path, for picture bullets.
+    public let picture: (String) -> CGImage?
 
     /// The kinds of vertical text, by their name in the file, all laid out
     /// across the shape and turned a quarter.
@@ -288,6 +290,9 @@ public struct TextRenderer {
             context.restoreGState()
         }
         for (line, origin, column) in placed {
+            inColumn(column) { drawHighlights(in: line, origin: origin, context: context) }
+        }
+        for (line, origin, column) in placed {
             inColumn(column) { drawShadows(of: line, at: origin, space: space, context: context) }
         }
         for (line, origin, column) in placed {
@@ -295,6 +300,7 @@ public struct TextRenderer {
                 context.textPosition = origin
                 CTLineDraw(line, context)
                 drawStackedLetters(in: line, at: origin, context: context)
+                drawPictureBullets(in: line, at: origin, context: context)
                 drawStrikethroughs(in: line, origin: origin, context: context)
             }
         }
@@ -317,6 +323,21 @@ public struct TextRenderer {
                 let reversed = -baseline + ascent - descent
                 return (line, CGPoint(x: origin.x, y: column.origin.y + column.height - reversed), column)
             }
+        }
+    }
+
+    /// Highlighted runs' colour, behind their letters, as tall as the line's letters reach.
+    private func drawHighlights(in line: CTLine, origin: CGPoint, context: CGContext) {
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let value = attributes[Self.highlightKey.rawValue], CFGetTypeID(value as CFTypeRef) == CGColor.typeID else { continue }
+            let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
+            let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), nil, nil, nil)
+            context.setFillColor(value as! CGColor) // swiftlint:disable:this force_cast
+            context.fill(CGRect(x: origin.x + start, y: origin.y - descent, width: width, height: ascent + descent))
         }
     }
 
@@ -378,6 +399,13 @@ public struct TextRenderer {
                 context.saveGState()
                 context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
                 context.scaleBy(x: 1, y: -1)
+                drawHighlights(in: entry.line, origin: .zero, context: context)
+                context.restoreGState()
+            }
+            for entry in paragraph {
+                context.saveGState()
+                context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
+                context.scaleBy(x: 1, y: -1)
                 context.textMatrix = .identity
                 drawShadows(of: entry.line, at: .zero, space: space, context: context)
                 context.restoreGState()
@@ -392,6 +420,7 @@ public struct TextRenderer {
                 context.textPosition = .zero
                 CTLineDraw(entry.line, context)
                 drawStackedLetters(in: entry.line, at: .zero, context: context)
+                drawPictureBullets(in: entry.line, at: .zero, context: context)
                 drawStrikethroughs(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
             }
@@ -524,12 +553,12 @@ public struct TextRenderer {
         }
     }
 
-    /// Where each linked run of `body` lies, in slide points, and where it
-    /// goes. Text running vertically has none.
-    public func linkAreas(_ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect) -> [(CGRect, Hyperlink)] {
+    /// Where each linked run of `body` lies, in slide points, where it
+    /// goes, and its ScreenTip. Text running vertically has none.
+    public func linkAreas(_ body: TextBody, shape: SlideShape, sources: [SlideShape], in rect: CGRect) -> [(CGRect, Hyperlink, String?)] {
         guard let layout = layout(body, shape: shape, sources: sources, in: rect, colorOverride: nil, hidesText: false),
               layout.turn == nil else { return [] }
-        var areas: [(CGRect, Hyperlink)] = []
+        var areas: [(CGRect, Hyperlink, String?)] = []
         for (line, origin, column) in lines(of: layout) {
             for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
                 let attributes = CTRunGetAttributes(run) as NSDictionary
@@ -541,7 +570,7 @@ public struct TextRenderer {
                 areas.append((CGRect(
                     x: column.origin.x + origin.x + start, y: column.origin.y + column.height - origin.y - ascent,
                     width: width, height: ascent + descent
-                ), box.link))
+                ), box.link, box.tooltip))
             }
         }
         return areas
@@ -673,11 +702,16 @@ public struct TextRenderer {
     private static let strokeWidthKey = NSAttributedString.Key(kCTStrokeWidthAttributeName as String)
     private static let strokeColorKey = NSAttributedString.Key(kCTStrokeColorAttributeName as String)
     private static let shadowKey = NSAttributedString.Key("DazzleShadow")
+    private static let highlightKey = NSAttributedString.Key("DazzleHighlight")
 
     /// A link riding on the text it belongs to.
     private final class LinkBox: NSObject {
         let link: Hyperlink
-        init(_ link: Hyperlink) { self.link = link }
+        let tooltip: String?
+        init(_ link: Hyperlink, tooltip: String?) {
+            self.link = link
+            self.tooltip = tooltip
+        }
     }
 
     /// A shadow riding on the text that casts it, its colour worked out.
@@ -713,10 +747,14 @@ public struct TextRenderer {
             // Numbering continues through a level until something interrupts it.
             for deeper in counters.keys where deeper > level { counters[deeper] = nil }
             var bulletText: String?
+            var bulletPicture: CGImage?
             if !paragraph.plainText.isEmpty {
                 switch properties.bullet {
                 case .character(let character):
                     bulletText = character
+                case .picture(let path):
+                    bulletPicture = picture(path)
+                    counters[level] = nil
                 case .autoNumber(let scheme, let startAt):
                     let number = (counters[level] ?? (startAt - 1)) + 1
                     counters[level] = number
@@ -738,6 +776,12 @@ public struct TextRenderer {
                     attributes: attributes(for: bulletRun, scale: bulletScale, colorOverride: colorOverride)
                 ))
             }
+            if let bulletPicture {
+                result.append(pictureBullet(
+                    bulletPicture, run: firstRun, scale: scale * (properties.bulletSize ?? 1),
+                    opacity: colorOverride?.alpha == 0 ? 0 : paragraphOpacity[index] ?? 1
+                ))
+            }
 
             for run in paragraph.runs {
                 var runProperties = run.properties.merged(over: properties.defaultRun)
@@ -757,7 +801,7 @@ public struct TextRenderer {
                 if runProperties.capitalization == "all" { text = text.uppercased() }
                 text = Self.symbolsMapped(text)
                 var runAttributes = attributes(for: runProperties, scale: scale, colorOverride: textColor)
-                if let link = run.properties.link { runAttributes[Self.linkKey] = LinkBox(link) }
+                if let link = run.properties.link { runAttributes[Self.linkKey] = LinkBox(link, tooltip: run.properties.linkTooltip) }
                 result.append(string(text, run: runProperties, attributes: runAttributes))
             }
 
@@ -784,7 +828,7 @@ public struct TextRenderer {
             }
             // A paragraph not yet built in keeps its place, bullet and all, unseen.
             if let opacity = paragraphOpacity[index], opacity < 1, range.length > 0 {
-                for key in [Self.colorKey, Self.strokeColorKey] {
+                for key in [Self.colorKey, Self.strokeColorKey, Self.highlightKey] {
                     result.enumerateAttribute(key, in: range) { value, subrange, _ in
                         guard let value, CFGetTypeID(value as CFTypeRef) == CGColor.typeID else { return }
                         let color = value as! CGColor // swiftlint:disable:this force_cast
@@ -796,7 +840,7 @@ public struct TextRenderer {
                 result.addAttribute(Self.paragraphIndexKey, value: index, range: range)
                 result.addAttribute(
                     Self.paragraphKey,
-                    value: paragraphStyle(properties, fontSize: baseSize, hasBullet: bulletText != nil, spacingReduction: spacingReduction),
+                    value: paragraphStyle(properties, fontSize: baseSize, hasBullet: bulletText != nil || bulletPicture != nil, spacingReduction: spacingReduction),
                     range: range
                 )
             }
@@ -854,9 +898,12 @@ public struct TextRenderer {
             attributes[Self.strokeWidthKey] = NSNumber(value: -EMU.points(width) / Double(size) * 100)
             attributes[Self.strokeColorKey] = (colorOverride ?? style.color(outlineColor)).cgColor
         }
-        // Prompts and text laid out unseen cast no shadow.
+        // Prompts and text laid out unseen cast no shadow, and show no highlight.
         if case .shadow(let shadow) = run.shadow, colorOverride == nil {
             attributes[Self.shadowKey] = ShadowBox(shadow, color: style.color(shadow.color).cgColor)
+        }
+        if let highlight = run.highlight?.color, colorOverride == nil {
+            attributes[Self.highlightKey] = style.color(highlight).cgColor
         }
         return attributes
     }
@@ -1087,15 +1134,87 @@ public struct TextRenderer {
 
     // MARK: - Bullets
 
+    private static let pictureBulletKey = NSAttributedString.Key("DazzlePictureBullet")
+
+    /// A picture bullet: the picture, how big it is drawn, and how far its
+    /// bottom sits above the baseline.
+    private final class PictureBullet: NSObject {
+        let image: CGImage
+        let size: CGSize
+        let rise: CGFloat
+        let opacity: CGFloat
+        init(image: CGImage, size: CGSize, rise: CGFloat, opacity: CGFloat) {
+            self.image = image
+            self.size = size
+            self.rise = rise
+            self.opacity = opacity
+        }
+    }
+
+    /// A picture bullet and the tab after it: an object replacement character
+    /// keeping the picture's room, as tall as the text and centred on its
+    /// capitals, the picture's own shape kept.
+    private func pictureBullet(_ image: CGImage, run: RunProperties, scale: Double, opacity: Double) -> NSAttributedString {
+        let textAttributes = attributes(for: run, scale: scale, colorOverride: nil)
+        let font = textAttributes[Self.fontKey].map { $0 as! CTFont } // swiftlint:disable:this force_cast
+        let height = max(CGFloat(run.size ?? 1_800) / 100 * scale, 1)
+        let aspect = image.height > 0 ? CGFloat(image.width) / CGFloat(image.height) : 1
+        let middle = font.map { CTFontGetCapHeight($0) / 2 } ?? height * 0.35
+        let bullet = PictureBullet(
+            image: image, size: CGSize(width: height * aspect, height: height), rise: middle - height / 2,
+            opacity: CGFloat(opacity)
+        )
+        var callbacks = CTRunDelegateCallbacks(
+            version: kCTRunDelegateVersion1,
+            dealloc: { Unmanaged<PictureBullet>.fromOpaque($0).release() },
+            getAscent: { let bullet = Unmanaged<PictureBullet>.fromOpaque($0).takeUnretainedValue(); return max(bullet.rise + bullet.size.height, 0) },
+            getDescent: { max(-Unmanaged<PictureBullet>.fromOpaque($0).takeUnretainedValue().rise, 0) },
+            getWidth: { Unmanaged<PictureBullet>.fromOpaque($0).takeUnretainedValue().size.width }
+        )
+        var pictureAttributes = textAttributes
+        pictureAttributes[Self.pictureBulletKey] = bullet
+        pictureAttributes[NSAttributedString.Key(kCTRunDelegateAttributeName as String)] =
+            CTRunDelegateCreate(&callbacks, Unmanaged.passRetained(bullet).toOpaque())
+        let result = NSMutableAttributedString(string: "\u{FFFC}", attributes: pictureAttributes)
+        result.append(NSAttributedString(string: "\t", attributes: textAttributes))
+        return result
+    }
+
+    /// Draws each picture bullet of `line`, whose origin is `origin`.
+    private func drawPictureBullets(in line: CTLine, at origin: CGPoint, context: CGContext) {
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let bullet = attributes[Self.pictureBulletKey.rawValue] as? PictureBullet, bullet.opacity > 0,
+                  CTRunGetGlyphCount(run) > 0 else { continue }
+            var position = CGPoint.zero
+            CTRunGetPositions(run, CFRange(location: 0, length: 1), &position)
+            context.saveGState()
+            context.setAlpha(bullet.opacity)
+            context.interpolationQuality = .high
+            context.draw(bullet.image, in: CGRect(
+                origin: CGPoint(x: origin.x + position.x, y: origin.y + position.y + bullet.rise), size: bullet.size
+            ))
+            context.restoreGState()
+        }
+    }
+
     public static func symbolsMapped(_ text: String) -> String { TextLabels.symbolsMapped(text) }
 
     public static func numberLabel(_ number: Int, scheme: String) -> String { TextLabels.numberLabel(number, scheme: scheme) }
 
     private static func displayable(_ bullet: String) -> String { TextLabels.displayable(bullet) }
 
-    public init(style: SlideStyleContext, slideNumber: Int) {
+    public init(style: SlideStyleContext, slideNumber: Int, picture: @escaping (String) -> CGImage? = { _ in nil }) {
         self.style = style
         self.slideNumber = slideNumber
+        self.picture = picture
+    }
+
+    /// A renderer that draws picture bullets from `presentation`'s package.
+    public init(style: SlideStyleContext, slideNumber: Int, presentation: Presentation) {
+        self.init(style: style, slideNumber: slideNumber) { path in
+            presentation.data(at: path).flatMap { ImageCache.shared.image(for: $0, path: path) }
+        }
     }
 }
 

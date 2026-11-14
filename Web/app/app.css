@@ -815,6 +815,13 @@ body {
   text-decoration: none;
 }
 
+/* A picture bullet, as tall as the text and centred on its capitals. */
+.text__bullet-picture {
+  height: 1em;
+  width: auto;
+  vertical-align: -0.15em;
+}
+
 .text--prompt {
   pointer-events: none;
 }
@@ -860,6 +867,17 @@ body {
   background: #000;
 }
 
+/* A video set to play full screen covers the whole show while it plays. */
+.slideshow__media--full {
+  z-index: 5;
+}
+
+/* Media hidden while not playing is left out of the show; its player covers it once it plays. */
+.slideshow [data-media-hide] > svg,
+.audience__stage [data-media-hide] > svg {
+  visibility: hidden;
+}
+
 /* MARK: - Crop and chart data sheets */
 
 .app__crop {
@@ -901,6 +919,60 @@ body {
 }
 
 .app__header-footer {
+  margin-top: var(--ds-spacing-04);
+}
+
+.app__custom-shows-sheet {
+  width: min(860px, calc(100vw - 2 * var(--ds-spacing-05)));
+}
+
+.app__custom-shows {
+  display: flex;
+  gap: var(--ds-spacing-05);
+  margin: var(--ds-spacing-04) 0;
+}
+
+.app__custom-shows-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-spacing-03);
+}
+
+.app__custom-shows-list .ds-source-list {
+  width: 200px;
+  height: 320px;
+  border: 1px solid var(--ds-border-subtle-01);
+}
+
+.app__custom-show {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-spacing-04);
+}
+
+.app__custom-show-columns {
+  display: flex;
+  gap: var(--ds-spacing-04);
+}
+
+.app__custom-show-table {
+  flex: 1;
+  min-width: 0;
+  height: 280px;
+  overflow: auto;
+  border: 1px solid var(--ds-border-subtle-01);
+}
+
+.app__custom-show-moves {
+  width: 1%;
+  padding-inline: var(--ds-spacing-02);
+  text-align: end;
+  white-space: nowrap;
+}
+
+.app__properties {
   margin-top: var(--ds-spacing-04);
 }
 
@@ -1013,6 +1085,14 @@ body {
   inset: 0;
   z-index: 100;
   background: #000;
+}
+
+/* A link's ScreenTip, under the pointer once it rests on the link (showLinkTips). */
+.slideshow__link-tip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  box-shadow: var(--ds-shadow-float);
 }
 
 .slideshow__stage {

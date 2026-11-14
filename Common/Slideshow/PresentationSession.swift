@@ -23,6 +23,9 @@ final class PresentationSession {
     private(set) var order: [Int] = []
     /// Where in `order` the slideshow is.
     private(set) var position = 0
+    /// Where to come back to as each custom show a link started ends, the
+    /// latest last.
+    private var returnPoints: [(order: [Int], position: Int)] = []
     private(set) var isPresenting = false
     private(set) var startedAt: Date?
     /// The audience sees black, while the presenter keeps their place.
@@ -38,6 +41,12 @@ final class PresentationSession {
     let media = MediaPlayback()
     /// Whether the show starts over after its last slide.
     private(set) var loops = false
+    /// How the presentation asks to be played.
+    private(set) var settings = SlideshowSettings()
+    /// The order the show started in, which a kiosk show goes back to when left alone.
+    private var startingOrder: [Int] = []
+    /// Starting a kiosk show over, once it has been left alone long enough.
+    @ObservationIgnored private var restartTask: Task<Void, Never>?
     /// How many of the current slide's animation steps have begun.
     private(set) var builds = 0
     /// When the latest of them began.
@@ -68,18 +77,23 @@ final class PresentationSession {
 
     // MARK: - Starting and stopping
 
-    func start(_ presentation: Presentation, title: String, fromSlide slideIndex: Int, owner: UUID) {
+    /// Starts the slideshow from a slide, or a custom show from its start.
+    func start(_ presentation: Presentation, title: String, fromSlide slideIndex: Int, customShow: CustomShow.ID? = nil, owner: UUID) {
         self.presentation = presentation
         self.title = title
-        order = presentation.visibleSlideIndices
+        order = presentation.slideshowOrder(customShow: customShow)
+        returnPoints = []
         // Starting on a hidden slide starts on the next one that shows.
-        position = order.firstIndex { $0 >= slideIndex } ?? 0
+        position = customShow != nil ? 0 : order.firstIndex { $0 >= slideIndex } ?? 0
         isBlanked = false
         startedAt = Date()
         ownerID = owner
-        loops = presentation.loopsSlideshow
+        settings = presentation.showSettings
+        loops = settings.playsInLoop
+        startingOrder = order
         isPresenting = true
         beginSlide()
+        noteActivity()
         publish()
     }
 
@@ -92,18 +106,32 @@ final class PresentationSession {
         ownerID = nil
         presentation = nil
         order = []
+        returnPoints = []
         position = 0
         builds = 0
         isAnimating = false
         animatingTask?.cancel()
+        restartTask?.cancel()
+        restartTask = nil
         finishTransition()
         publish()
     }
 
     // MARK: - Moving
 
-    /// Plays the slide's next animation step, or with none left, moves on.
+    /// A kiosk show moves on only by its timings and links, never by a tap or key.
+    var isKiosk: Bool { settings.isKiosk }
+
+    /// Plays the slide's next animation step, or with none left, moves on,
+    /// as a tap or key asks.
     func next() {
+        noteActivity()
+        guard !isKiosk else { return }
+        advance()
+    }
+
+    /// Plays the slide's next animation step, or with none left, moves on.
+    private func advance() {
         guard isPresenting else { return }
         if transition != nil {
             // A tap while the slide arrives finishes its arrival.
@@ -120,6 +148,9 @@ final class PresentationSession {
             playMedia(inStep: builds - 1)
         } else if position < order.count - 1 {
             move(to: position + 1)
+        } else if let back = returnPoints.popLast() {
+            // A custom show played from a link comes back to the link's slide, as it was left.
+            move(to: back.position, in: back.order, fullyBuilt: true)
         } else if loops {
             move(to: 0)
         } else {
@@ -131,7 +162,7 @@ final class PresentationSession {
 
     /// Whether a tap on the slide moves the show on: as the slide says, but
     /// always while animations wait for one.
-    var advancesOnTap: Bool { hasStepsLeft || (currentSlide?.advancesOnClick ?? true) }
+    var advancesOnTap: Bool { !isKiosk && (hasStepsLeft || (currentSlide?.advancesOnClick ?? true)) }
 
     /// Whether the current slide has animations still to play.
     var hasStepsLeft: Bool { builds < (currentSlide?.animationTimeline.steps.count ?? 0) }
@@ -144,7 +175,7 @@ final class PresentationSession {
         advanceFor = now
         advanceTask?.cancel()
         advanceTask = nil
-        guard isPresenting, !isBlanked, let seconds = currentSlide?.autoAdvanceAfter else { return }
+        guard isPresenting, !isBlanked, settings.followsTimings, let seconds = currentSlide?.autoAdvanceAfter else { return }
         let shown = (position, builds)
         let wait = max(seconds, 0.1) + max(animationTimeLeft, transitionTimeLeft)
         guard wait.isFinite else { return }
@@ -153,19 +184,27 @@ final class PresentationSession {
             guard !Task.isCancelled, let self, self.isPresenting, self.position == shown.0, self.builds == shown.1,
                   !self.isBlanked else { return }
             self.advanceFor = nil
-            self.next()
+            self.advance()
         }
     }
 
-    /// Takes back the last animation step, or with none played, goes back a slide.
+    /// Takes back the last animation step, or with none played, goes back a
+    /// slide, as a tap or key asks.
     func previous() {
+        noteActivity()
+        guard !isKiosk else { return }
+        stepBack()
+    }
+
+    /// Takes back the last animation step, or with none played, goes back a slide.
+    private func stepBack() {
         guard isPresenting else { return }
         // Going back is straight back, without a transition.
         if transition != nil {
             finishTransition()
             buildStartedAt = min(buildStartedAt, Date())
         }
-        if builds > (currentSlide?.animationTimeline.initiallyBegun ?? 0) {
+        if settings.showsAnimations, builds > (currentSlide?.animationTimeline.initiallyBegun ?? 0) {
             // Back to how the slide looked before the step, without playing it backwards.
             builds -= 1
             buildStartedAt = .distantPast
@@ -181,7 +220,14 @@ final class PresentationSession {
         publish()
     }
 
+    /// Goes to a slide of the show, as the presenter asks.
     func go(toPosition index: Int) {
+        noteActivity()
+        guard !isKiosk else { return }
+        jump(to: index)
+    }
+
+    private func jump(to index: Int) {
         guard isPresenting, order.indices.contains(index) else { return }
         isBlanked = false
         if index == position {
@@ -214,11 +260,13 @@ final class PresentationSession {
         }
     }
 
-    /// Moves on to another slide, playing its transition.
-    private func move(to index: Int) {
+    /// Moves on to another slide, playing its transition: one in the order
+    /// given, when the show changes to a custom show and back.
+    private func move(to index: Int, in newOrder: [Int]? = nil, fullyBuilt: Bool = false) {
         let outgoing = currentSlide
         let outgoingFrame = animationFrame(at: Date())
         finishTransition()
+        if let newOrder { order = newOrder }
         position = index
         if let outgoing, let incoming = currentSlide, let transition = incoming.transition?.played(
             reduceMotion: Self.prefersReducedMotion, seed: position
@@ -234,7 +282,7 @@ final class PresentationSession {
                 self.transition = nil
             }
         }
-        beginSlide()
+        beginSlide(fullyBuilt: fullyBuilt)
         if let presentation, let slide = currentSlide, var showing = transition {
             // The slide's first animations wait for it to arrive.
             showing.incomingFrame = slide.animations.isEmpty ? nil : slide.animationTimeline.frame(
@@ -287,7 +335,8 @@ final class PresentationSession {
     /// begin, the rest wait for taps.
     private func beginSlide(fullyBuilt: Bool = false) {
         let timeline = currentSlide?.animationTimeline
-        if fullyBuilt {
+        // Without animations, every slide shows as it ends up.
+        if fullyBuilt || !settings.showsAnimations {
             builds = timeline?.steps.count ?? 0
             buildStartedAt = .distantPast
         } else {
@@ -327,10 +376,15 @@ final class PresentationSession {
 
     // MARK: - Media
 
-    /// The video or sound at a point on the current slide, in slide points.
+    /// The video or sound at a point on the current slide, in slide points:
+    /// anywhere, for a video playing full screen. One hidden while not
+    /// playing cannot be found until it plays.
     func mediaShape(at point: CGPoint) -> SlideShape.ID? {
         guard let slide = currentSlide, !isBlanked else { return nil }
-        return MediaPlayback.media(on: slide).reversed().first { $0.shape.frame.points.contains(point) }?.shape.id
+        if let id = media.fullScreenVideo { return id }
+        return MediaPlayback.media(on: slide).reversed().first { shape, settings in
+            shape.frame.points.contains(point) && (!settings.hidesWhenNotPlaying || media.started.contains(shape.id))
+        }?.shape.id
     }
 
     // MARK: - Links
@@ -343,30 +397,63 @@ final class PresentationSession {
             .first { $0.0.insetBy(dx: -6, dy: -6).contains(point) }?.1
     }
 
+    /// Where pointing at a link on the current slide shows its ScreenTip,
+    /// in slide points, topmost first.
+    func linkTooltips() -> [(CGRect, String)] {
+        guard let presentation, let slide = currentSlide, !isBlanked else { return [] }
+        return SlideRenderer(presentation: presentation, slide: slide).linkTooltips()
+    }
+
     /// Follows a link within the show. A web address is handed back for the
     /// caller to open.
     func follow(_ link: Hyperlink) -> URL? {
         guard isPresenting else { return nil }
+        noteActivity()
         switch link {
         case .url(let address):
             return URL(string: address)
         case .slide(let id):
             guard let presentation, let index = presentation.index(of: id) else { return nil }
             if let target = order.firstIndex(of: index) {
-                go(toPosition: target)
+                jump(to: target)
             } else {
                 // A hidden slide shows when a link leads to it.
                 order.insert(index, at: position + 1)
-                go(toPosition: position + 1)
+                jump(to: position + 1)
             }
-        case .nextSlide: next()
-        case .previousSlide: previous()
-        case .firstSlide: go(toPosition: 0)
-        case .lastSlide: go(toPosition: order.count - 1)
+        case .nextSlide: advance()
+        case .previousSlide: stepBack()
+        case .firstSlide: jump(to: 0)
+        case .lastSlide: jump(to: order.count - 1)
         case .endShow: end()
+        case .customShow(let id, let returns):
+            guard let presentation, let show = presentation.customShow(withID: id),
+                  case let showOrder = presentation.slideIndices(of: show), !showOrder.isEmpty else { return nil }
+            if returns { returnPoints.append((order, position)) }
+            isBlanked = false
+            move(to: 0, in: showOrder)
+            publish()
         case .slidePart, .other: break
         }
         return nil
+    }
+
+    /// Someone touched the show: a kiosk show waits that much longer before starting over.
+    func noteActivity() {
+        restartTask?.cancel()
+        restartTask = nil
+        guard isPresenting, isKiosk else { return }
+        let wait = max(settings.kioskRestartAfter, 1)
+        restartTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled, let self, self.isPresenting else { return }
+            self.restartTask = nil
+            self.returnPoints = []
+            self.isBlanked = false
+            if self.position != 0 || self.order != self.startingOrder { self.move(to: 0, in: self.startingOrder) }
+            self.noteActivity()
+            self.publish()
+        }
     }
 
     func toggleBlank() {

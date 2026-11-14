@@ -5,7 +5,7 @@
 import "../design/base.js";
 import { loadStrings, t } from "./i18n.js";
 import { SlideDrawer, MediaStore, applyFrame } from "./slide.js";
-import { toggleMedia } from "./slideshow.js";
+import { toggleMedia, showLinkTips } from "./slideshow.js";
 import { TransitionPlayer } from "./transition.js";
 
 const stage = document.querySelector(".audience__stage");
@@ -127,6 +127,7 @@ stage.addEventListener("click", (event) => {
   const movie = event.target.closest?.("[data-media]")?.closest(".shape")?.dataset.id;
   tell({ type: "click", link: link ? JSON.parse(link.dataset.link) : null, media: movie ?? null });
 });
+showLinkTips(stage);
 stage.addEventListener("contextmenu", (event) => {
   event.preventDefault();
   tell({ type: "key", key: "ArrowLeft" });

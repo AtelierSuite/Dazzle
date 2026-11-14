@@ -62,12 +62,12 @@ final class PresentationDocument: NSDocument {
     // MARK: - Writing
 
     override func fileWrapper(ofType typeName: String) throws -> FileWrapper {
-        let presentation = MainActor.assumeIsolated { deck.presentation }
+        let (presentation, author) = MainActor.assumeIsolated { (deck.presentation, InspectorViewController.authorName) }
         // A Keynote file is written back as Keynote, never as PowerPoint.
         if Self.isKeynote(UTType(typeName) ?? .data) {
             return try KeynoteWriter.fileWrapper(for: presentation)
         }
-        return FileWrapper(regularFileWithContents: try PPTXWriter.data(from: presentation))
+        return FileWrapper(regularFileWithContents: try PPTXWriter.data(from: presentation.stampedForSaving(by: author)))
     }
 
     /// Keynote is only offered for a presentation that came from Keynote,

@@ -73,7 +73,7 @@ final class Bridge {
             return info()
         case "save":
             let format = (r["format"] as? String).flatMap(WebSession.Format.init(rawValue:)) ?? session.saveFormats[0]
-            output = try session.data(as: format)
+            output = try session.data(as: format, savedBy: r["draft"] as? Bool == true ? nil : r["author"] as? String ?? "")
             let fileName = session.fileName(for: format)
             if r["keep"] as? Bool != true { session.markSaved(as: format) }
             return ["fileName": fileName, "format": format.rawValue, "mime": format.mimeType]
@@ -222,6 +222,67 @@ final class Bridge {
             }
         case "loop":
             edit { state, presentation in state.setLoopsSlideshow(r["on"] as? Bool ?? false, in: &presentation) }
+        case "showSettings":
+            // Any of: range ("all", "slides", "customShow") with from, to and show; kiosk, restart
+            // (seconds), timings, animations, narration.
+            edit { state, presentation in
+                let slideCount = max(presentation.slides.count, 1)
+                let firstShow = presentation.customShows.first?.id
+                state.updateShowSettings(in: &presentation) { settings in
+                    switch r["range"] as? String {
+                    case "all": settings.range = .all
+                    case "slides":
+                        let from = min(max(r["from"] as? Int ?? 1, 1), slideCount)
+                        let to = min(max(r["to"] as? Int ?? slideCount, from), slideCount)
+                        settings.range = .slides(from: from, to: to)
+                    case "customShow":
+                        settings.range = (r["show"] as? Int ?? firstShow).map(SlideshowSettings.Range.customShow) ?? .all
+                    default: break
+                    }
+                    if let kiosk = r["kiosk"] as? Bool { settings.isKiosk = kiosk }
+                    if let restart = r["restart"] as? Double { settings.kioskRestartAfter = max(restart, 60) }
+                    if let timings = r["timings"] as? Bool { settings.usesTimings = timings }
+                    if let animations = r["animations"] as? Bool { settings.showsAnimations = animations }
+                    if let narration = r["narration"] as? Bool { settings.playsNarration = narration }
+                }
+            }
+
+        // Custom shows
+        case "addCustomShow":
+            var id = 0
+            edit { state, presentation in id = state.addCustomShow(slides: uuids(r["slides"]), in: &presentation) }
+            return id
+        case "renameCustomShow":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.renameCustomShow(id, to: r["name"] as? String ?? "", in: &presentation) }
+        case "setCustomShowSlides":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.setCustomShowSlides(id, to: uuids(r["slides"]), in: &presentation) }
+        case "duplicateCustomShow":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.duplicateCustomShow(id, in: &presentation) }
+        case "deleteCustomShow":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.deleteCustomShow(id, in: &presentation) }
+        case "slideshowOrder":
+            // The slides a slideshow plays, in order: a custom show's when asked for.
+            return presentation.slideshowOrder(customShow: r["customShow"] as? Int).map { presentation.slides[$0].id.uuidString }
+        case "properties":
+            let properties = presentation.properties
+            var json: [String: Any] = Dictionary(uniqueKeysWithValues: DocumentProperties.Field.allCases.map { ($0.rawValue, properties[$0]) })
+            json["created"] = properties.created.map(DocumentPropertiesXML.string) as Any
+            json["modified"] = properties.modified.map(DocumentPropertiesXML.string) as Any
+            json["lastModifiedBy"] = properties.lastModifiedBy
+            json["revision"] = properties.revision as Any
+            json["application"] = properties.applicationDescription
+            json["keynote"] = presentation.keynoteSource != nil
+            return json
+        case "setProperties":
+            let values = DocumentProperties.Field.allCases.compactMap { field in (r[field.rawValue] as? String).map { (field, $0) } }
+            guard values.contains(where: { presentation.properties[$0.0] != $0.1 }) else { return nil }
+            edit { state, presentation in
+                for (field, value) in values { state.setProperty(field, to: value, in: &presentation) }
+            }
         case "headerFooter":
             var settings = HeaderFooterSettings()
             settings.showsDate = r["date"] as? Bool ?? false
@@ -233,6 +294,15 @@ final class Bridge {
             settings.footer = r["footerText"] as? String ?? ""
             settings.hidesOnTitleSlide = r["hideOnTitle"] as? Bool ?? false
             edit { state, presentation in state.applyHeaderFooter(settings, toAll: r["toAll"] as? Bool ?? false, in: &presentation) }
+        case "setTheme":
+            guard editor.canEditTheme(in: presentation) else { throw Failure(message: "The theme can't be changed.") }
+            var theme = editor.theme(in: presentation)
+            for (slot, value) in r["colors"] as? [String: String] ?? [:] where Theme.colorSlots.contains(slot) {
+                if let color = UInt32(value.trimmingPrefix("#"), radix: 16) { theme.colors[slot] = color & 0xFFFFFF }
+            }
+            if let heading = (r["heading"] as? String)?.trimmingCharacters(in: .whitespaces), !heading.isEmpty { theme.majorFont = heading }
+            if let body = (r["body"] as? String)?.trimmingCharacters(in: .whitespaces), !body.isEmpty { theme.minorFont = body }
+            edit { state, presentation in state.setTheme(theme, in: &presentation) }
 
         // Inserting
         case "insertTextBox":
@@ -370,10 +440,50 @@ final class Bridge {
         case "setReflection":
             let choice = FormatChoices.reflections.first { $0.id == r["id"] as? String }
             edit { state, presentation in state.setReflection(choice?.reflection, in: &presentation) }
+        case "setEffect":
+            // One of `glow` and `softEdge` (points, 0 for none), `glowColor`,
+            // `innerShadow` (a choice's id), `bevel` (a preset, or "none"),
+            // `depth` (points), `camera` (a preset) or `warp` (a preset, or "textNoShape").
+            edit { state, presentation in
+                if let points = r["glow"] as? Double {
+                    let color = state.selectedShape(in: presentation)?.effects.glow?.color ?? FormatChoices.glowColor(.scheme("accent1"))
+                    state.setGlow(points > 0 ? Glow(radius: EMU.from(points: points), color: color) : nil, in: &presentation)
+                }
+                if let color = (r["glowColor"] as? String).flatMap(Self.color) {
+                    if state.selectedShape(in: presentation)?.effects.glow == nil {
+                        state.setGlow(Glow(radius: EMU.from(points: 8), color: FormatChoices.glowColor(color)), in: &presentation)
+                    } else {
+                        state.setGlowColor(color, in: &presentation)
+                    }
+                }
+                if let points = r["softEdge"] as? Double {
+                    state.setSoftEdge(points > 0 ? EMU.from(points: points) : nil, in: &presentation)
+                }
+                if let id = r["innerShadow"] as? String, let choice = FormatChoices.innerShadows.first(where: { $0.id == id }) {
+                    state.setInnerShadow(choice.shadow, in: &presentation)
+                }
+                if let preset = r["bevel"] as? String {
+                    state.setBevel(preset == "none" ? nil : Shape3D.Bevel(preset: preset), in: &presentation)
+                }
+                if let points = r["depth"] as? Double { state.setDepth(EMU.from(points: points), in: &presentation) }
+                if let camera = r["camera"] as? String { state.setCamera(camera, in: &presentation) }
+                if let preset = r["warp"] as? String {
+                    state.setTextWarp(preset == "textNoShape" ? nil : TextWarp(preset: preset), in: &presentation)
+                }
+            }
         case "setLink":
             let link = hyperlink(r["link"])
             edit { state, presentation in
                 if r["text"] as? Bool == true { state.setTextLink(link, in: &presentation) } else { state.setShapeLink(link, in: &presentation) }
+            }
+        case "setLinkTooltip":
+            edit(coalesce: "tip:\(editor.selectedShapeID?.uuidString ?? "")") { state, presentation in
+                let tooltip = r["tooltip"] as? String ?? ""
+                if r["text"] as? Bool == true {
+                    state.setTextLinkTooltip(tooltip, in: &presentation)
+                } else {
+                    state.setShapeLinkTooltip(tooltip, in: &presentation)
+                }
             }
         case "setAltText":
             edit(coalesce: "alt:\(editor.selectedShapeID?.uuidString ?? "")") { state, presentation in
@@ -502,7 +612,7 @@ final class Bridge {
                 },
                 "through": timeline.playingThroughDuration.isFinite ? timeline.playingThroughDuration : -1,
                 "after": slide.autoAdvanceAfter as Any, "onClick": slide.advancesOnClick, "notes": slide.notes,
-                "loop": presentation.loopsSlideshow,
+                "loop": presentation.showSettings.playsInLoop,
                 "transition": slide.transition.map { $0.isAnimated ? $0.duration : 0 } ?? 0,
             ]
         case "transition":
@@ -712,10 +822,24 @@ final class Bridge {
         }
     }
 
+    private func showSettingsJSON(_ settings: SlideshowSettings) -> [String: Any] {
+        var json: [String: Any] = [
+            "kiosk": settings.isKiosk, "restart": settings.kioskRestartAfter, "loop": settings.playsInLoop,
+            "timings": settings.followsTimings, "animations": settings.showsAnimations, "narration": settings.playsNarration,
+        ]
+        switch settings.range {
+        case .all: json["range"] = "all"
+        case .slides(let from, let to): json["range"] = "slides"; json["from"] = from; json["to"] = to
+        case .customShow(let id): json["range"] = "customShow"; json["show"] = id
+        }
+        return json
+    }
+
     private func hyperlink(_ value: Any?) -> Hyperlink? {
         guard let json = value as? [String: Any] else { return nil }
         if let url = json["url"] as? String, !url.isEmpty { return .url(Hyperlink.normalizedAddress(url)) }
         if let slide = uuid(json["slide"]) { return .slide(slide) }
+        if let show = json["customShow"] as? Int { return .customShow(show, returns: json["return"] as? Bool ?? true) }
         switch json["action"] as? String {
         case "next": return .nextSlide
         case "previous": return .previousSlide
@@ -877,6 +1001,13 @@ final class Bridge {
                 if let family = value as? String { state.setFontFamily(family, in: &presentation) }
             case "color":
                 if let color = (value as? String).flatMap(Self.color) { state.setTextColor(color, in: &presentation) }
+            case "highlight":
+                // "none" takes the highlight away.
+                if let color = (value as? String).flatMap(Self.color) {
+                    state.setTextHighlight(color, in: &presentation)
+                } else if value as? String == "none" {
+                    state.setTextHighlight(nil, in: &presentation)
+                }
             case "align":
                 if let alignment = (value as? String).flatMap(ParagraphAlignment.init(rawValue:)) { state.setAlignment(alignment, in: &presentation) }
             case "list":
@@ -1014,6 +1145,14 @@ final class Bridge {
             "sizePreset": SlideSizeConverter.Preset.matching(presentation.slideSize)?.rawValue as Any,
             "layouts": presentation.resources.orderedLayouts.map { ["path": $0.path, "name": $0.name] },
             "loop": presentation.loopsSlideshow,
+            "canEditTheme": editor.canEditTheme(in: presentation),
+            "show": showSettingsJSON(presentation.showSettings),
+            "customShows": presentation.customShows.map { show -> [String: Any] in
+                [
+                    "id": show.id, "name": show.name,
+                    "slides": show.slideIDs.filter { presentation.index(of: $0) != nil }.map(\.uuidString),
+                ]
+            },
             "fonts": fonts.sorted(),
             "hasEmbeddedFonts": !presentation.resources.embeddedFonts.isEmpty,
             // The typefaces the slides ask for that the presentation doesn't carry,
@@ -1047,6 +1186,13 @@ final class Bridge {
             "shapes": ShapeChoice.all.map { ["preset": $0.preset, "label": $0.label] },
             "shadows": FormatChoices.shadows.map { ["id": $0.id, "label": $0.label] },
             "reflections": FormatChoices.reflections.map { ["id": $0.id, "label": $0.label] },
+            "glowSizes": FormatChoices.glowSizes,
+            "softEdgeSizes": FormatChoices.softEdgeSizes,
+            "innerShadows": FormatChoices.innerShadows.map { ["id": $0.id, "label": $0.label] },
+            "bevels": FormatChoices.bevels.map { ["id": $0.0, "label": $0.1] },
+            "cameras": FormatChoices.cameras.map { ["id": $0.0, "label": $0.1] },
+            "textWarps": FormatChoices.textWarps.map { ["id": $0.0, "label": $0.1] },
+            "patterns": FormatChoices.patterns.map { ["id": $0.0, "label": $0.1] },
             "dashes": FormatChoices.dashes.map { ["id": $0.0, "label": $0.1] },
             "lineEnds": FormatChoices.lineEnds.map { ["id": $0.0, "label": $0.1] },
             "charts": Chart.Kind.insertable.map { ["kind": $0.rawValue, "label": $0.label] },
@@ -1118,6 +1264,10 @@ final class Bridge {
             json["font"] = style.typeface(run.latinFont) ?? style.theme.minorFont
             json["color"] = css(run.color.map { style.color($0) } ?? style.color(.scheme("tx1")))
             if case .scheme(let name)? = run.color?.base, run.color?.transforms.isEmpty == true { json["scheme"] = name }
+            if let highlight = run.highlight?.color {
+                json["highlight"] = css(style.color(highlight))
+                if case .scheme(let name) = highlight.base, highlight.transforms.isEmpty { json["highlightScheme"] = name }
+            }
         }
         if case .percent(let value)? = paragraph.lineSpacing { json["lineSpacing"] = value }
         if let shape = editor.selectedShape(in: presentation), let slide = editor.selectedSlide(in: presentation) {
@@ -1147,6 +1297,15 @@ final class Bridge {
             "fixedDate": headerFooter.fixedDate, "number": headerFooter.showsSlideNumber, "footer": headerFooter.showsFooter,
             "footerText": headerFooter.footer,
         ]
+        // The theme itself, for Theme Colors & Fonts.
+        let theme = editor.theme(in: presentation)
+        json["themeSettings"] = [
+            "canEdit": editor.canEditTheme(in: presentation),
+            "colors": ThemeColorSlot.all.map { slot, key in
+                ["slot": slot, "label": ThemeColorSlot.label(key), "color": css(RGBAColor(hex: theme.colors[slot] ?? 0))]
+            },
+            "heading": theme.majorFont, "body": theme.minorFont,
+        ] as [String: Any]
         // The theme's colours, offered first and written as theme references, as the Apple apps do.
         json["theme"] = [
             ("tx1", "Color.Theme.Text"), ("bg1", "Color.Theme.Background"), ("tx2", "Color.Theme.Text2"), ("bg2", "Color.Theme.Background2"),
@@ -1213,8 +1372,25 @@ final class Bridge {
             shapeJSON["line"] = line
             shapeJSON["shadow"] = FormatChoices.shadows.first { $0.shadow == shape.shadow }?.id ?? (shape.shadow == nil ? "none" : "custom")
             shapeJSON["reflection"] = FormatChoices.reflections.first { $0.reflection == shape.reflection }?.id ?? (shape.reflection == nil ? "none" : "custom")
+            shapeJSON["glow"] = shape.effects.glow.map { EMU.points($0.radius) } ?? 0
+            if let glow = shape.effects.glow {
+                var color = glow.color
+                color.transforms.removeAll { $0.name == "alpha" }
+                shapeJSON["glowColor"] = css(style.color(color))
+            }
+            shapeJSON["softEdge"] = shape.effects.softEdge.map(EMU.points) ?? 0
+            shapeJSON["innerShadow"] = FormatChoices.innerShadows.first { $0.shadow == shape.effects.innerShadow }?.id
+                ?? (shape.effects.innerShadow == nil ? "none" : "custom")
+            if shape.kind == .shape || shape.isPicture {
+                shapeJSON["bevel"] = shape.shape3D?.topBevel?.preset ?? "none"
+                shapeJSON["depth"] = EMU.points(shape.shape3D?.extrusionHeight ?? 0)
+                shapeJSON["camera"] = shape.scene3D?.camera ?? "orthographicFront"
+            }
+            if shape.kind == .shape, let text = shape.text {
+                shapeJSON["warp"] = text.properties.warp?.preset ?? "textNoShape"
+            }
         }
-        if let link = shape.link { shapeJSON["link"] = WebRenderer.link(link) as Any }
+        if let link = shape.link { shapeJSON["link"] = WebRenderer.link(link, tooltip: shape.linkTooltip) as Any }
         if case .picture(let picture) = shape.kind {
             shapeJSON["crop"] = [picture.cropLeft, picture.cropTop, picture.cropRight, picture.cropBottom]
             let image = SlideShape.Picture.imageRect(frame: frame, picture: picture)

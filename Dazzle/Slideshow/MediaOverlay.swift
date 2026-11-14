@@ -48,9 +48,9 @@ struct MediaOverlay: View {
                 ZStack {
                     if media.kind == .video, let player = playback.players[shape.id] {
                         PlayerLayerView(player: player)
-                            .opacity(playback.started.contains(shape.id) ? 1 : 0)
+                            .opacity(playback.opacity(of: shape.id))
                     }
-                    if showsControls, !playback.isPlaying(shape.id) {
+                    if showsControls, !playback.isPlaying(shape.id), !media.hidesWhenNotPlaying {
                         Image(systemName: media.kind == .video ? "play.circle.fill" : "speaker.wave.2.circle.fill")
                             .font(.system(size: min(max(min(rect.width, rect.height) * 0.3, 24), 64)))
                             .symbolRenderingMode(.palette)
@@ -60,6 +60,16 @@ struct MediaOverlay: View {
                 }
                 .frame(width: rect.width, height: rect.height)
                 .position(x: rect.midX, y: rect.midY)
+                .allowsHitTesting(false)
+            }
+            // A video set to play full screen fills the whole screen while it plays.
+            if let id = playback.fullScreenVideo, let player = playback.players[id] {
+                ZStack {
+                    Color.black
+                    PlayerLayerView(player: player)
+                        .opacity(playback.opacity(of: id))
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height)
                 .allowsHitTesting(false)
             }
         }

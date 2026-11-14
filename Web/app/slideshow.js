@@ -46,6 +46,43 @@ export function hasSecondDisplay() {
   return Boolean(window.screen?.isExtended);
 }
 
+
+/**
+ * Shows a link's ScreenTip when the pointer rests on it, after a delay like a
+ * macOS help tag, in the slideshow's own windows.
+ * @param {HTMLElement} area
+ */
+export function showLinkTips(area) {
+  let tip = null;
+  let timer = null;
+  const hide = () => {
+    clearTimeout(timer);
+    tip?.remove();
+    tip = null;
+  };
+  area.addEventListener("pointermove", (event) => {
+    const element = event.target.closest?.("[data-link]");
+    const text = element ? JSON.parse(element.dataset.link).tooltip : null;
+    if (tip && tip.textContent === text) return;
+    hide();
+    if (!text) return;
+    const { clientX: x, clientY: y } = event;
+    timer = setTimeout(() => {
+      tip = document.createElement("span");
+      tip.className = "ds-tooltip slideshow__link-tip";
+      tip.setAttribute("role", "tooltip");
+      tip.textContent = text;
+      // Inside the show's own view, so it goes when the show ends.
+      (area.closest(".slideshow, .presenter") ?? document.body).append(tip);
+      const width = tip.offsetWidth;
+      tip.style.left = `${Math.max(0, Math.min(x, window.innerWidth - width))}px`;
+      tip.style.top = `${y + 20}px`;
+    }, 600);
+  });
+  area.addEventListener("pointerleave", hide);
+  area.addEventListener("pointerdown", hide);
+}
+
 export class Slideshow extends EventTarget {
   /**
    * @param {HTMLElement} root the window, which the presenter view or the slide covers
@@ -73,15 +110,20 @@ export class Slideshow extends EventTarget {
    * asks for the audience window and presenter view; without it, or when the
    * window can't open, the show plays full screen here.
    */
-  async start(slideID, { presenter = hasSecondDisplay() } = {}) {
+  async start(slideID, { presenter = hasSecondDisplay(), customShow = null } = {}) {
     if (this.active) return;
     const state = this.engine.state;
     const slides = state.slides;
-    // Hidden slides are left out, unless every slide is.
-    this.order = slides.filter((slide) => !slide.hidden).map((slide) => slide.id);
+    // Hidden slides are left out, unless every slide is; a custom show plays its own.
+    this.order = await this.engine.call("slideshowOrder", customShow != null ? { customShow } : {});
     if (!this.order.length) this.order = slides.map((slide) => slide.id);
     const startIndex = slides.findIndex((slide) => slide.id === slideID);
-    this.position = Math.max(this.order.findIndex((id) => slides.findIndex((slide) => slide.id === id) >= startIndex), 0);
+    this.position = customShow != null ? 0 : Math.max(this.order.findIndex((id) => slides.findIndex((slide) => slide.id === id) >= startIndex), 0);
+    // Where to come back to as each custom show a link started ends, the latest last.
+    this.returnPoints = [];
+    // How the presentation asks to be played: a kiosk show moves on only by its timings and links.
+    this.settings = { ...(this.engine.info?.show ?? {}) };
+    this.startingOrder = [...this.order];
     this.active = true;
     this.blanked = false;
     this.startedAt = Date.now();
@@ -107,6 +149,7 @@ export class Slideshow extends EventTarget {
     window.addEventListener("pagehide", this.unloading);
     this.watchAudience();
     await this.showSlide({ fullyBuilt: false });
+    this.noteActivity();
     this.dispatchEvent(new CustomEvent("start"));
   }
 
@@ -140,6 +183,7 @@ export class Slideshow extends EventTarget {
 
   /** Ends the show, closing the audience window and going back to editing. */
   end() {
+    clearTimeout(this.restartTimer);
     if (!this.active) return;
     this.active = false;
     this.transitions?.finish();
@@ -185,6 +229,28 @@ export class Slideshow extends EventTarget {
     return this.timelines.get(id);
   }
 
+  /** Someone touched the show: a kiosk show waits that much longer before starting over. */
+  noteActivity() {
+    clearTimeout(this.restartTimer);
+    if (!this.active || !this.settings.kiosk) return;
+    this.restartTimer = setTimeout(async () => {
+      if (!this.active) return;
+      this.returnPoints = [];
+      this.order = [...this.startingOrder];
+      this.setBlank(false, { quiet: true });
+      const moving = this.position !== 0;
+      this.position = 0;
+      await this.showSlide({ fullyBuilt: false, transition: moving });
+      this.noteActivity();
+    }, Math.max(this.settings.restart ?? 300, 1) * 1000);
+  }
+
+  /** Whether taps and keys move the show on: not at a kiosk. */
+  get isManual() {
+    this.noteActivity();
+    return !this.settings.kiosk;
+  }
+
   /** Plays the slide's next animation step, or with none left, moves on. */
   async next() {
     if (!this.active) return;
@@ -200,15 +266,20 @@ export class Slideshow extends EventTarget {
       this.updatePresenter();
       return;
     }
+    let fullyBuilt = false;
     if (this.position < this.order.length - 1) {
       this.position += 1;
+    } else if (this.returnPoints.length) {
+      // A custom show played from a link comes back to the link's slide, as it was left.
+      ({ order: this.order, position: this.position } = this.returnPoints.pop());
+      fullyBuilt = true;
     } else if (timeline.loop) {
       this.position = 0;
     } else {
       // Moving on from the last slide ends the show, as in Keynote.
       return this.end();
     }
-    await this.showSlide({ fullyBuilt: false, transition: true });
+    await this.showSlide({ fullyBuilt, transition: true });
   }
 
   /** Takes back the last animation step, or with none played, goes back a slide. */
@@ -218,7 +289,7 @@ export class Slideshow extends EventTarget {
     if (this.transitions?.isPlaying) this.finishTransition();
     this.setBlank(false, { quiet: true });
     const timeline = await this.timeline();
-    if (this.builds > timeline.initial) {
+    if (this.settings.animations !== false && this.builds > timeline.initial) {
       // Back to how the slide looked before the step, without playing it backwards.
       this.builds -= 1;
       this.buildStartedAt = -Infinity;
@@ -250,6 +321,18 @@ export class Slideshow extends EventTarget {
     await this.go(index);
   }
 
+  /** Plays a custom show from its start, coming back afterwards when `returns`. */
+  async playCustomShow(id, returns) {
+    const order = await this.engine.call("slideshowOrder", { customShow: id });
+    const show = (this.engine.info?.customShows ?? []).find((entry) => entry.id === id);
+    if (!this.active || !show?.slides.length || !order.length) return;
+    if (returns) this.returnPoints.push({ order: this.order, position: this.position });
+    this.order = order;
+    this.position = 0;
+    this.setBlank(false, { quiet: true });
+    await this.showSlide({ fullyBuilt: false, transition: true });
+  }
+
   setBlank(on, { quiet = false } = {}) {
     this.blanked = on;
     this.post({ type: "blank", on });
@@ -266,8 +349,10 @@ export class Slideshow extends EventTarget {
     // How far through its animations the slide being left is, for a Morph.
     const leftAt = this.builds;
     const timeline = await this.timeline(id);
-    this.builds = fullyBuilt ? timeline.steps : timeline.initial;
-    this.buildStartedAt = fullyBuilt ? -Infinity : performance.now();
+    // Without animations, every slide shows as it ends up.
+    const built = fullyBuilt || this.settings.animations === false;
+    this.builds = built ? timeline.steps : timeline.initial;
+    this.buildStartedAt = built ? -Infinity : performance.now();
     this.stopMedia();
     const scene = await this.engine.call("scene", { slide: id });
     if (id !== this.slideID) return;
@@ -332,7 +417,7 @@ export class Slideshow extends EventTarget {
   /** Moves on by itself after the slide's time, once its transition and running animations have settled. */
   scheduleAdvance(timeline) {
     clearTimeout(this.advanceTimer);
-    if (!this.active || this.blanked || timeline.after == null || this.builds < timeline.steps) return;
+    if (!this.active || this.blanked || timeline.after == null || this.builds < timeline.steps || this.settings.timings === false) return;
     let settling = Math.max(((this.transitionEndsAt ?? 0) - performance.now()) / 1000, 0);
     if (this.builds > 0) {
       const duration = timeline.durations[this.builds - 1];
@@ -370,7 +455,7 @@ export class Slideshow extends EventTarget {
   playOpeningMedia(timeline, scene) {
     const ids = new Set();
     for (let step = 0; step < this.builds; step++) for (const id of timeline.media?.[step] ?? []) ids.add(id);
-    for (const node of scene.shapes) if (node.media?.auto) ids.add(node.id);
+    for (const node of scene.shapes) if (node.media?.auto && (!node.media.narration || this.settings.narration !== false)) ids.add(node.id);
     for (const id of ids) this.playMedia(id, "play");
   }
 
@@ -399,6 +484,8 @@ export class Slideshow extends EventTarget {
   }
 
   handleKey(key, shift = false) {
+    // At a kiosk only Escape does anything: the show moves on by itself.
+    if (key !== "Escape" && !this.isManual) return;
     switch (key) {
       case "ArrowRight": case "ArrowDown": case "PageDown": case " ": case "Enter": case "n": case "N":
         if (shift && key === " ") this.previous();
@@ -461,15 +548,19 @@ export class Slideshow extends EventTarget {
       this.follow(link);
       return;
     }
+    if (!this.isManual) return;
     const timeline = await this.timeline();
     if (this.builds < timeline.steps || timeline.onClick) this.next();
   }
 
   follow(link) {
+    this.noteActivity();
     if (link.url) {
       window.open(link.url, "_blank", "noopener");
     } else if (link.slide) {
       this.goToSlide(link.slide);
+    } else if (link.customShow != null) {
+      this.playCustomShow(link.customShow, link.return);
     } else {
       ({ next: () => this.next(), previous: () => this.previous(), first: () => this.go(0), last: () => this.go(this.order.length - 1), end: () => this.end() })[link.action]?.();
     }
@@ -537,6 +628,7 @@ export class Slideshow extends EventTarget {
     this.view = view;
     this.stage = view.querySelector(".slideshow__stage");
     this.transitions = new TransitionPlayer(this.stage, (slide) => this.fit(this.stage, slide));
+    showLinkTips(view);
     view.requestFullscreen?.().catch(() => {});
     view.addEventListener("click", (event) => {
       const link = event.target.closest?.("[data-link]");
@@ -596,8 +688,8 @@ export class Slideshow extends EventTarget {
           case "fill": return this.fillAudienceScreen();
           case "blank": return this.setBlank(!this.blanked);
           case "end": return this.end();
-          case "previous": return this.previous();
-          case "next": return this.next();
+          case "previous": return this.isManual && this.previous();
+          case "next": return this.isManual && this.next();
           default: return null;
         }
       });
@@ -613,6 +705,7 @@ export class Slideshow extends EventTarget {
       const link = event.target.closest?.("[data-link]");
       this.clicked({ link: link ? JSON.parse(link.dataset.link) : null });
     });
+    showLinkTips(this.stage);
     const resize = new ResizeObserver(() => {
       this.fit(this.stage, this.current);
       this.fit(this.nextStage, this.upcoming);
@@ -715,17 +808,31 @@ function collectMedia(nodes, paths) {
   }
 }
 
-/** Plays or pauses the movie or sound a picture stands for, over the picture. */
+/** Each picture's player, wherever it is shown. */
+const players = new WeakMap();
+
+/**
+ * Plays or pauses the movie or sound a picture stands for, over the picture,
+ * or over the whole show for a video set to play full screen. It plays the
+ * trimmed part of the file, at its volume, fading in and out, and when it
+ * ends it loops, rewinds or stays on its last frame as it is set to.
+ */
 export async function toggleMedia(slide, id, media, action = "toggle") {
   const shape = slide?.querySelector(`.shape[data-id="${id}"]`);
   const info = shape?.querySelector("[data-media]")?.dataset.media;
   // A player still on its way plays once it arrives.
   if (!shape || !info || shape.dataset.mediaLoading) return;
-  const { kind, path } = JSON.parse(info);
-  let player = shape.querySelector(".slideshow__media");
-  if (player) {
-    if (player.paused) player.play();
-    else if (action === "toggle") player.pause();
+  const settings = JSON.parse(info);
+  const { kind, path } = settings;
+  const [trimStart = 0, trimEnd = 0] = settings.trim ?? [];
+  const [fadeIn = 0, fadeOut = 0] = settings.fade ?? [];
+  const volume = settings.volume ?? 1;
+  let player = players.get(shape);
+  if (player?.isConnected) {
+    if (player.paused) {
+      if (player.ended || player.currentTime >= endOf(player) - 0.05) player.currentTime = trimStart;
+      player.play().catch(() => {});
+    } else if (action === "toggle") player.pause();
     return;
   }
   if (!path) return;
@@ -737,6 +844,56 @@ export async function toggleMedia(slide, id, media, action = "toggle") {
   player.className = "slideshow__media";
   player.src = url;
   player.playsInline = true;
-  shape.querySelector(".shape__body").append(player);
+  player.volume = Math.min(Math.max(volume, 0), 1);
+  player.muted = volume <= 0;
+  players.set(shape, player);
+
+  function endOf(element) {
+    const duration = Number.isFinite(element.duration) ? element.duration : Infinity;
+    return Math.max(duration - trimEnd, trimStart);
+  }
+  function level() {
+    const time = player.currentTime;
+    let value = 1;
+    if (fadeIn > 0) value = Math.min(value, (time - trimStart) / fadeIn);
+    if (fadeOut > 0) value = Math.min(value, (endOf(player) - time) / fadeOut);
+    return Math.min(Math.max(value, 0), 1);
+  }
+  function finished() {
+    if (settings.loop) {
+      player.currentTime = trimStart;
+      player.play().catch(() => {});
+      return;
+    }
+    player.pause();
+    if (settings.rewind) player.currentTime = trimStart;
+    // Back to its picture, or out of sight if it shows only while playing.
+    if (settings.rewind || settings.hide || settings.full) player.remove();
+  }
+  function tick() {
+    if (!player.isConnected) return;
+    if (fadeIn > 0 || fadeOut > 0) {
+      const amount = level();
+      player.volume = Math.min(Math.max(volume, 0), 1) * amount;
+      if (kind === "video") player.style.opacity = String(amount);
+    }
+    if (!player.paused && trimEnd > 0 && player.currentTime >= endOf(player)) finished();
+    if (!player.paused) requestAnimationFrame(tick);
+  }
+  player.addEventListener("loadedmetadata", () => { if (trimStart > 0) player.currentTime = trimStart; }, { once: true });
+  player.addEventListener("play", () => requestAnimationFrame(tick));
+  player.addEventListener("ended", finished);
+
+  const stage = settings.full ? slide.closest(".slideshow__stage, .presenter__stage, .audience__stage") : null;
+  if (stage) {
+    player.classList.add("slideshow__media--full");
+    stage.append(player);
+  } else {
+    shape.querySelector(".shape__body").append(player);
+  }
+  if (fadeIn > 0) {
+    player.volume = 0;
+    if (kind === "video") player.style.opacity = "0";
+  }
   player.play().catch(() => {});
 }
