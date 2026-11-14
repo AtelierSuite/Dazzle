@@ -56,26 +56,32 @@ public enum Hyperlink: Equatable, Hashable, Sendable {
         }
     }
 
+    /// The ScreenTip of an `a:hlinkClick`: what pointing at the link shows.
+    public static func tooltip(of element: XMLElement?) -> String? {
+        element?.attribute("tooltip")?.nilIfEmpty
+    }
+
     public var isCustomShow: Bool {
         if case .customShow = self { return true }
         return false
     }
 
     /// The `a:hlinkClick` for this link, given the id of the relationship
-    /// it needs, if it needs one.
-    public func xml(relationshipID: String?) -> String? {
+    /// it needs, if it needs one, and the ScreenTip it shows, if any.
+    public func xml(relationshipID: String?, tooltip: String? = nil) -> String? {
+        let tip = tooltip?.nilIfEmpty.map { " tooltip=\"\(XMLLite.escape($0))\"" } ?? ""
         switch self {
         case .url:
-            return relationshipID.map { "<a:hlinkClick r:id=\"\($0)\"/>" }
+            return relationshipID.map { "<a:hlinkClick r:id=\"\($0)\"\(tip)/>" }
         case .slide:
-            return relationshipID.map { "<a:hlinkClick r:id=\"\($0)\" action=\"\(Self.jumpAction)\"/>" }
-        case .nextSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)nextslide\"/>"
-        case .previousSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)previousslide\"/>"
-        case .firstSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)firstslide\"/>"
-        case .lastSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)lastslide\"/>"
-        case .endShow: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)endshow\"/>"
+            return relationshipID.map { "<a:hlinkClick r:id=\"\($0)\" action=\"\(Self.jumpAction)\"\(tip)/>" }
+        case .nextSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)nextslide\"\(tip)/>"
+        case .previousSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)previousslide\"\(tip)/>"
+        case .firstSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)firstslide\"\(tip)/>"
+        case .lastSlide: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)lastslide\"\(tip)/>"
+        case .endShow: return "<a:hlinkClick r:id=\"\" action=\"\(Self.showJumpAction)endshow\"\(tip)/>"
         case .customShow(let id, let returns):
-            return "<a:hlinkClick r:id=\"\" action=\"\(Self.customShowAction)id=\(id)\(returns ? "&amp;return=true" : "")\"/>"
+            return "<a:hlinkClick r:id=\"\" action=\"\(Self.customShowAction)id=\(id)\(returns ? "&amp;return=true" : "")\"\(tip)/>"
         case .slidePart, .other: return nil
         }
     }

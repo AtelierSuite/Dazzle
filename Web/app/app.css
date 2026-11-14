@@ -1080,6 +1080,14 @@ body {
   background: #000;
 }
 
+/* A link's ScreenTip, under the pointer once it rests on the link (showLinkTips). */
+.slideshow__link-tip {
+  position: fixed;
+  z-index: 200;
+  pointer-events: none;
+  box-shadow: var(--ds-shadow-float);
+}
+
 .slideshow__stage {
   position: absolute;
   inset: 0;

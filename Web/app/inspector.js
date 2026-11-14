@@ -420,6 +420,7 @@ export class Inspector extends EventTarget {
       + (kind === "slide" ? this.row("", this.popup("linkSlide", t("Link.Slide"), slides, link.slide)) : "")
       + (kind === "customShow" ? this.row("", this.popup("linkCustomShow", t("Link.CustomShow"), shows, link.customShow))
         + this.row("", this.check("linkCustomShowReturn", t("Link.CustomShow.Return"), link.return)) : "")
+      + (link ? this.row(t("Link.Tooltip.Placeholder"), this.text("linkTooltip", t("Link.Tooltip.Placeholder"), link.tooltip ?? "", { placeholder: t("Link.Tooltip.Placeholder") })) : "")
       + this.note(t("Format.Link.Footer")), { open: Boolean(link) });
   }
 
@@ -713,6 +714,7 @@ export class Inspector extends EventTarget {
         return engine.call("setLink", { link: { action: value } });
       case "linkURL": return engine.call("setLink", { link: { url: value } });
       case "linkSlide": return engine.call("setLink", { link: { slide: value } });
+      case "linkTooltip": return engine.call("setLinkTooltip", { tooltip: value });
       case "linkCustomShow": return engine.call("setLink", { link: { customShow: Number(value), return: shape.link?.return ?? true } });
       case "linkCustomShowReturn": return engine.call("setLink", { link: { customShow: shape.link?.customShow, return: value } });
       // Slide

@@ -46,6 +46,43 @@ export function hasSecondDisplay() {
   return Boolean(window.screen?.isExtended);
 }
 
+
+/**
+ * Shows a link's ScreenTip when the pointer rests on it, after a delay like a
+ * macOS help tag, in the slideshow's own windows.
+ * @param {HTMLElement} area
+ */
+export function showLinkTips(area) {
+  let tip = null;
+  let timer = null;
+  const hide = () => {
+    clearTimeout(timer);
+    tip?.remove();
+    tip = null;
+  };
+  area.addEventListener("pointermove", (event) => {
+    const element = event.target.closest?.("[data-link]");
+    const text = element ? JSON.parse(element.dataset.link).tooltip : null;
+    if (tip && tip.textContent === text) return;
+    hide();
+    if (!text) return;
+    const { clientX: x, clientY: y } = event;
+    timer = setTimeout(() => {
+      tip = document.createElement("span");
+      tip.className = "ds-tooltip slideshow__link-tip";
+      tip.setAttribute("role", "tooltip");
+      tip.textContent = text;
+      // Inside the show's own view, so it goes when the show ends.
+      (area.closest(".slideshow, .presenter") ?? document.body).append(tip);
+      const width = tip.offsetWidth;
+      tip.style.left = `${Math.max(0, Math.min(x, window.innerWidth - width))}px`;
+      tip.style.top = `${y + 20}px`;
+    }, 600);
+  });
+  area.addEventListener("pointerleave", hide);
+  area.addEventListener("pointerdown", hide);
+}
+
 export class Slideshow extends EventTarget {
   /**
    * @param {HTMLElement} root the window, which the presenter view or the slide covers
@@ -586,6 +623,7 @@ export class Slideshow extends EventTarget {
     this.view = view;
     this.stage = view.querySelector(".slideshow__stage");
     this.transitions = new TransitionPlayer(this.stage, (slide) => this.fit(this.stage, slide));
+    showLinkTips(view);
     view.requestFullscreen?.().catch(() => {});
     view.addEventListener("click", (event) => {
       const link = event.target.closest?.("[data-link]");
@@ -662,6 +700,7 @@ export class Slideshow extends EventTarget {
       const link = event.target.closest?.("[data-link]");
       this.clicked({ link: link ? JSON.parse(link.dataset.link) : null });
     });
+    showLinkTips(this.stage);
     const resize = new ResizeObserver(() => {
       this.fit(this.stage, this.current);
       this.fit(this.nextStage, this.upcoming);

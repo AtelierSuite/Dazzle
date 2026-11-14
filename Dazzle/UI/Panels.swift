@@ -119,7 +119,10 @@ struct TextPanel: View {
             }
 
             Section {
-                LinkEditor(link: style.link, presentation: presentation) { state.setTextLink($0, in: &presentation) }
+                LinkEditor(
+                    link: style.link, tooltip: style.linkTooltip, presentation: presentation,
+                    onTooltipChange: { state.setTextLinkTooltip($0, in: &presentation) }
+                ) { state.setTextLink($0, in: &presentation) }
             } header: {
                 Text("Format.Section.Link")
             } footer: {
@@ -262,7 +265,10 @@ struct FormatPanel: View {
         GroupButtons(presentation: $presentation, state: state)
         if !state.hasMultipleSelection {
             Section {
-                LinkEditor(link: shape.link, presentation: presentation) { state.setShapeLink($0, in: &presentation) }
+                LinkEditor(
+                    link: shape.link, tooltip: shape.linkTooltip, presentation: presentation,
+                    onTooltipChange: { state.setShapeLinkTooltip($0, in: &presentation) }
+                ) { state.setShapeLink($0, in: &presentation) }
             } header: {
                 Text("Format.Section.Link")
             } footer: {

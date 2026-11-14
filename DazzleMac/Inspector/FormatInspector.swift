@@ -36,13 +36,17 @@ extension InspectorViewController {
                 buildLink(
                     footer: String(localized: (state.textSelection?.length ?? 0) > 0 ? "Format.Link.Selection" : "Format.Link.AllText"),
                     get: { [unowned self] in run.link },
-                    set: { [unowned self] link in edit { state.setTextLink(link, in: &$0) } }
+                    set: { [unowned self] link in edit { state.setTextLink(link, in: &$0) } },
+                    tooltip: { [unowned self] in run.linkTooltip },
+                    setTooltip: { [unowned self] text in edit { state.setTextLinkTooltip(text, in: &$0) } }
                 )
             } else {
                 buildLink(
                     footer: String(localized: "Format.Link.Footer"),
                     get: { [unowned self] in deck.selectedShape?.link },
-                    set: { [unowned self] link in edit { state.setShapeLink(link, in: &$0) } }
+                    set: { [unowned self] link in edit { state.setShapeLink(link, in: &$0) } },
+                    tooltip: { [unowned self] in deck.selectedShape?.linkTooltip },
+                    setTooltip: { [unowned self] text in edit { state.setShapeLinkTooltip(text, in: &$0) } }
                 )
             }
             buildDescription()
@@ -51,8 +55,12 @@ extension InspectorViewController {
 
     // MARK: - Links
 
-    /// Where a link goes: a web address, a slide, or a step through the show.
-    private func buildLink(footer: String, get: @escaping () -> Hyperlink?, set: @escaping (Hyperlink?) -> Void) {
+    /// Where a link goes: a web address, a slide, or a step through the
+    /// show, and the ScreenTip pointing at it shows.
+    private func buildLink(
+        footer: String, get: @escaping () -> Hyperlink?, set: @escaping (Hyperlink?) -> Void,
+        tooltip: @escaping () -> String?, setTooltip: @escaping (String) -> Void
+    ) {
         form.section(String(localized: "Format.Section.Link"))
         var kinds: [(String.LocalizationValue, (Presentation) -> Hyperlink?)] = [
             ("Link.None", { _ in nil }), ("Link.URL", { _ in .url("https://") }),
@@ -118,12 +126,19 @@ extension InspectorViewController {
             set(.customShow(id, returns: isOn))
         })
         form.row(nil, returns)
+        let tip = form.text(placeholder: String(localized: "Link.Tooltip.Placeholder"), get: { tooltip() ?? "" }, set: setTooltip)
+        form.row(String(localized: "Link.Tooltip.Placeholder"), tip)
         form.note(footer)
         form.onUpdate { [unowned self] in
             _ = slideTarget
             _ = showTarget
             let link = get()
             if case .url? = link { address.isHidden = false } else { address.isHidden = true }
+            // The ScreenTip's row, label and all, shows only for a link it can be written to.
+            switch link {
+            case nil, .other?: tip.superview?.isHidden = true
+            default: tip.superview?.isHidden = false
+            }
             if case .customShow(let id, _)? = link {
                 shows.isHidden = false
                 returns.isHidden = false
