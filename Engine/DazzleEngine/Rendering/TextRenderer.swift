@@ -11,6 +11,8 @@ import Foundation
 public struct TextRenderer {
     public let style: SlideStyleContext
     public let slideNumber: Int
+    /// The picture at a package path, for picture bullets.
+    public let picture: (String) -> CGImage?
 
     /// The kinds of vertical text, by their name in the file, all laid out
     /// across the shape and turned a quarter.
@@ -295,6 +297,7 @@ public struct TextRenderer {
                 context.textPosition = origin
                 CTLineDraw(line, context)
                 drawStackedLetters(in: line, at: origin, context: context)
+                drawPictureBullets(in: line, at: origin, context: context)
                 drawStrikethroughs(in: line, origin: origin, context: context)
             }
         }
@@ -392,6 +395,7 @@ public struct TextRenderer {
                 context.textPosition = .zero
                 CTLineDraw(entry.line, context)
                 drawStackedLetters(in: entry.line, at: .zero, context: context)
+                drawPictureBullets(in: entry.line, at: .zero, context: context)
                 drawStrikethroughs(in: entry.line, origin: .zero, context: context)
                 context.restoreGState()
             }
@@ -717,10 +721,14 @@ public struct TextRenderer {
             // Numbering continues through a level until something interrupts it.
             for deeper in counters.keys where deeper > level { counters[deeper] = nil }
             var bulletText: String?
+            var bulletPicture: CGImage?
             if !paragraph.plainText.isEmpty {
                 switch properties.bullet {
                 case .character(let character):
                     bulletText = character
+                case .picture(let path):
+                    bulletPicture = picture(path)
+                    counters[level] = nil
                 case .autoNumber(let scheme, let startAt):
                     let number = (counters[level] ?? (startAt - 1)) + 1
                     counters[level] = number
@@ -740,6 +748,12 @@ public struct TextRenderer {
                 result.append(string(
                     Self.displayable(bulletText) + "\t", run: bulletRun,
                     attributes: attributes(for: bulletRun, scale: bulletScale, colorOverride: colorOverride)
+                ))
+            }
+            if let bulletPicture {
+                result.append(pictureBullet(
+                    bulletPicture, run: firstRun, scale: scale * (properties.bulletSize ?? 1),
+                    opacity: colorOverride?.alpha == 0 ? 0 : paragraphOpacity[index] ?? 1
                 ))
             }
 
@@ -800,7 +814,7 @@ public struct TextRenderer {
                 result.addAttribute(Self.paragraphIndexKey, value: index, range: range)
                 result.addAttribute(
                     Self.paragraphKey,
-                    value: paragraphStyle(properties, fontSize: baseSize, hasBullet: bulletText != nil, spacingReduction: spacingReduction),
+                    value: paragraphStyle(properties, fontSize: baseSize, hasBullet: bulletText != nil || bulletPicture != nil, spacingReduction: spacingReduction),
                     range: range
                 )
             }
@@ -1091,15 +1105,87 @@ public struct TextRenderer {
 
     // MARK: - Bullets
 
+    private static let pictureBulletKey = NSAttributedString.Key("DazzlePictureBullet")
+
+    /// A picture bullet: the picture, how big it is drawn, and how far its
+    /// bottom sits above the baseline.
+    private final class PictureBullet: NSObject {
+        let image: CGImage
+        let size: CGSize
+        let rise: CGFloat
+        let opacity: CGFloat
+        init(image: CGImage, size: CGSize, rise: CGFloat, opacity: CGFloat) {
+            self.image = image
+            self.size = size
+            self.rise = rise
+            self.opacity = opacity
+        }
+    }
+
+    /// A picture bullet and the tab after it: an object replacement character
+    /// keeping the picture's room, as tall as the text and centred on its
+    /// capitals, the picture's own shape kept.
+    private func pictureBullet(_ image: CGImage, run: RunProperties, scale: Double, opacity: Double) -> NSAttributedString {
+        let textAttributes = attributes(for: run, scale: scale, colorOverride: nil)
+        let font = textAttributes[Self.fontKey].map { $0 as! CTFont } // swiftlint:disable:this force_cast
+        let height = max(CGFloat(run.size ?? 1_800) / 100 * scale, 1)
+        let aspect = image.height > 0 ? CGFloat(image.width) / CGFloat(image.height) : 1
+        let middle = font.map { CTFontGetCapHeight($0) / 2 } ?? height * 0.35
+        let bullet = PictureBullet(
+            image: image, size: CGSize(width: height * aspect, height: height), rise: middle - height / 2,
+            opacity: CGFloat(opacity)
+        )
+        var callbacks = CTRunDelegateCallbacks(
+            version: kCTRunDelegateVersion1,
+            dealloc: { Unmanaged<PictureBullet>.fromOpaque($0).release() },
+            getAscent: { let bullet = Unmanaged<PictureBullet>.fromOpaque($0).takeUnretainedValue(); return max(bullet.rise + bullet.size.height, 0) },
+            getDescent: { max(-Unmanaged<PictureBullet>.fromOpaque($0).takeUnretainedValue().rise, 0) },
+            getWidth: { Unmanaged<PictureBullet>.fromOpaque($0).takeUnretainedValue().size.width }
+        )
+        var pictureAttributes = textAttributes
+        pictureAttributes[Self.pictureBulletKey] = bullet
+        pictureAttributes[NSAttributedString.Key(kCTRunDelegateAttributeName as String)] =
+            CTRunDelegateCreate(&callbacks, Unmanaged.passRetained(bullet).toOpaque())
+        let result = NSMutableAttributedString(string: "\u{FFFC}", attributes: pictureAttributes)
+        result.append(NSAttributedString(string: "\t", attributes: textAttributes))
+        return result
+    }
+
+    /// Draws each picture bullet of `line`, whose origin is `origin`.
+    private func drawPictureBullets(in line: CTLine, at origin: CGPoint, context: CGContext) {
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let bullet = attributes[Self.pictureBulletKey.rawValue] as? PictureBullet, bullet.opacity > 0,
+                  CTRunGetGlyphCount(run) > 0 else { continue }
+            var position = CGPoint.zero
+            CTRunGetPositions(run, CFRange(location: 0, length: 1), &position)
+            context.saveGState()
+            context.setAlpha(bullet.opacity)
+            context.interpolationQuality = .high
+            context.draw(bullet.image, in: CGRect(
+                origin: CGPoint(x: origin.x + position.x, y: origin.y + position.y + bullet.rise), size: bullet.size
+            ))
+            context.restoreGState()
+        }
+    }
+
     public static func symbolsMapped(_ text: String) -> String { TextLabels.symbolsMapped(text) }
 
     public static func numberLabel(_ number: Int, scheme: String) -> String { TextLabels.numberLabel(number, scheme: scheme) }
 
     private static func displayable(_ bullet: String) -> String { TextLabels.displayable(bullet) }
 
-    public init(style: SlideStyleContext, slideNumber: Int) {
+    public init(style: SlideStyleContext, slideNumber: Int, picture: @escaping (String) -> CGImage? = { _ in nil }) {
         self.style = style
         self.slideNumber = slideNumber
+        self.picture = picture
+    }
+
+    /// A renderer that draws picture bullets from `presentation`'s package.
+    public init(style: SlideStyleContext, slideNumber: Int, presentation: Presentation) {
+        self.init(style: style, slideNumber: slideNumber) { path in
+            presentation.data(at: path).flatMap { ImageCache.shared.image(for: $0, path: path) }
+        }
     }
 }
 

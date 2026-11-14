@@ -524,7 +524,7 @@ public final class ShapeParser {
     public func textBody(_ element: XMLElement) -> TextBody {
         TextBody(
             properties: BodyProperties(element: element.firstChild(named: "bodyPr")),
-            listStyle: ListStyle(element: element.firstChild(named: "lstStyle")),
+            listStyle: ListStyle(element: element.firstChild(named: "lstStyle"), image: target(of:)),
             paragraphs: element.children(named: "p").map(paragraph)
         )
     }
@@ -534,7 +534,7 @@ public final class ShapeParser {
         for child in element.children {
             switch child.name {
             case "pPr":
-                paragraph.properties = ParagraphProperties(element: child)
+                paragraph.properties = ParagraphProperties(element: child, image: target(of:))
                 paragraph.sourceProperties = capture(child)
             case "r", "fld", "br":
                 let properties = child.firstChild(named: "rPr")

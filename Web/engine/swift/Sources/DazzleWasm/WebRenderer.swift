@@ -741,7 +741,7 @@ struct WebRenderer {
             if paragraph.runs.contains(where: { $0.kind == .text && $0.text.contains("\t") }) {
                 let hasBullet = !paragraph.plainText.isEmpty && {
                     switch properties.bullet {
-                    case .character?, .autoNumber?: true
+                    case .character?, .autoNumber?, .picture?: true
                     default: false
                     }
                 }()
@@ -754,9 +754,13 @@ struct WebRenderer {
             for deeper in counters.keys where deeper > level { counters[deeper] = nil }
             if !paragraph.plainText.isEmpty {
                 var bulletText: String?
+                var bulletPicture: String?
                 switch properties.bullet {
                 case .character(let character):
                     bulletText = character
+                case .picture(let path):
+                    counters[level] = nil
+                    if presentation.data(at: path) != nil { bulletPicture = path }
                 case .autoNumber(let scheme, let startAt):
                     let number = (counters[level] ?? (startAt - 1)) + 1
                     counters[level] = number
@@ -764,7 +768,14 @@ struct WebRenderer {
                 default:
                     counters[level] = nil
                 }
-                if let bulletText {
+                if let bulletPicture {
+                    // As tall as the text, centred on its capitals.
+                    var bullet = run(firstRun, style: style)
+                    bullet["t"] = ""
+                    bullet["img"] = bulletPicture
+                    bullet["sz"] = (bullet["sz"] as? Double ?? 18) * (properties.bulletSize ?? 1)
+                    json["bullet"] = bullet
+                } else if let bulletText {
                     var bulletRun = firstRun
                     bulletRun.isUnderlined = false
                     if let font = properties.bulletFont, !font.hasPrefix("+"), !["Arial", "Wingdings", "Symbol"].contains(font) {

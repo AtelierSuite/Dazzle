@@ -40,7 +40,7 @@ public enum PPTXReader {
         let templates = readTemplates(main: main, mainRelationships: mainRelationships, mainPart: mainPart, parts: parts)
         let resources = DeckResources(
             masters: templates.masters, layouts: templates.layouts, layoutOrder: templates.layoutOrder,
-            defaultTextStyle: ListStyle(element: main.firstChild(named: "defaultTextStyle")),
+            defaultTextStyle: ListStyle(element: main.firstChild(named: "defaultTextStyle"), image: { target($0) }),
             notesMasterPath: target(main.firstChild(named: "notesMasterIdLst")?.firstChild(named: "notesMasterId")?.relationshipID),
             tableStyles: readTableStyles(
                 mainRelationships.first { $0.type.hasSuffix("/tableStyles") }
@@ -258,9 +258,9 @@ public enum PPTXReader {
             path: path, layoutPaths: layoutPaths, theme: theme, colorMap: colorMap,
             background: Background(element: common?.firstChild(named: "bg"), image: parser.target(of:)),
             shapes: parser.shapes(in: common?.firstChild(named: "spTree")),
-            titleStyle: ListStyle(element: styles?.firstChild(named: "titleStyle")),
-            bodyStyle: ListStyle(element: styles?.firstChild(named: "bodyStyle")),
-            otherStyle: ListStyle(element: styles?.firstChild(named: "otherStyle"))
+            titleStyle: ListStyle(element: styles?.firstChild(named: "titleStyle"), image: parser.target(of:)),
+            bodyStyle: ListStyle(element: styles?.firstChild(named: "bodyStyle"), image: parser.target(of:)),
+            otherStyle: ListStyle(element: styles?.firstChild(named: "otherStyle"), image: parser.target(of:))
         )
     }
 

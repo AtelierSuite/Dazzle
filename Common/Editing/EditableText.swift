@@ -181,7 +181,7 @@ enum EditableText {
         let margin = CGFloat(EMU.points(properties.marginLeft ?? 0)) * scale
         let firstLine = max(margin + CGFloat(EMU.points(properties.indent ?? 0)) * scale, 0)
         let hasBullet = switch properties.bullet {
-        case .character?, .autoNumber?: true
+        case .character?, .autoNumber?, .picture?: true
         default: false
         }
         style.headIndent = margin
