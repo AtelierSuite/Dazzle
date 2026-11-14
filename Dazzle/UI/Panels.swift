@@ -119,7 +119,10 @@ struct TextPanel: View {
             }
 
             Section {
-                LinkEditor(link: style.link, presentation: presentation) { state.setTextLink($0, in: &presentation) }
+                LinkEditor(
+                    link: style.link, tooltip: style.linkTooltip, presentation: presentation,
+                    onTooltipChange: { state.setTextLinkTooltip($0, in: &presentation) }
+                ) { state.setTextLink($0, in: &presentation) }
             } header: {
                 Text("Format.Section.Link")
             } footer: {
@@ -235,6 +238,7 @@ struct FormatPanel: View {
         }
         if case .picture(let picture) = shape.kind, !state.hasMultipleSelection {
             pictureSection(shape, picture: picture)
+            if let media = picture.media { playbackSection(media) }
         }
         if case .shape = shape.kind {
             outlineSection(shape)
@@ -269,7 +273,10 @@ struct FormatPanel: View {
         GroupButtons(presentation: $presentation, state: state)
         if !state.hasMultipleSelection {
             Section {
-                LinkEditor(link: shape.link, presentation: presentation) { state.setShapeLink($0, in: &presentation) }
+                LinkEditor(
+                    link: shape.link, tooltip: shape.linkTooltip, presentation: presentation,
+                    onTooltipChange: { state.setShapeLinkTooltip($0, in: &presentation) }
+                ) { state.setShapeLink($0, in: &presentation) }
             } header: {
                 Text("Format.Section.Link")
             } footer: {
@@ -336,6 +343,72 @@ struct FormatPanel: View {
             }
             .disabled(picture.cropLeft == 0 && picture.cropTop == 0 && picture.cropRight == 0 && picture.cropBottom == 0)
         }
+    }
+
+    /// How a video or sound plays in the slideshow.
+    private func playbackSection(_ media: SlideShape.Media) -> some View {
+        Section {
+            secondsStepper("Media.TrimStart", value: media.trimStart, identifier: "trimStart") { $0.trimStart = $1 }
+            secondsStepper("Media.TrimEnd", value: media.trimEnd, identifier: "trimEnd") { $0.trimEnd = $1 }
+            secondsStepper("Media.FadeIn", value: media.fadeIn, identifier: "fadeIn") { $0.fadeIn = $1 }
+            secondsStepper("Media.FadeOut", value: media.fadeOut, identifier: "fadeOut") { $0.fadeOut = $1 }
+            LabeledContent("Media.Volume") {
+                HStack {
+                    Slider(value: Binding(
+                        get: { media.volume },
+                        set: { value in state.setMedia(in: &presentation) { $0.volume = value } }
+                    ), in: 0...1)
+                    .disabled(media.isMuted)
+                    Text(media.effectiveVolume, format: .percent.precision(.fractionLength(0)))
+                        .monospacedDigit()
+                        .frame(minWidth: 44, alignment: .trailing)
+                }
+            }
+            .accessibilityIdentifier("mediaVolume")
+            mediaToggle("Media.Mute", isOn: media.isMuted, identifier: "mediaMute") { $0.isMuted = $1 }
+            mediaToggle("Media.Loop", isOn: media.loops, identifier: "mediaLoop") { $0.loops = $1 }
+            mediaToggle("Media.Rewind", isOn: media.rewinds, identifier: "mediaRewind") { $0.rewinds = $1 }
+            if media.kind == .video {
+                mediaToggle("Media.FullScreen", isOn: media.playsFullScreen, identifier: "mediaFullScreen") {
+                    $0.playsFullScreen = $1
+                }
+            } else {
+                mediaToggle("Media.AcrossSlides", isOn: media.playsAcrossSlides, identifier: "mediaAcrossSlides") {
+                    $0.playsAcrossSlides = $1
+                }
+            }
+            mediaToggle("Media.HideWhenStopped", isOn: media.hidesWhenNotPlaying, identifier: "mediaHide") {
+                $0.hidesWhenNotPlaying = $1
+            }
+        } header: {
+            Text("Format.Section.Playback")
+        } footer: {
+            Text("Format.Playback.Footer")
+        }
+    }
+
+    private func secondsStepper(
+        _ title: LocalizedStringKey, value: Double, identifier: String,
+        set: @escaping (inout SlideShape.Media, Double) -> Void
+    ) -> some View {
+        LabeledContent(title) {
+            Stepper(
+                value: Binding(get: { value }, set: { new in state.setMedia(in: &presentation) { set(&$0, new) } }),
+                in: 0...3_600, step: 0.5
+            ) {
+                Text(String(format: String(localized: "Media.Seconds"), value.formatted(.number.precision(.fractionLength(1)))))
+                    .monospacedDigit()
+            }
+            .fixedSize()
+            .accessibilityIdentifier(identifier)
+        }
+    }
+
+    private func mediaToggle(
+        _ title: LocalizedStringKey, isOn: Bool, identifier: String, set: @escaping (inout SlideShape.Media, Bool) -> Void
+    ) -> some View {
+        Toggle(title, isOn: Binding(get: { isOn }, set: { new in state.setMedia(in: &presentation) { set(&$0, new) } }))
+            .accessibilityIdentifier(identifier)
     }
 
     /// What a screen reader says in place of the shape.
@@ -639,11 +712,20 @@ struct FormatPanel: View {
                         }
                     }
                     .accessibilityIdentifier("slideSize")
-                    Toggle("Format.LoopSlideshow", isOn: Binding(
-                        get: { presentation.loopsSlideshow },
-                        set: { state.setLoopsSlideshow($0, in: &presentation) }
-                    ))
-                    .accessibilityIdentifier("loopSlideshow")
+                    NavigationLink {
+                        SlideshowSettingsView(presentation: $presentation, state: state)
+                    } label: {
+                        Text("Show.Title")
+                    }
+                    .accessibilityIdentifier("slideshowSettings")
+                    NavigationLink {
+                        CustomShowsView(presentation: $presentation, state: state)
+                    } label: {
+                        LabeledContent("CustomShow.Title") {
+                            if !presentation.customShows.isEmpty { Text(verbatim: "\(presentation.customShows.count)") }
+                        }
+                    }
+                    .accessibilityIdentifier("customShows")
                     .confirmationDialog(
                         "SlideSize.Scaling.Title", isPresented: Binding(get: { pendingSize != nil }, set: { if !$0 { pendingSize = nil } }),
                         titleVisibility: .visible

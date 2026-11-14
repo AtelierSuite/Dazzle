@@ -39,7 +39,9 @@ struct DazzleDocument: FileDocument {
         if Self.isKeynote(configuration.contentType) {
             return try KeynoteWriter.fileWrapper(for: presentation)
         }
-        return FileWrapper(regularFileWithContents: try PPTXWriter.data(from: presentation))
+        // Saved as by the name comments are signed with, if one was given.
+        let author = UserDefaults.standard.string(forKey: "commentAuthorName")
+        return FileWrapper(regularFileWithContents: try PPTXWriter.data(from: presentation.stampedForSaving(by: author)))
     }
 
     private static func isKeynote(_ type: UTType) -> Bool {

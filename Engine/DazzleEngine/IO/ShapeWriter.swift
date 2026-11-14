@@ -20,7 +20,7 @@ public struct ShapeWriter {
         if shape.edits.isEmpty, let source = shape.source { return source }
         guard let element = element(for: shape) else { return shape.source }
         let edits: Set<SlideShape.Edit> = shape.source == nil
-            ? [.transform, .fill, .line, .text, .table, .picture, .altText, .effects, .link, .geometry, .connections]
+            ? [.transform, .fill, .line, .text, .table, .picture, .altText, .effects, .link, .geometry, .connections, .media]
             : shape.edits
         if edits.contains(.transform), shape.hasOwnFrame || shape.source != nil {
             writeTransform(of: shape, into: element)
@@ -54,9 +54,12 @@ public struct ShapeWriter {
         if edits.contains(.picture), case .picture(let picture) = shape.kind {
             writePicture(picture, into: element)
         }
+        if edits.contains(.media), case .picture(let picture) = shape.kind, let media = picture.media {
+            writeMediaTiming(media, into: element)
+        }
         if edits.contains(.link), shape.link != .other {
             let common = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "cNvPr")
-            if let common { writeLink(shape.link, into: common, before: ["hlinkHover", "extLst"], atStart: true) }
+            if let common { writeLink(shape.link, tooltip: shape.linkTooltip, into: common, before: ["hlinkHover", "extLst"], atStart: true) }
         }
         if edits.contains(.altText) {
             let common = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "cNvPr")
@@ -506,16 +509,17 @@ public struct ShapeWriter {
 
     // MARK: - Links
 
-    /// Replaces an element's `a:hlinkClick` with `link`, or with none.
-    private mutating func writeLink(_ link: Hyperlink?, into element: XMLElement, before names: Set<String>, atStart: Bool = false) {
+    /// Replaces an element's `a:hlinkClick` with `link` and its ScreenTip,
+    /// or with none.
+    private mutating func writeLink(_ link: Hyperlink?, tooltip: String?, into element: XMLElement, before names: Set<String>, atStart: Bool = false) {
         for child in element.children(named: "hlinkClick") { element.removeChild(child) }
-        guard let link, let xml = linkXML(link), let new = fragment(xml) else { return }
+        guard let link, let xml = linkXML(link, tooltip: tooltip), let new = fragment(xml) else { return }
         let before = element.children.firstIndex { names.contains($0.name) }
         element.insertChild(new, at: before ?? (atStart ? 0 : element.children.count))
     }
 
     /// A link's `a:hlinkClick`, with the relationship it needs added.
-    private mutating func linkXML(_ link: Hyperlink) -> String? {
+    private mutating func linkXML(_ link: Hyperlink, tooltip: String?) -> String? {
         switch link {
         case .url(let address):
             let id: String
@@ -527,12 +531,12 @@ public struct ShapeWriter {
                 id = Relationship.unusedID(in: relationships)
                 relationships.append(Relationship(id: id, type: OOXML.RelationshipType.hyperlink, target: address, isExternal: true))
             }
-            return link.xml(relationshipID: id)
+            return link.xml(relationshipID: id, tooltip: tooltip)
         case .slide(let slideID):
             guard let path = slidePath(slideID) else { return nil }
-            return link.xml(relationshipID: relationshipID(for: path, type: OOXML.RelationshipType.slide))
+            return link.xml(relationshipID: relationshipID(for: path, type: OOXML.RelationshipType.slide), tooltip: tooltip)
         default:
-            return link.xml(relationshipID: nil)
+            return link.xml(relationshipID: nil, tooltip: tooltip)
         }
     }
 
@@ -567,6 +571,37 @@ public struct ShapeWriter {
         let after = fill.children.firstIndex { $0.name == "blip" }
         fill.insertChild(crop, at: (after ?? -1) + 1)
     }
+
+    /// Writes a video or sound's trim and fades into its `p14:media`, which
+    /// PowerPoint 2010 and later read; the rest of how it plays is in the
+    /// slide's timing.
+    private func writeMediaTiming(_ media: SlideShape.Media, into element: XMLElement) {
+        let details = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "nvPr")
+        guard let embedded = details?.firstChild(named: "extLst")?.children
+            .compactMap({ $0.firstChild(named: "media") }).first else { return }
+        let prefix = embedded.qualifiedName.split(separator: ":").dropLast().last.map(String.init) ?? "p14"
+        let uri = embedded.sourceNamespaceBinding(forPrefix: prefix) ?? Self.powerPoint2010
+        let namespaces = fragmentNamespaces.merging([prefix: uri]) { _, new in new }
+        for name in ["trim", "fade"] { embedded.firstChild(named: name).map(embedded.removeChild) }
+        func ms(_ seconds: Double) -> String { String(Int((max(seconds, 0) * 1_000).rounded())) }
+        var added: [String] = []
+        if media.trimStart > 0 || media.trimEnd > 0 {
+            let start = media.trimStart > 0 ? " st=\"\(ms(media.trimStart))\"" : ""
+            let end = media.trimEnd > 0 ? " end=\"\(ms(media.trimEnd))\"" : ""
+            added.append("<\(prefix):trim\(start)\(end)/>")
+        }
+        if media.fadeIn > 0 || media.fadeOut > 0 {
+            let fadeIn = media.fadeIn > 0 ? " in=\"\(ms(media.fadeIn))\"" : ""
+            let fadeOut = media.fadeOut > 0 ? " out=\"\(ms(media.fadeOut))\"" : ""
+            added.append("<\(prefix):fade\(fadeIn)\(fadeOut)/>")
+        }
+        // Trim, then fade, before any bookmarks and extensions.
+        for (offset, xml) in added.enumerated() {
+            if let child = XMLLite.fragment(xml, namespaces: namespaces) { embedded.insertChild(child, at: offset) }
+        }
+    }
+
+    private static let powerPoint2010 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
 
     // MARK: - Tables
 
@@ -721,7 +756,8 @@ public struct ShapeWriter {
         case .autoNumber(let scheme, let start)?:
             let startAt = start == 1 ? "" : " startAt=\"\(start)\""
             place("<a:buAutoNum type=\"\(XMLLite.escape(scheme))\"\(startAt)/>", replacing: bullets)
-        case nil: break
+        // Only ever read from the file, whose `a:buBlip` and its relationship are kept as they were.
+        case .picture?, nil: break
         }
     }
 
@@ -799,7 +835,7 @@ public struct ShapeWriter {
         }
         // A link Dazzle does not follow is left as the file had it.
         if properties.link != .other, name == "rPr" {
-            writeLink(properties.link, into: element, before: ["hlinkMouseOver", "rtl", "extLst"])
+            writeLink(properties.link, tooltip: properties.linkTooltip, into: element, before: ["hlinkMouseOver", "rtl", "extLst"])
         }
         return XMLLite.serialize(element, inheritedNamespaces: fragmentNamespaces) ?? ""
     }

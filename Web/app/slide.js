@@ -725,6 +725,8 @@ export class SlideDrawer {
     if (node.line) this.stroke(node.path, node.line, geometry, context, node);
     if (node.media) {
       parent.dataset.media = JSON.stringify(node.media);
+      // A slideshow leaves it out until it plays.
+      if (node.media.hide) parent.dataset.mediaHide = "1";
       if (context.editing) {
         // A video or sound is marked as one.
         const size = Math.min(Math.max(Math.min(node.w, node.h) * 0.18, 10), 28);
@@ -876,7 +878,16 @@ export class SlideDrawer {
     if (paragraph.bullet && !prompt) {
       const bullet = html("span", "text__bullet", element);
       bullet.contentEditable = "false";
-      bullet.textContent = paragraph.bullet.t;
+      if (paragraph.bullet.img) {
+        const picture = html("img", "text__bullet-picture", bullet);
+        picture.alt = "";
+        const show = (url) => { if (url) picture.src = url; };
+        const known = this.media.peek(paragraph.bullet.img);
+        if (known) show(known);
+        else this.media.url(paragraph.bullet.img).then(show);
+      } else {
+        bullet.textContent = paragraph.bullet.t;
+      }
       runStyle(bullet, paragraph.bullet, scale);
       // The tab after the bullet lands on the margin, or past the bullet when it hangs into nothing.
       const size = (paragraph.runs[0]?.sz ?? paragraph.end.sz) * scale;

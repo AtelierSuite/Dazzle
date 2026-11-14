@@ -478,7 +478,7 @@ struct SlideCanvas: View {
         let style = SlideStyleContext(presentation: presentation, slide: slide)
         let sources = style.sources(for: shape)
         let slideNumber = (presentation.index(of: slide.id) ?? 0) + 1
-        let renderer = TextRenderer(style: style, slideNumber: slideNumber)
+        let renderer = TextRenderer(style: style, slideNumber: slideNumber, presentation: presentation)
         let (area, properties) = renderer.textArea(of: shape, sources: sources)
         let frame = shape.frame.points
         // Shrunk to fit as the slide draws it.
