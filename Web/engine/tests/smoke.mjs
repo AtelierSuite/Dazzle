@@ -1675,6 +1675,27 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
+test("reads, edits and saves document properties", () => {
+  call("new", { name: "Properties.pptx" });
+  call("setProperties", { title: "Quarterly <Review>", author: "Ada", keywords: "plans, numbers", comments: "Line one\nLine two" });
+  assert.equal(call("properties").result.title, "Quarterly <Review>");
+  const before = Date.now() - 1000;
+  const saved = unzip(call("save", { format: "pptx", author: "Grace" }).payload);
+  const core = new TextDecoder().decode(saved.get("docProps/core.xml"));
+  assert.match(core, /<dc:title>Quarterly &lt;Review&gt;<\/dc:title>/);
+  assert.match(core, /<cp:lastModifiedBy>Grace<\/cp:lastModifiedBy>/);
+  const reopened = call("open", { name: "Properties.pptx" }, zip(saved));
+  assert.ok(reopened);
+  const properties = call("properties").result;
+  assert.equal(properties.author, "Ada");
+  assert.equal(properties.comments, "Line one\nLine two");
+  assert.equal(properties.lastModifiedBy, "Grace");
+  assert.ok(Date.parse(properties.modified) >= before, "modified when saved");
+  // A draft kept on the device leaves the saving stamp alone.
+  const draft = new TextDecoder().decode(unzip(call("save", { keep: true, draft: true, author: "Someone" }).payload).get("docProps/core.xml"));
+  assert.match(draft, /<cp:lastModifiedBy>Grace<\/cp:lastModifiedBy>/);
+});
+
 test("edits masters and layouts in master view, and has slides follow them", () => {
   const made = call("new", { name: "Untitled.pptx" });
   assert.equal(made.result.canEditMasters, true);

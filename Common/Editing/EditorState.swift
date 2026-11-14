@@ -13,6 +13,7 @@ enum EditorPanel: String, Identifiable, Hashable {
     case comments
     case headerFooter
     case animations
+    case properties
 
     var id: String { rawValue }
 
@@ -23,6 +24,7 @@ enum EditorPanel: String, Identifiable, Hashable {
         case .comments: String(localized: "Panel.Comments.Title")
         case .headerFooter: String(localized: "Panel.HeaderFooter.Title")
         case .animations: String(localized: "Panel.Animations.Title")
+        case .properties: String(localized: "Panel.Properties.Title")
         case .text: String(localized: "Panel.Text.Title")
         case .format: String(localized: "Panel.Format.Title")
         case .notes: String(localized: "Panel.Notes.Title")
@@ -519,6 +521,12 @@ final class EditorState {
     func setLoopsSlideshow(_ isOn: Bool, in presentation: inout Presentation) {
         presentation.loopsSlideshow = isOn
         presentation.isShowSettingsModified = true
+    }
+
+    func setProperty(_ field: DocumentProperties.Field, to value: String, in presentation: inout Presentation) {
+        guard presentation.properties[field] != value else { return }
+        presentation.properties[field] = value
+        presentation.arePropertiesModified = true
     }
 
     func setBackground(_ fill: Fill?, in presentation: inout Presentation) {

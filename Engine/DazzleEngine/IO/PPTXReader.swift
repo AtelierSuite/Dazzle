@@ -94,6 +94,7 @@ public enum PPTXReader {
         if let properties = part(of: OOXML.RelationshipType.presProps), let root = try? XMLLite.parse(properties) {
             presentation.loopsSlideshow = root.firstChild(named: "showPr")?.attribute("loop") == "1"
         }
+        presentation.properties = DocumentPropertiesXML.properties(in: parts)
         presentation.resolveSlideLinks()
         return presentation
     }

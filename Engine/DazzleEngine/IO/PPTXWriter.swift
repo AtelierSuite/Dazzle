@@ -74,6 +74,9 @@ private struct PackageBuilder {
         if presentation.isShowSettingsModified {
             try writeShowSettings()
         }
+        if presentation.arePropertiesModified {
+            try writeDocumentProperties()
+        }
         parts[PackagePath.relationships(of: mainPart)] = Relationship.xml(mainRelationships)
         parts["[Content_Types].xml"] = contentTypes.data
     }
@@ -284,6 +287,38 @@ private struct PackageBuilder {
                 id: Relationship.unusedID(in: mainRelationships), type: OOXML.RelationshipType.presProps,
                 target: PackagePath.relativeTarget(to: path, from: mainPart)
             ))
+        }
+    }
+
+    // MARK: - Document properties
+
+    /// `docProps/core.xml` and `docProps/app.xml`, made if the file had none.
+    private mutating func writeDocumentProperties() throws {
+        var rootRelationships = Relationship.parse(parts["_rels/.rels"])
+        let (existingCore, existingApp) = DocumentPropertiesXML.paths(in: parts)
+        func write(_ data: Data?, existing: String?, defaultPath: String, type: String, contentType: String) throws {
+            let path = existing ?? defaultPath
+            guard let data else { throw PresentationWriteError.unwritablePart(path) }
+            parts[path] = data
+            guard existing == nil else { return }
+            contentTypes.setOverride(contentType, for: path)
+            rootRelationships.append(Relationship(id: Relationship.unusedID(in: rootRelationships), type: type, target: path))
+        }
+        try write(
+            DocumentPropertiesXML.coreXML(presentation.properties, existing: existingCore.flatMap { parts[$0] }),
+            existing: existingCore, defaultPath: "docProps/core.xml",
+            type: DocumentPropertiesXML.coreRelationship, contentType: DocumentPropertiesXML.coreContentType
+        )
+        // A file without extended properties only gets them for a company.
+        if existingApp != nil || !presentation.properties.company.isEmpty {
+            try write(
+                DocumentPropertiesXML.appXML(presentation.properties, slides: slides, existing: existingApp.flatMap { parts[$0] }),
+                existing: existingApp, defaultPath: "docProps/app.xml",
+                type: DocumentPropertiesXML.extendedRelationship, contentType: DocumentPropertiesXML.extendedContentType
+            )
+        }
+        if existingCore == nil || existingApp == nil {
+            parts["_rels/.rels"] = Relationship.xml(rootRelationships)
         }
     }
 

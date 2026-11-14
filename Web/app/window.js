@@ -400,6 +400,7 @@ export class PresentationWindow {
       save: { label: t("Menu.File.Save"), shortcut: shortcut("S"), enabled: has, run: () => this.save() },
       saveAs: { label: t("Web.Menu.SaveAs"), shortcut: shortcut("S", { shift: true }), enabled: has, run: () => this.saveAs() },
       rename: { label: t("Menu.File.Rename"), enabled: has, run: () => this.renameDocument() },
+      properties: { label: t("Mac.Menu.File.Properties"), enabled: has, run: () => this.showProperties() },
       exportPowerPoint: { label: t("Menu.File.Export.PowerPoint"), enabled: has, run: () => this.exportAs({ key: "pptx", extension: "pptx", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }) },
       exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.print() },
       print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has && !master, run: () => this.print() },
@@ -620,6 +621,8 @@ export class PresentationWindow {
         this.item("exportPDF"), this.item("exportPowerPoint"),
         ...(keynote ? [{ label: t("Web.Export.Keynote"), action: () => this.exportAs(keynote) }] : []),
       ] },
+      { separator: true },
+      this.item("properties"),
       { separator: true },
       this.item("unsupported"),
       this.item("print"),
@@ -1488,6 +1491,47 @@ export class PresentationWindow {
     });
   }
 
+  /** The presentation's title, author and the rest, and when it was created and last saved. */
+  async showProperties() {
+    const properties = await this.engine.call("properties");
+    if (!properties) return;
+    const fields = [
+      ["title", "Properties.Title"], ["subject", "Properties.Subject"], ["author", "Properties.Author"], ["company", "Properties.Company"],
+      ["keywords", "Properties.Keywords"], ["category", "Properties.Category"],
+    ];
+    const row = (label, control) => `<span class="ds-form__label">${escapeHTML(label)}</span><span class="ds-form__control">${control}</span>`;
+    const when = (value) => value ? new Date(value).toLocaleString(language, { dateStyle: "medium", timeStyle: "short" }) : "—";
+    const history = [
+      ["Properties.Created", when(properties.created)], ["Properties.Modified", when(properties.modified)],
+      ["Properties.LastModifiedBy", properties.lastModifiedBy || "—"],
+      ...(properties.revision != null ? [["Properties.Revision", String(properties.revision)]] : []),
+      ...(properties.application ? [["Properties.Application", properties.application]] : []),
+    ];
+    const backdrop = this.sheet(`
+      <form class="ds-sheet" role="dialog" aria-labelledby="properties-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="properties-title">${escapeHTML(t("Panel.Properties.Title"))}</h2>
+          <div class="ds-form app__properties">
+            ${fields.map(([key, label]) => row(t(label), `<input class="ds-text-input ds-text-input--xs" name="${key}" value="${escapeHTML(properties[key] ?? "")}" aria-label="${escapeHTML(t(label))}">`)).join("")}
+            ${row(t("Properties.Comments"), `<textarea class="ds-text-input" name="comments" rows="3" aria-label="${escapeHTML(t("Properties.Comments"))}">${escapeHTML(properties.comments ?? "")}</textarea>`)}
+            ${history.map(([label, value]) => row(t(label), `<span>${escapeHTML(value)}</span>`)).join("")}
+          </div>
+          ${properties.keynote ? `<p class="ds-caption">${escapeHTML(t("Properties.Keynote.Footer"))}</p>` : ""}
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Common.OK"))}</button>
+        </div>
+      </form>`);
+    const form = backdrop.querySelector("form");
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const values = Object.fromEntries([...fields.map(([key]) => key), "comments"].map((key) => [key, String(new FormData(form).get(key) ?? "")]));
+      dismissSheet(backdrop);
+      await this.engine.call("setProperties", values);
+    });
+  }
+
   /** How everything on the slides should change size with them. Resolves with "maximize", "ensureFit" or null. */
   askScaling() {
     return new Promise((resolve) => {
@@ -1836,7 +1880,7 @@ export class PresentationWindow {
     if (!this.hasUnkeptChanges) return;
     const version = this.engine.state.version;
     try {
-      const { result, payload } = await this.engine.call("save", { keep: true });
+      const { result, payload } = await this.engine.call("save", { keep: true, draft: true });
       if (await storage.writeDraft(record.id, payload)) {
         record.draftAt = Date.now();
         record.draftName = result.fileName;
@@ -1864,7 +1908,7 @@ export class PresentationWindow {
     const sameKind = record.handle && record.handle.name === format.fileName;
     if (!sameKind) return this.saveAs();
     try {
-      const { payload } = await this.engine.call("save", { format: format.key });
+      const { payload } = await this.engine.call("save", { format: format.key, author: readSetting("author", "") });
       if (!(await files.writeHandle(record.handle, payload))) return;
       await this.saved(record);
     } catch (error) {
@@ -1877,11 +1921,11 @@ export class PresentationWindow {
     if (!record) return;
     await this.flushEdits();
     try {
-      const { result, payload } = await this.engine.call("save", { format: format.key, keep: true });
+      const { result, payload } = await this.engine.call("save", { format: format.key, author: readSetting("author", ""), keep: true });
       const saved = await files.saveFileAs(payload, result.fileName, { ...format, description: this.formatLabel(format.key) });
       if (!saved) return;
       await this.engine.call("rename", { name: saved.name });
-      await this.engine.call("save", { format: format.key, keep: false }).catch(() => {});
+      await this.engine.call("save", { format: format.key, author: readSetting("author", ""), keep: false }).catch(() => {});
       record.name = saved.name;
       if (saved.handle) record.handle = saved.handle;
       await this.saved(record);
@@ -1895,7 +1939,7 @@ export class PresentationWindow {
     if (!this.document) return;
     await this.flushEdits();
     try {
-      const { result, payload } = await this.engine.call("save", { format: format.key, keep: true });
+      const { result, payload } = await this.engine.call("save", { format: format.key, author: readSetting("author", ""), keep: true });
       await files.saveFileAs(payload, result.fileName, { ...format, description: this.formatLabel(format.key) });
     } catch (error) {
       this.showMessage(error.message, "error");

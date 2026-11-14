@@ -14,6 +14,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     lazy var finder = FindController(deck: deck)
     /// The Header & Footer sheet, while it is open.
     var headerFooter: HeaderFooterSheet?
+    var propertiesSheet: PropertiesSheet?
 
     var canvas: CanvasViewController { split.editor.canvas }
     var presentationDocument: PresentationDocument? { document as? PresentationDocument }

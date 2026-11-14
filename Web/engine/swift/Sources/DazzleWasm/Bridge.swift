@@ -73,7 +73,7 @@ final class Bridge {
             return info()
         case "save":
             let format = (r["format"] as? String).flatMap(WebSession.Format.init(rawValue:)) ?? session.saveFormats[0]
-            output = try session.data(as: format)
+            output = try session.data(as: format, savedBy: r["draft"] as? Bool == true ? nil : r["author"] as? String ?? "")
             let fileName = session.fileName(for: format)
             if r["keep"] as? Bool != true { session.markSaved(as: format) }
             return ["fileName": fileName, "format": format.rawValue, "mime": format.mimeType]
@@ -222,6 +222,22 @@ final class Bridge {
             }
         case "loop":
             edit { state, presentation in state.setLoopsSlideshow(r["on"] as? Bool ?? false, in: &presentation) }
+        case "properties":
+            let properties = presentation.properties
+            var json: [String: Any] = Dictionary(uniqueKeysWithValues: DocumentProperties.Field.allCases.map { ($0.rawValue, properties[$0]) })
+            json["created"] = properties.created.map(DocumentPropertiesXML.string) as Any
+            json["modified"] = properties.modified.map(DocumentPropertiesXML.string) as Any
+            json["lastModifiedBy"] = properties.lastModifiedBy
+            json["revision"] = properties.revision as Any
+            json["application"] = properties.applicationDescription
+            json["keynote"] = presentation.keynoteSource != nil
+            return json
+        case "setProperties":
+            let values = DocumentProperties.Field.allCases.compactMap { field in (r[field.rawValue] as? String).map { (field, $0) } }
+            guard values.contains(where: { presentation.properties[$0.0] != $0.1 }) else { return nil }
+            edit { state, presentation in
+                for (field, value) in values { state.setProperty(field, to: value, in: &presentation) }
+            }
         case "headerFooter":
             var settings = HeaderFooterSettings()
             settings.showsDate = r["date"] as? Bool ?? false
