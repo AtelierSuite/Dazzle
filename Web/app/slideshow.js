@@ -764,17 +764,31 @@ function collectMedia(nodes, paths) {
   }
 }
 
-/** Plays or pauses the movie or sound a picture stands for, over the picture. */
+/** Each picture's player, wherever it is shown. */
+const players = new WeakMap();
+
+/**
+ * Plays or pauses the movie or sound a picture stands for, over the picture,
+ * or over the whole show for a video set to play full screen. It plays the
+ * trimmed part of the file, at its volume, fading in and out, and when it
+ * ends it loops, rewinds or stays on its last frame as it is set to.
+ */
 export async function toggleMedia(slide, id, media, action = "toggle") {
   const shape = slide?.querySelector(`.shape[data-id="${id}"]`);
   const info = shape?.querySelector("[data-media]")?.dataset.media;
   // A player still on its way plays once it arrives.
   if (!shape || !info || shape.dataset.mediaLoading) return;
-  const { kind, path } = JSON.parse(info);
-  let player = shape.querySelector(".slideshow__media");
-  if (player) {
-    if (player.paused) player.play();
-    else if (action === "toggle") player.pause();
+  const settings = JSON.parse(info);
+  const { kind, path } = settings;
+  const [trimStart = 0, trimEnd = 0] = settings.trim ?? [];
+  const [fadeIn = 0, fadeOut = 0] = settings.fade ?? [];
+  const volume = settings.volume ?? 1;
+  let player = players.get(shape);
+  if (player?.isConnected) {
+    if (player.paused) {
+      if (player.ended || player.currentTime >= endOf(player) - 0.05) player.currentTime = trimStart;
+      player.play().catch(() => {});
+    } else if (action === "toggle") player.pause();
     return;
   }
   if (!path) return;
@@ -786,6 +800,56 @@ export async function toggleMedia(slide, id, media, action = "toggle") {
   player.className = "slideshow__media";
   player.src = url;
   player.playsInline = true;
-  shape.querySelector(".shape__body").append(player);
+  player.volume = Math.min(Math.max(volume, 0), 1);
+  player.muted = volume <= 0;
+  players.set(shape, player);
+
+  function endOf(element) {
+    const duration = Number.isFinite(element.duration) ? element.duration : Infinity;
+    return Math.max(duration - trimEnd, trimStart);
+  }
+  function level() {
+    const time = player.currentTime;
+    let value = 1;
+    if (fadeIn > 0) value = Math.min(value, (time - trimStart) / fadeIn);
+    if (fadeOut > 0) value = Math.min(value, (endOf(player) - time) / fadeOut);
+    return Math.min(Math.max(value, 0), 1);
+  }
+  function finished() {
+    if (settings.loop) {
+      player.currentTime = trimStart;
+      player.play().catch(() => {});
+      return;
+    }
+    player.pause();
+    if (settings.rewind) player.currentTime = trimStart;
+    // Back to its picture, or out of sight if it shows only while playing.
+    if (settings.rewind || settings.hide || settings.full) player.remove();
+  }
+  function tick() {
+    if (!player.isConnected) return;
+    if (fadeIn > 0 || fadeOut > 0) {
+      const amount = level();
+      player.volume = Math.min(Math.max(volume, 0), 1) * amount;
+      if (kind === "video") player.style.opacity = String(amount);
+    }
+    if (!player.paused && trimEnd > 0 && player.currentTime >= endOf(player)) finished();
+    if (!player.paused) requestAnimationFrame(tick);
+  }
+  player.addEventListener("loadedmetadata", () => { if (trimStart > 0) player.currentTime = trimStart; }, { once: true });
+  player.addEventListener("play", () => requestAnimationFrame(tick));
+  player.addEventListener("ended", finished);
+
+  const stage = settings.full ? slide.closest(".slideshow__stage, .presenter__stage, .audience__stage") : null;
+  if (stage) {
+    player.classList.add("slideshow__media--full");
+    stage.append(player);
+  } else {
+    shape.querySelector(".shape__body").append(player);
+  }
+  if (fadeIn > 0) {
+    player.volume = 0;
+    if (kind === "video") player.style.opacity = "0";
+  }
   player.play().catch(() => {});
 }

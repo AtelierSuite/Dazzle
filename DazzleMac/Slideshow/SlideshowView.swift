@@ -106,9 +106,16 @@ final class SlideshowView: NSView {
                 return view
             }()
             let frame = shape.frame.points
-            view.frame = CGRect(x: rect.minX + frame.minX * scale, y: rect.minY + frame.minY * scale,
-                                width: frame.width * scale, height: frame.height * scale)
+            // A video set to play full screen fills the screen, on black, while it plays.
+            let isFullScreen = media.fullScreenVideo == shape.id
+            view.frame = isFullScreen ? bounds : CGRect(
+                x: rect.minX + frame.minX * scale, y: rect.minY + frame.minY * scale,
+                width: frame.width * scale, height: frame.height * scale
+            )
+            view.layer?.backgroundColor = isFullScreen ? NSColor.black.cgColor : nil
+            if isFullScreen, subviews.last !== view { addSubview(view, positioned: .above, relativeTo: nil) }
             view.isHidden = !media.started.contains(shape.id)
+            view.alphaValue = media.opacity(of: shape.id)
         }
     }
 
@@ -126,7 +133,7 @@ final class SlideshowView: NSView {
         if let showing = session.transition {
             drawTransition(showing, to: slide, in: presentation, rect: rect, context: context)
         } else {
-            var options = SlideRenderer.Options.presentation
+            var options = SlideRenderer.Options.slideshow
             options.animation = session.animationFrame(at: Date())
             context.saveGState()
             context.translateBy(x: rect.minX, y: rect.minY)
@@ -146,7 +153,7 @@ final class SlideshowView: NSView {
         let pixels = Int((rect.width * (window?.backingScaleFactor ?? 2)).rounded())
         if transitionPictures?.id != showing.id || transitionPictures?.width != pixels {
             func picture(_ slide: Slide, _ frame: AnimationFrame?) -> CGImage? {
-                var options = SlideRenderer.Options.presentation
+                var options = SlideRenderer.Options.slideshow
                 options.animation = frame
                 return SlideExporter.cgImage(of: slide, in: presentation, width: pixels, options: options)
             }
@@ -172,7 +179,8 @@ final class SlideshowView: NSView {
     /// A play button over each paused video or sound, for the presenter to click.
     private func drawMediaButtons(on slide: Slide, in rect: CGRect) {
         let scale = rect.width / max(slideSize.width, 1)
-        for (shape, media) in MediaPlayback.media(on: slide) where !session.media.isPlaying(shape.id) {
+        for (shape, media) in MediaPlayback.media(on: slide)
+        where !session.media.isPlaying(shape.id) && !media.hidesWhenNotPlaying {
             let frame = shape.frame.points
             let side = min(max(min(frame.width, frame.height) * scale * 0.3, 24), 64)
             let symbol = media.kind == .video ? "play.circle.fill" : "speaker.wave.2.circle.fill"

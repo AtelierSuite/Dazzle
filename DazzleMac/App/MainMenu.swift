@@ -60,6 +60,8 @@ enum MainMenu {
         export.addItem(item(String(localized: "Menu.File.Export.PowerPoint"), #selector(Commands.exportPowerPoint(_:))))
         menu.addItem(submenu(export))
         menu.addItem(.separator())
+        menu.addItem(item(String(localized: "Mac.Menu.File.Properties"), #selector(Commands.showProperties(_:))))
+        menu.addItem(.separator())
         menu.addItem(item(String(localized: "Menu.File.PageSetup"), #selector(NSDocument.runPageLayout(_:)), "p", [.command, .shift]))
         menu.addItem(item(String(localized: "Menu.File.Print"), #selector(NSDocument.printDocument(_:)), "p"))
         return menu

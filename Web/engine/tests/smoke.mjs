@@ -1330,6 +1330,31 @@ test("plays a Keynote movie as the slide appears and its sound on a tap, and sav
   assert.match(new TextDecoder().decode(saved.get("ppt/slides/slide1.xml")), /p14:media/);
 });
 
+test("passes a movie's trim, fades, volume, looping, full screen and hiding to the slideshow", () => {
+  call("open", { name: "Movies.key" }, keynoteWithMovies());
+  const entries = unzip(call("save", { format: "pptx", keep: true }).payload);
+  const name = "ppt/slides/slide1.xml";
+  let xml = new TextDecoder().decode(entries.get(name));
+  const pic = xml.match(/<p:pic>.*?<p:cNvPr id="(\d+)"[^]*?<a:videoFile/s);
+  assert.ok(pic, "the movie is saved as a picture with a video");
+  xml = xml.replace(/(<p14:media [^>]*?)\/>/, '$1><p14:trim st="1500" end="500"/><p14:fade in="250" out="1000"/></p14:media>');
+  const node = `<p:video fullScrn="1"><p:cMediaNode vol="40000" showWhenStopped="0"><p:cTn id="99" repeatCount="indefinite" fill="remove" display="0">`
+    + `<p:stCondLst><p:cond delay="indefinite"/></p:stCondLst></p:cTn><p:tgtEl><p:spTgt spid="${pic[1]}"/></p:tgtEl></p:cMediaNode></p:video>`;
+  xml = xml.includes("<p:timing>")
+    ? xml.replace(/(<p:cTn [^>]*nodeType="tmRoot"[^>]*><p:childTnLst>)/, `$1${node}`)
+    : xml.replace("</p:sld>", `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>${node}</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing></p:sld>`);
+  entries.set(name, new TextEncoder().encode(xml));
+  const opened = call("open", { name: "Settings.pptx" }, zip(entries));
+  const movie = call("scene", { slide: opened.state.slides[0].id }).result.shapes.find((shape) => shape.media?.kind === "video");
+  assert.deepEqual(movie.media.trim, [1.5, 0.5]);
+  assert.deepEqual(movie.media.fade, [0.25, 1]);
+  assert.equal(movie.media.volume, 0.4);
+  assert.equal(movie.media.loop, true);
+  assert.equal(movie.media.rewind, true);
+  assert.equal(movie.media.full, true);
+  assert.equal(movie.media.hide, true);
+});
+
 /**
  * A Keynote deck of one slide of the objects beyond shapes, pictures, movies, charts and tables: a connection line,
  * a freehand drawing, a sound with no icon, an equation typeset into a PDF this platform can't draw, a 3D object with
@@ -1697,6 +1722,27 @@ test("honours and keeps the slideshow settings", () => {
   assert.deepEqual(call("info").result.show, show);
   call("showSettings", { range: "all", kiosk: false });
   assert.equal(call("info").result.show.timings, false);
+});
+
+test("reads, edits and saves document properties", () => {
+  call("new", { name: "Properties.pptx" });
+  call("setProperties", { title: "Quarterly <Review>", author: "Ada", keywords: "plans, numbers", comments: "Line one\nLine two" });
+  assert.equal(call("properties").result.title, "Quarterly <Review>");
+  const before = Date.now() - 1000;
+  const saved = unzip(call("save", { format: "pptx", author: "Grace" }).payload);
+  const core = new TextDecoder().decode(saved.get("docProps/core.xml"));
+  assert.match(core, /<dc:title>Quarterly &lt;Review&gt;<\/dc:title>/);
+  assert.match(core, /<cp:lastModifiedBy>Grace<\/cp:lastModifiedBy>/);
+  const reopened = call("open", { name: "Properties.pptx" }, zip(saved));
+  assert.ok(reopened);
+  const properties = call("properties").result;
+  assert.equal(properties.author, "Ada");
+  assert.equal(properties.comments, "Line one\nLine two");
+  assert.equal(properties.lastModifiedBy, "Grace");
+  assert.ok(Date.parse(properties.modified) >= before, "modified when saved");
+  // A draft kept on the device leaves the saving stamp alone.
+  const draft = new TextDecoder().decode(unzip(call("save", { keep: true, draft: true, author: "Someone" }).payload).get("docProps/core.xml"));
+  assert.match(draft, /<cp:lastModifiedBy>Grace<\/cp:lastModifiedBy>/);
 });
 
 test("edits masters and layouts in master view, and has slides follow them", () => {

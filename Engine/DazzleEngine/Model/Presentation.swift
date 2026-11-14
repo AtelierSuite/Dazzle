@@ -42,6 +42,10 @@ public struct Presentation: Equatable, Sendable {
     public var customShows: [CustomShow] = []
     /// Whether the custom shows must be written again.
     public var areCustomShowsModified = false
+    /// Title, author, dates and the rest of `docProps`.
+    public var properties = DocumentProperties()
+    /// Whether `properties` must be written over the file's own.
+    public var arePropertiesModified = false
     /// The Keynote document the presentation was converted from, if it was.
     public var keynoteSource: KeynoteSource?
 

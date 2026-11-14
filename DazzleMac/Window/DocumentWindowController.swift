@@ -16,6 +16,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate {
     var headerFooter: HeaderFooterSheet?
     /// The Custom Shows sheet, while it is open.
     var customShows: CustomShowsSheet?
+    var propertiesSheet: PropertiesSheet?
 
     var canvas: CanvasViewController { split.editor.canvas }
     var presentationDocument: PresentationDocument? { document as? PresentationDocument }
