@@ -584,11 +584,13 @@ struct WebRenderer {
                 ]
                 func styleBorder(_ name: String) -> LineStyle? {
                     if let tableStyle { return tableStyle.border(name, for: regions) }
-                    return usesBuiltInLook ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
+                    return usesBuiltInLook && !["tl2br", "tr2bl"].contains(name)
+                        ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
                 }
                 var borders: [String: Any] = [:]
                 for (key, border, name) in [("t", cell.borderTop, edgeNames[0]), ("b", cell.borderBottom, edgeNames[1]),
-                                            ("l", cell.borderLeft, edgeNames[2]), ("r", cell.borderRight, edgeNames[3])] {
+                                            ("l", cell.borderLeft, edgeNames[2]), ("r", cell.borderRight, edgeNames[3]),
+                                            ("d", cell.borderDiagonalDown, "tl2br"), ("u", cell.borderDiagonalUp, "tr2bl")] {
                     let fallback = styleBorder(name)
                     guard let line = border.map({ $0.merged(over: fallback) }) ?? fallback,
                           let stroke = stroke(line, path: [], placeholder: nil, style: style) else { continue }

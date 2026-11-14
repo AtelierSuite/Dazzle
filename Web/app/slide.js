@@ -1402,7 +1402,7 @@ export function drawTableBorders(grid) {
     const y = cell.offsetTop;
     const w = cell.offsetWidth;
     const h = cell.offsetHeight;
-    const edges = { t: [x, y, x + w, y], b: [x, y + h, x + w, y + h], l: [x, y, x, y + h], r: [x + w, y, x + w, y + h] };
+    const edges = { t: [x, y, x + w, y], b: [x, y + h, x + w, y + h], l: [x, y, x, y + h], r: [x + w, y, x + w, y + h], d: [x, y, x + w, y + h], u: [x, y + h, x + w, y] };
     for (const [key, line] of Object.entries(borders)) {
       const [x1, y1, x2, y2] = edges[key];
       svg("line", { x1, y1, x2, y2, stroke: line.c, "stroke-width": line.w, "stroke-dasharray": line.dash?.join(" ") }, lines);

@@ -1089,13 +1089,16 @@ public struct SlideRenderer {
                 ]
                 func styleBorder(_ name: String) -> LineStyle? {
                     if let tableStyle = layout.tableStyle { return tableStyle.border(name, for: regions) }
-                    return layout.usesBuiltInLook ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
+                    return layout.usesBuiltInLook && !["tl2br", "tr2bl"].contains(name)
+                        ? LineStyle(fill: .solid(.scheme("lt1")), width: 12_700) : nil
                 }
                 let edges: [(LineStyle?, String, CGPoint, CGPoint)] = [
                     (cell.borderTop, edgeNames[0], CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.minY)),
                     (cell.borderBottom, edgeNames[1], CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.maxY)),
                     (cell.borderLeft, edgeNames[2], CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.minX, y: rect.maxY)),
                     (cell.borderRight, edgeNames[3], CGPoint(x: rect.maxX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)),
+                    (cell.borderDiagonalDown, "tl2br", CGPoint(x: rect.minX, y: rect.minY), CGPoint(x: rect.maxX, y: rect.maxY)),
+                    (cell.borderDiagonalUp, "tr2bl", CGPoint(x: rect.minX, y: rect.maxY), CGPoint(x: rect.maxX, y: rect.minY)),
                 ]
                 for (border, name, start, end) in edges {
                     let fallback = styleBorder(name)
