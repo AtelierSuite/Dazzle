@@ -74,6 +74,15 @@ struct TextPanel: View {
                 }
             }
 
+            Section("Format.Section.Highlight") {
+                ColorSwatches(
+                    identifier: "highlightColor", choices: themeChoices + ColorChoice.system, selected: style.highlight?.color,
+                    allowsNone: true, isNoneSelected: style.highlight?.color == nil
+                ) { color in
+                    state.setTextHighlight(color, in: &presentation)
+                }
+            }
+
             Section("Format.Section.Paragraph") {
                 Picker("Format.Alignment", selection: Binding(
                     get: { state.effectiveAlignment(in: presentation) },

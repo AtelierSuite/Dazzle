@@ -314,6 +314,8 @@ export class Inspector extends EventTarget {
         ["underline", t("Format.Underline"), text.underline, "<u>U</u>"], ["strike", t("Format.Strikethrough"), text.strike, "<s>S</s>"],
       ]))
       + this.row(t("Format.Section.TextColor"), this.color("textColor", t("Format.Section.TextColor"), text.scheme ? `scheme:${text.scheme}` : text.color))
+      + this.row(t("Format.Section.Highlight"), this.color("highlight", t("Format.Section.Highlight"),
+        text.highlightScheme ? `scheme:${text.highlightScheme}` : text.highlight ?? null, { none: t("Fill.None") }))
       + this.row(t("Format.Alignment"), this.segments([
         ["alignLeft", t("Menu.Format.AlignLeft"), text.align === "l", "alignLeft"], ["alignCenter", t("Menu.Format.Centre"), text.align === "ctr", "alignCenter"],
         ["alignRight", t("Menu.Format.AlignRight"), text.align === "r", "alignRight"], ["alignJustify", t("Menu.Format.Justify"), text.align === "just", "alignJustify"],
@@ -647,6 +649,7 @@ export class Inspector extends EventTarget {
       case "font": return format({ font: value });
       case "size": return Number(value) > 0 && format({ size: Number(value) });
       case "textColor": { const color = colorValue(); return color && format({ color }); }
+      case "highlight": { const highlight = colorValue(); return highlight && format({ highlight }); }
       case "list": return format({ list: value });
       case "lineSpacing": return format({ lineSpacing: Number(value) });
       // Fill

@@ -290,6 +290,9 @@ public struct TextRenderer {
             context.restoreGState()
         }
         for (line, origin, column) in placed {
+            inColumn(column) { drawHighlights(in: line, origin: origin, context: context) }
+        }
+        for (line, origin, column) in placed {
             inColumn(column) { drawShadows(of: line, at: origin, space: space, context: context) }
         }
         for (line, origin, column) in placed {
@@ -320,6 +323,21 @@ public struct TextRenderer {
                 let reversed = -baseline + ascent - descent
                 return (line, CGPoint(x: origin.x, y: column.origin.y + column.height - reversed), column)
             }
+        }
+    }
+
+    /// Highlighted runs' colour, behind their letters, as tall as the line's letters reach.
+    private func drawHighlights(in line: CTLine, origin: CGPoint, context: CGContext) {
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        CTLineGetTypographicBounds(line, &ascent, &descent, nil)
+        for run in CTLineGetGlyphRuns(line) as? [CTRun] ?? [] {
+            let attributes = CTRunGetAttributes(run) as NSDictionary
+            guard let value = attributes[Self.highlightKey.rawValue], CFGetTypeID(value as CFTypeRef) == CGColor.typeID else { continue }
+            let start = CTLineGetOffsetForStringIndex(line, CTRunGetStringRange(run).location, nil)
+            let width = CTRunGetTypographicBounds(run, CFRange(location: 0, length: 0), nil, nil, nil)
+            context.setFillColor(value as! CGColor) // swiftlint:disable:this force_cast
+            context.fill(CGRect(x: origin.x + start, y: origin.y - descent, width: width, height: ascent + descent))
         }
     }
 
@@ -377,6 +395,13 @@ public struct TextRenderer {
         }
         each { paragraph in
             let space = context.ctm
+            for entry in paragraph {
+                context.saveGState()
+                context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
+                context.scaleBy(x: 1, y: -1)
+                drawHighlights(in: entry.line, origin: .zero, context: context)
+                context.restoreGState()
+            }
             for entry in paragraph {
                 context.saveGState()
                 context.translateBy(x: entry.baseline.x, y: entry.baseline.y)
@@ -677,6 +702,7 @@ public struct TextRenderer {
     private static let strokeWidthKey = NSAttributedString.Key(kCTStrokeWidthAttributeName as String)
     private static let strokeColorKey = NSAttributedString.Key(kCTStrokeColorAttributeName as String)
     private static let shadowKey = NSAttributedString.Key("DazzleShadow")
+    private static let highlightKey = NSAttributedString.Key("DazzleHighlight")
 
     /// A link riding on the text it belongs to.
     private final class LinkBox: NSObject {
@@ -802,7 +828,7 @@ public struct TextRenderer {
             }
             // A paragraph not yet built in keeps its place, bullet and all, unseen.
             if let opacity = paragraphOpacity[index], opacity < 1, range.length > 0 {
-                for key in [Self.colorKey, Self.strokeColorKey] {
+                for key in [Self.colorKey, Self.strokeColorKey, Self.highlightKey] {
                     result.enumerateAttribute(key, in: range) { value, subrange, _ in
                         guard let value, CFGetTypeID(value as CFTypeRef) == CGColor.typeID else { return }
                         let color = value as! CGColor // swiftlint:disable:this force_cast
@@ -872,9 +898,12 @@ public struct TextRenderer {
             attributes[Self.strokeWidthKey] = NSNumber(value: -EMU.points(width) / Double(size) * 100)
             attributes[Self.strokeColorKey] = (colorOverride ?? style.color(outlineColor)).cgColor
         }
-        // Prompts and text laid out unseen cast no shadow.
+        // Prompts and text laid out unseen cast no shadow, and show no highlight.
         if case .shadow(let shadow) = run.shadow, colorOverride == nil {
             attributes[Self.shadowKey] = ShadowBox(shadow, color: style.color(shadow.color).cgColor)
+        }
+        if let highlight = run.highlight?.color, colorOverride == nil {
+            attributes[Self.highlightKey] = style.color(highlight).cgColor
         }
         return attributes
     }

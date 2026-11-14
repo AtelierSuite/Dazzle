@@ -227,6 +227,12 @@ extension InspectorViewController {
             set: { [unowned self] color in if let color { edit { state.setTextColor(color, in: &$0) } } }
         ))
 
+        form.row(String(localized: "Format.Section.Highlight"), form.color(
+            choices: colorChoices, noneTitle: String(localized: "Fill.None"), resolve: { [unowned self] in resolve($0) },
+            get: { [unowned self] in (run.highlight?.color, run.highlight?.color == nil) },
+            set: { [unowned self] color in edit { state.setTextHighlight(color, in: &$0) } }
+        ))
+
         let alignments = ParagraphAlignment.allCases
         form.row(nil, form.choice([
             ("text.alignleft", String(localized: "Menu.Format.AlignLeft")), ("text.aligncenter", String(localized: "Menu.Format.Centre")),

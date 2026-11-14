@@ -1439,6 +1439,11 @@ final class EditorState {
         updateRuns(in: &presentation) { $0.color = color }
     }
 
+    /// A colour behind the text, or nil to take it away.
+    func setTextHighlight(_ color: DrawingColor?, in presentation: inout Presentation) {
+        updateRuns(in: &presentation) { $0.highlight = color.map(TextHighlight.color) ?? TextHighlight.none }
+    }
+
     enum ListStyleChoice: Hashable {
         case none
         case bullets
