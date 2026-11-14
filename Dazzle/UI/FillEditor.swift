@@ -3,8 +3,8 @@ import PhotosUI
 import SwiftUI
 
 /// Choosing how a shape or a slide is filled: not at all, with a colour,
-/// with a gradient between two colours, or with a picture. A pattern from
-/// the file keeps a kind of its own, with its two colours to change.
+/// with a gradient between two colours, with a picture, or with one of
+/// DrawingML's patterns in two colours.
 struct FillEditor: View {
     let identifier: String
     let fill: Fill?
@@ -43,8 +43,7 @@ struct FillEditor: View {
             Text("Fill.Solid").tag(Kind.solid)
             Text("Fill.Gradient").tag(Kind.gradient)
             Text("Fill.Picture").tag(Kind.picture)
-            // Patterns are not made here, only kept and recoloured.
-            if currentKind == .pattern { Text("Fill.Pattern").tag(Kind.pattern) }
+            Text("Fill.Pattern").tag(Kind.pattern)
         }
         .pickerStyle(.segmented)
         .accessibilityIdentifier("\(identifier).kind")
@@ -91,6 +90,9 @@ struct FillEditor: View {
             kind = .picture
         case .pattern:
             kind = nil
+            onChange(.pattern(Fill.Pattern(
+                preset: "pct50", foreground: firstColor ?? .scheme("accent1"), background: .scheme("bg1")
+            )))
         }
     }
 
@@ -166,6 +168,9 @@ struct FillEditor: View {
     @ViewBuilder
     private var patternControls: some View {
         if case .pattern(let pattern)? = fill {
+            PatternSwatches(identifier: "\(identifier).pattern", selected: pattern.preset) { preset in
+                recolor { $0.preset = preset }
+            }
             Text("Fill.Pattern.Foreground").font(.footnote).foregroundStyle(.secondary)
             ColorSwatches(identifier: "\(identifier).foreground", choices: choices, selected: pattern.foreground) { color in
                 if let color { recolor { $0.foreground = color } }
@@ -220,6 +225,66 @@ struct FillEditor: View {
                   let media = await Task.detached(operation: { PreparedMedia(data: data) }).value else { return }
             kind = nil
             onPicture(media, false)
+        }
+    }
+}
+
+/// DrawingML's patterns side by side, each drawn black on white.
+struct PatternSwatches: View {
+    let identifier: String
+    let selected: String
+    let onSelect: (String) -> Void
+
+    private let swatchSize: CGFloat = 28
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 10) {
+                    ForEach(FormatChoices.patterns, id: \.0) { preset, label in
+                        let isSelected = preset == selected
+                        Button {
+                            onSelect(preset)
+                        } label: {
+                            tile(Fill.Pattern(preset: preset))
+                                .frame(width: swatchSize, height: swatchSize)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.primary.opacity(0.25), lineWidth: 1))
+                                .overlay {
+                                    if isSelected {
+                                        RoundedRectangle(cornerRadius: 6).strokeBorder(Color.accentColor, lineWidth: 3).padding(-3)
+                                    }
+                                }
+                                .padding(3)
+                        }
+                        .buttonStyle(.plain)
+                        .id(preset)
+                        .accessibilityIdentifier("\(identifier).\(preset)")
+                        .accessibilityLabel(label)
+                        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+            .scrollIndicators(.hidden)
+            .onAppear { proxy.scrollTo(selected, anchor: .center) }
+        }
+        .listRowInsets(EdgeInsets())
+    }
+
+    /// The pattern's eight-by-eight cells, filling the tile.
+    private func tile(_ pattern: Fill.Pattern) -> some View {
+        Canvas { context, size in
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+            let cell = size.width / 8
+            var cells = Path()
+            for row in 0..<8 {
+                for column in 0..<8 where pattern.isForeground(column: column, row: row) {
+                    cells.addRect(CGRect(x: CGFloat(column) * cell, y: CGFloat(row) * cell, width: cell, height: cell))
+                }
+            }
+            context.fill(cells, with: .color(.black))
         }
     }
 }

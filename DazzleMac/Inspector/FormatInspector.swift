@@ -26,7 +26,7 @@ extension InspectorViewController {
         switch shape.kind {
         case .shape, .connector, .picture:
             buildOutline(of: shape)
-            buildEffects()
+            buildEffects(of: shape)
         default:
             break
         }
@@ -277,12 +277,87 @@ extension InspectorViewController {
                 guard let shape = deck.selectedShape else { return (nil, false) }
                 switch shape.fill ?? inheritedFill(of: shape) {
                 case .solid(let color): return (color, false)
+                case .pattern(let pattern): return (pattern.foreground, false)
                 case Fill.none?: return (nil, true)
                 default: return (nil, false)
                 }
             },
-            set: { [unowned self] color in edit { state.setFill(color.map(Fill.solid) ?? Fill.none, in: &$0) } }
+            set: { [unowned self] color in
+                // A pattern keeps its cells, in the colour picked.
+                if case .pattern(var pattern)? = deck.selectedShape?.fill, let color {
+                    pattern.foreground = color
+                    return edit { state.setFill(.pattern(pattern), in: &$0) }
+                }
+                edit { state.setFill(color.map(Fill.solid) ?? Fill.none, in: &$0) }
+            }
         ))
+        // The patterns, after a first item for none.
+        let patterns = FormatChoices.patterns
+        let current: String? = if case .pattern(let pattern)? = shape.fill { pattern.preset } else { nil }
+        let extra = current.flatMap { preset in patterns.contains { $0.0 == preset } ? nil : preset }
+        let presets = [nil] + patterns.map { Optional($0.0) } + (extra.map { [$0] } ?? [])
+        let popup = form.popup(
+            [String(localized: "Effect.None")] + patterns.map(\.1) + (extra.map { [FormatChoices.patternLabel($0)] } ?? []),
+            get: { [unowned self] in
+                guard case .pattern(let pattern)? = deck.selectedShape?.fill else { return 0 }
+                return presets.firstIndex(of: pattern.preset)
+            },
+            set: { [unowned self] index in
+                guard let shape = deck.selectedShape else { return }
+                let fill = shape.fill ?? inheritedFill(of: shape)
+                guard let preset = presets[index] else {
+                    // Back to a plain fill, in the pattern's colour.
+                    if case .pattern(let pattern)? = fill { edit { state.setFill(.solid(pattern.foreground), in: &$0) } }
+                    return
+                }
+                var pattern = Fill.Pattern(preset: preset, foreground: .scheme("accent1"), background: .scheme("bg1"))
+                switch fill {
+                case .pattern(let old)?:
+                    pattern.foreground = old.foreground
+                    pattern.background = old.background
+                case .solid(let color)? where color.base != .scheme("phClr"):
+                    pattern.foreground = color
+                default: break
+                }
+                edit { state.setFill(.pattern(pattern), in: &$0) }
+            }
+        )
+        for (index, item) in popup.itemArray.enumerated() where index > 0 {
+            if let preset = presets[index] { item.image = Self.patternSwatch(Fill.Pattern(preset: preset)) }
+        }
+        form.row(String(localized: "Fill.Pattern"), popup)
+        if current != nil {
+            form.row(String(localized: "Fill.Pattern.Background"), form.color(
+                choices: colorChoices, resolve: { [unowned self] in resolve($0) },
+                get: { [unowned self] in
+                    guard case .pattern(let pattern)? = deck.selectedShape?.fill else { return (nil, false) }
+                    return (pattern.background, false)
+                },
+                set: { [unowned self] color in
+                    guard case .pattern(var pattern)? = deck.selectedShape?.fill, let color else { return }
+                    pattern.background = color
+                    edit { state.setFill(.pattern(pattern), in: &$0) }
+                }
+            ))
+        }
+    }
+
+    /// A pattern's cells, black on white, for its menu item.
+    private static func patternSwatch(_ pattern: Fill.Pattern) -> NSImage {
+        NSImage(size: NSSize(width: 16, height: 16), flipped: true) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            NSColor.black.setFill()
+            let cell = rect.width / 8
+            for row in 0..<8 {
+                for column in 0..<8 where pattern.isForeground(column: column, row: row) {
+                    NSRect(x: CGFloat(column) * cell, y: CGFloat(row) * cell, width: cell, height: cell).fill()
+                }
+            }
+            NSColor.tertiaryLabelColor.setStroke()
+            NSBezierPath(rect: rect.insetBy(dx: 0.5, dy: 0.5)).stroke()
+            return true
+        }
     }
 
     /// The fill a shape with none of its own gets from its style or layout.
@@ -333,7 +408,7 @@ extension InspectorViewController {
         }))
     }
 
-    private func buildEffects() {
+    private func buildEffects(of shape: SlideShape) {
         form.section(String(localized: "Mac.Inspector.Effects"))
         let shadows = FormatChoices.shadows
         form.row(String(localized: "Format.Shadow"), form.popup(
@@ -357,6 +432,117 @@ extension InspectorViewController {
             set: { [unowned self] index in
                 guard reflections.indices.contains(index) else { return }
                 edit { state.setReflection(reflections[index].reflection, in: &$0) }
+            }
+        ))
+        buildGlowAndEdges()
+        switch shape.kind {
+        case .shape, .picture: build3D()
+        default: break
+        }
+        if case .shape = shape.kind, shape.text != nil {
+            let warps = [("textNoShape", String(localized: "Effect.None"))] + FormatChoices.textWarps
+            form.row(String(localized: "Format.TextWarp"), form.popup(warps.map(\.1), get: { [unowned self] in
+                warps.firstIndex { $0.0 == (deck.selectedShape?.text?.properties.warp?.preset ?? "textNoShape") }
+            }, set: { [unowned self] index in
+                let preset = warps[index].0
+                edit { state.setTextWarp(preset == "textNoShape" ? nil : TextWarp(preset: preset), in: &$0) }
+            }))
+        }
+    }
+
+    private static func points(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1))) + " pt"
+    }
+
+    /// Glow, its colour, soft edges and inner shadow.
+    private func buildGlowAndEdges() {
+        let glows = [0.0] + FormatChoices.glowSizes
+        form.row(String(localized: "Format.Glow"), form.popup(
+            [String(localized: "Effect.None")] + FormatChoices.glowSizes.map(Self.points) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                guard let glow = deck.selectedShape?.effects.glow else { return 0 }
+                return glows.firstIndex(of: EMU.points(glow.radius)) ?? glows.count
+            },
+            set: { [unowned self] index in
+                guard glows.indices.contains(index) else { return }
+                let color = deck.selectedShape?.effects.glow?.color ?? FormatChoices.glowColor(.scheme("accent1"))
+                let glow = index == 0 ? nil : Glow(radius: EMU.from(points: glows[index]), color: color)
+                edit { state.setGlow(glow, in: &$0) }
+            }
+        ))
+        form.row(String(localized: "Format.Glow.Color"), form.color(
+            choices: colorChoices, resolve: { [unowned self] in resolve($0) },
+            get: { [unowned self] in
+                guard var color = deck.selectedShape?.effects.glow?.color else { return (nil, false) }
+                color.transforms.removeAll { $0.name == "alpha" }
+                return (color, false)
+            },
+            set: { [unowned self] color in
+                guard let color else { return }
+                // A colour picked with no glow yet gives the shape one of PowerPoint's usual size.
+                if deck.selectedShape?.effects.glow == nil {
+                    let glow = Glow(radius: EMU.from(points: 8), color: FormatChoices.glowColor(color))
+                    return edit { state.setGlow(glow, in: &$0) }
+                }
+                edit { state.setGlowColor(color, in: &$0) }
+            }
+        ))
+        let edges = [0.0] + FormatChoices.softEdgeSizes
+        form.row(String(localized: "Format.SoftEdges"), form.popup(
+            [String(localized: "Effect.None")] + FormatChoices.softEdgeSizes.map(Self.points) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                guard let softEdge = deck.selectedShape?.effects.softEdge else { return 0 }
+                return edges.firstIndex(of: EMU.points(softEdge)) ?? edges.count
+            },
+            set: { [unowned self] index in
+                guard edges.indices.contains(index) else { return }
+                edit { state.setSoftEdge(index == 0 ? nil : EMU.from(points: edges[index]), in: &$0) }
+            }
+        ))
+        let inner = FormatChoices.innerShadows
+        form.row(String(localized: "Format.InnerShadow"), form.popup(
+            inner.map(\.label) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                let shadow = deck.selectedShape?.effects.innerShadow
+                return inner.firstIndex { $0.shadow == shadow } ?? (shadow == nil ? 0 : inner.count)
+            },
+            set: { [unowned self] index in
+                guard inner.indices.contains(index) else { return }
+                edit { state.setInnerShadow(inner[index].shadow, in: &$0) }
+            }
+        ))
+    }
+
+    /// Bevel, depth and the camera that shows the depth.
+    private func build3D() {
+        let bevels = [("none", String(localized: "Effect.None"))] + FormatChoices.bevels
+        form.row(String(localized: "Format.Bevel"), form.popup(
+            bevels.map(\.1) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                guard let preset = deck.selectedShape?.shape3D?.topBevel?.preset else { return 0 }
+                return bevels.firstIndex { $0.0 == preset } ?? bevels.count
+            },
+            set: { [unowned self] index in
+                guard bevels.indices.contains(index) else { return }
+                let bevel = index == 0 ? nil : Shape3D.Bevel(preset: bevels[index].0)
+                edit { state.setBevel(bevel, in: &$0) }
+            }
+        ))
+        form.row(String(localized: "Format.Depth"), form.number(get: { [unowned self] in
+            EMU.points(deck.selectedShape?.shape3D?.extrusionHeight ?? 0)
+        }, set: { [unowned self] value in
+            edit { state.setDepth(EMU.from(points: value), in: &$0) }
+        }, range: FormatChoices.depthRange, step: 6, unit: "pt"))
+        let cameras = FormatChoices.cameras
+        form.row(String(localized: "Format.Camera"), form.popup(
+            cameras.map(\.1) + [String(localized: "Shadow.Custom")],
+            get: { [unowned self] in
+                let camera = deck.selectedShape?.scene3D?.camera ?? "orthographicFront"
+                return cameras.firstIndex { $0.0 == camera } ?? cameras.count
+            },
+            set: { [unowned self] index in
+                guard cameras.indices.contains(index) else { return }
+                edit { state.setCamera(cameras[index].0, in: &$0) }
             }
         ))
     }

@@ -251,7 +251,15 @@ struct FormatPanel: View {
         case .shape, .connector, .picture:
             shadowSection(shape)
             reflectionSection(shape)
+            effectsSection(shape)
         default: EmptyView()
+        }
+        switch shape.kind {
+        case .shape, .picture: threeDSection(shape)
+        default: EmptyView()
+        }
+        if case .shape = shape.kind, shape.text != nil {
+            textWarpSection(shape)
         }
         Section("Format.Section.Arrange") {
             Button("Arrange.Front", systemImage: "square.3.layers.3d.top.filled") {
@@ -536,6 +544,132 @@ struct FormatPanel: View {
             }
             .accessibilityIdentifier("reflection")
         }
+    }
+
+    /// Glow, soft edges and inner shadow.
+    private func effectsSection(_ shape: SlideShape) -> some View {
+        Section("Format.Section.Effects") {
+            Picker("Format.Glow", selection: Binding(
+                get: { shape.effects.glow.map { EMU.points($0.radius) } ?? 0 },
+                set: { points in
+                    let color = shape.effects.glow?.color ?? FormatChoices.glowColor(.scheme("accent1"))
+                    state.setGlow(points > 0 ? Glow(radius: EMU.from(points: points), color: color) : nil, in: &presentation)
+                }
+            )) {
+                Text("Effect.None").tag(0.0)
+                ForEach(FormatChoices.glowSizes, id: \.self) { points in
+                    Text(verbatim: Self.points(points)).tag(points)
+                }
+                if let glow = shape.effects.glow, !FormatChoices.glowSizes.contains(EMU.points(glow.radius)) {
+                    Text(verbatim: Self.points(EMU.points(glow.radius))).tag(EMU.points(glow.radius))
+                }
+            }
+            .accessibilityIdentifier("glow")
+            if let glow = shape.effects.glow {
+                Text("Format.Glow.Color").font(.footnote).foregroundStyle(.secondary)
+                ColorSwatches(
+                    identifier: "glowColor", choices: themeChoices + ColorChoice.system,
+                    selected: { var color = glow.color; color.transforms.removeAll { $0.name == "alpha" }; return color }()
+                ) { color in
+                    if let color { state.setGlowColor(color, in: &presentation) }
+                }
+            }
+            Picker("Format.SoftEdges", selection: Binding(
+                get: { shape.effects.softEdge.map(EMU.points) ?? 0 },
+                set: { points in state.setSoftEdge(points > 0 ? EMU.from(points: points) : nil, in: &presentation) }
+            )) {
+                Text("Effect.None").tag(0.0)
+                ForEach(FormatChoices.softEdgeSizes, id: \.self) { points in
+                    Text(verbatim: Self.points(points)).tag(points)
+                }
+                if let softEdge = shape.effects.softEdge, !FormatChoices.softEdgeSizes.contains(EMU.points(softEdge)) {
+                    Text(verbatim: Self.points(EMU.points(softEdge))).tag(EMU.points(softEdge))
+                }
+            }
+            .accessibilityIdentifier("softEdges")
+            Picker("Format.InnerShadow", selection: Binding(
+                get: {
+                    FormatChoices.innerShadows.first { $0.shadow == shape.effects.innerShadow }?.id
+                        ?? (shape.effects.innerShadow == nil ? "none" : "custom")
+                },
+                set: { id in
+                    guard let choice = FormatChoices.innerShadows.first(where: { $0.id == id }) else { return }
+                    state.setInnerShadow(choice.shadow, in: &presentation)
+                }
+            )) {
+                ForEach(FormatChoices.innerShadows, id: \.id) { choice in
+                    Text(choice.label).tag(choice.id)
+                }
+                if shape.effects.innerShadow != nil,
+                   !FormatChoices.innerShadows.contains(where: { $0.shadow == shape.effects.innerShadow }) {
+                    Text("Shadow.Custom").tag("custom")
+                }
+            }
+            .accessibilityIdentifier("innerShadow")
+        }
+    }
+
+    /// Bevel, depth and the camera that shows the depth.
+    private func threeDSection(_ shape: SlideShape) -> some View {
+        Section("Format.Section.ThreeD") {
+            Picker("Format.Bevel", selection: Binding(
+                get: { shape.shape3D?.topBevel?.preset ?? "none" },
+                set: { preset in state.setBevel(preset == "none" ? nil : Shape3D.Bevel(preset: preset), in: &presentation) }
+            )) {
+                Text("Effect.None").tag("none")
+                ForEach(FormatChoices.bevels, id: \.0) { value, label in Text(label).tag(value) }
+                if let preset = shape.shape3D?.topBevel?.preset, !FormatChoices.bevels.contains(where: { $0.0 == preset }) {
+                    Text(verbatim: preset).tag(preset)
+                }
+            }
+            .accessibilityIdentifier("bevel")
+            LabeledContent("Format.Depth") {
+                let depth = EMU.points(shape.shape3D?.extrusionHeight ?? 0)
+                Stepper(
+                    value: Binding(
+                        get: { depth },
+                        set: { value in state.setDepth(EMU.from(points: value), in: &presentation) }
+                    ),
+                    in: FormatChoices.depthRange, step: 6
+                ) {
+                    Text(verbatim: Self.points(depth)).monospacedDigit()
+                }
+                .fixedSize()
+                .accessibilityIdentifier("depth")
+            }
+            Picker("Format.Camera", selection: Binding(
+                get: { shape.scene3D?.camera ?? "orthographicFront" },
+                set: { state.setCamera($0, in: &presentation) }
+            )) {
+                ForEach(FormatChoices.cameras, id: \.0) { value, label in Text(label).tag(value) }
+                if let camera = shape.scene3D?.camera, !FormatChoices.cameras.contains(where: { $0.0 == camera }) {
+                    Text("Shadow.Custom").tag(camera)
+                }
+            }
+            .accessibilityIdentifier("camera")
+        }
+    }
+
+    /// The WordArt warp the text is laid along.
+    private func textWarpSection(_ shape: SlideShape) -> some View {
+        Section("Format.Section.TextWarp") {
+            Picker("Format.TextWarp", selection: Binding(
+                get: { shape.text?.properties.warp?.preset ?? "textNoShape" },
+                set: { preset in state.setTextWarp(preset == "textNoShape" ? nil : TextWarp(preset: preset), in: &presentation) }
+            )) {
+                Text("Effect.None").tag("textNoShape")
+                ForEach(FormatChoices.textWarps, id: \.0) { value, label in Text(label).tag(value) }
+                if let preset = shape.text?.properties.warp?.preset, preset != "textNoShape",
+                   !FormatChoices.textWarps.contains(where: { $0.0 == preset }) {
+                    Text(verbatim: preset).tag(preset)
+                }
+            }
+            .accessibilityIdentifier("textWarp")
+        }
+    }
+
+    private static func points(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...1))) + " pt"
     }
 
     @ViewBuilder

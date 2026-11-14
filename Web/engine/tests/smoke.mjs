@@ -1675,6 +1675,46 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
+test("edits glow, soft edges, inner shadow, bevel, depth, text warp and pattern fills, and saves them", () => {
+  call("new", { name: "Untitled.pptx" });
+  const opened = call("open", { name: "Effects.pptx" }, deckWithShapes());
+  const slide = opened.state.slides[0].id;
+  const choices = opened.result.choices;
+  assert.equal(choices.patterns.length, 48, "offers PowerPoint's patterns");
+  assert.ok(choices.textWarps.some((warp) => warp.id === "textArchUp"), "offers the warps");
+  const lined = call("scene", { slide }).result.shapes.find((node) => node.name === "Lined");
+  call("select", { slide, shapes: [lined.id] });
+  call("setEffect", { glow: 8 });
+  call("setEffect", { glowColor: "#00ff00" });
+  call("setEffect", { softEdge: 5 });
+  call("setEffect", { innerShadow: "topLeft" });
+  call("setEffect", { bevel: "artDeco" });
+  call("setEffect", { depth: 18 });
+  call("setEffect", { camera: "obliqueTopLeft" });
+  call("setEffect", { warp: "textArchUp" });
+  call("setFill", { fill: { kind: "pattern", preset: "smCheck", color: "#ff0000", background: "#ffffff" } });
+  const shape = call("inspect").result.shape;
+  assert.deepEqual([shape.glow, shape.glowColor, shape.softEdge, shape.innerShadow], [8, "#00ff00", 5, "topLeft"]);
+  assert.deepEqual([shape.bevel, shape.depth, shape.camera, shape.warp], ["artDeco", 18, "obliqueTopLeft", "textArchUp"]);
+  assert.equal(shape.fill.preset, "smCheck");
+
+  const saved = call("save", { format: "pptx" }).payload;
+  const xml = new TextDecoder().decode(unzip(saved).get("ppt/slides/slide1.xml"));
+  const lines = xml.slice(xml.indexOf('name="Lined"'), xml.indexOf("</p:sp>", xml.indexOf('name="Lined"')));
+  assert.match(lines, /<a:pattFill prst="smCheck">/);
+  assert.match(lines, /<a:effectLst><a:glow rad="101600"><a:srgbClr val="00FF00"><a:alpha val="40000"\/><\/a:srgbClr><\/a:glow><a:innerShdw [^>]*dir="13500000"[^>]*>.*<\/a:innerShdw><a:softEdge rad="63500"\/><\/a:effectLst>/);
+  assert.match(lines, /<a:scene3d><a:camera prst="obliqueTopLeft"\/><a:lightRig dir="t" rig="threePt"\/><\/a:scene3d><a:sp3d extrusionH="228600"><a:bevelT h="76200" prst="artDeco" w="76200"\/><\/a:sp3d>/);
+  assert.match(lines, /<a:prstTxWarp prst="textArchUp">/);
+
+  // Taken off again, nothing is left behind.
+  call("setEffect", { glow: 0, softEdge: 0, innerShadow: "none", bevel: "none", depth: 0, camera: "orthographicFront", warp: "textNoShape" });
+  const plain = call("inspect").result.shape;
+  assert.deepEqual([plain.glow, plain.softEdge, plain.innerShadow, plain.bevel, plain.depth, plain.warp], [0, 0, "none", "none", 0, "textNoShape"]);
+  const again = new TextDecoder().decode(unzip(call("save", { format: "pptx" }).payload).get("ppt/slides/slide1.xml"));
+  const after = again.slice(again.indexOf('name="Lined"'), again.indexOf("</p:sp>", again.indexOf('name="Lined"')));
+  assert.doesNotMatch(after, /<a:glow|<a:softEdge|<a:innerShdw|<a:sp3d|<a:scene3d|prstTxWarp/);
+});
+
 test("makes custom shows, plays them in their order and keeps them on saving", () => {
   call("new", { name: "Shows.pptx" });
   const layout = call("info").result.layouts[1].path;

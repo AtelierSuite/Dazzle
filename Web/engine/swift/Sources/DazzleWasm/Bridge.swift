@@ -431,6 +431,37 @@ final class Bridge {
         case "setReflection":
             let choice = FormatChoices.reflections.first { $0.id == r["id"] as? String }
             edit { state, presentation in state.setReflection(choice?.reflection, in: &presentation) }
+        case "setEffect":
+            // One of `glow` and `softEdge` (points, 0 for none), `glowColor`,
+            // `innerShadow` (a choice's id), `bevel` (a preset, or "none"),
+            // `depth` (points), `camera` (a preset) or `warp` (a preset, or "textNoShape").
+            edit { state, presentation in
+                if let points = r["glow"] as? Double {
+                    let color = state.selectedShape(in: presentation)?.effects.glow?.color ?? FormatChoices.glowColor(.scheme("accent1"))
+                    state.setGlow(points > 0 ? Glow(radius: EMU.from(points: points), color: color) : nil, in: &presentation)
+                }
+                if let color = (r["glowColor"] as? String).flatMap(Self.color) {
+                    if state.selectedShape(in: presentation)?.effects.glow == nil {
+                        state.setGlow(Glow(radius: EMU.from(points: 8), color: FormatChoices.glowColor(color)), in: &presentation)
+                    } else {
+                        state.setGlowColor(color, in: &presentation)
+                    }
+                }
+                if let points = r["softEdge"] as? Double {
+                    state.setSoftEdge(points > 0 ? EMU.from(points: points) : nil, in: &presentation)
+                }
+                if let id = r["innerShadow"] as? String, let choice = FormatChoices.innerShadows.first(where: { $0.id == id }) {
+                    state.setInnerShadow(choice.shadow, in: &presentation)
+                }
+                if let preset = r["bevel"] as? String {
+                    state.setBevel(preset == "none" ? nil : Shape3D.Bevel(preset: preset), in: &presentation)
+                }
+                if let points = r["depth"] as? Double { state.setDepth(EMU.from(points: points), in: &presentation) }
+                if let camera = r["camera"] as? String { state.setCamera(camera, in: &presentation) }
+                if let preset = r["warp"] as? String {
+                    state.setTextWarp(preset == "textNoShape" ? nil : TextWarp(preset: preset), in: &presentation)
+                }
+            }
         case "setLink":
             let link = hyperlink(r["link"])
             edit { state, presentation in
@@ -1122,6 +1153,13 @@ final class Bridge {
             "shapes": ShapeChoice.all.map { ["preset": $0.preset, "label": $0.label] },
             "shadows": FormatChoices.shadows.map { ["id": $0.id, "label": $0.label] },
             "reflections": FormatChoices.reflections.map { ["id": $0.id, "label": $0.label] },
+            "glowSizes": FormatChoices.glowSizes,
+            "softEdgeSizes": FormatChoices.softEdgeSizes,
+            "innerShadows": FormatChoices.innerShadows.map { ["id": $0.id, "label": $0.label] },
+            "bevels": FormatChoices.bevels.map { ["id": $0.0, "label": $0.1] },
+            "cameras": FormatChoices.cameras.map { ["id": $0.0, "label": $0.1] },
+            "textWarps": FormatChoices.textWarps.map { ["id": $0.0, "label": $0.1] },
+            "patterns": FormatChoices.patterns.map { ["id": $0.0, "label": $0.1] },
             "dashes": FormatChoices.dashes.map { ["id": $0.0, "label": $0.1] },
             "lineEnds": FormatChoices.lineEnds.map { ["id": $0.0, "label": $0.1] },
             "charts": Chart.Kind.insertable.map { ["kind": $0.rawValue, "label": $0.label] },
@@ -1288,6 +1326,23 @@ final class Bridge {
             shapeJSON["line"] = line
             shapeJSON["shadow"] = FormatChoices.shadows.first { $0.shadow == shape.shadow }?.id ?? (shape.shadow == nil ? "none" : "custom")
             shapeJSON["reflection"] = FormatChoices.reflections.first { $0.reflection == shape.reflection }?.id ?? (shape.reflection == nil ? "none" : "custom")
+            shapeJSON["glow"] = shape.effects.glow.map { EMU.points($0.radius) } ?? 0
+            if let glow = shape.effects.glow {
+                var color = glow.color
+                color.transforms.removeAll { $0.name == "alpha" }
+                shapeJSON["glowColor"] = css(style.color(color))
+            }
+            shapeJSON["softEdge"] = shape.effects.softEdge.map(EMU.points) ?? 0
+            shapeJSON["innerShadow"] = FormatChoices.innerShadows.first { $0.shadow == shape.effects.innerShadow }?.id
+                ?? (shape.effects.innerShadow == nil ? "none" : "custom")
+            if shape.kind == .shape || shape.isPicture {
+                shapeJSON["bevel"] = shape.shape3D?.topBevel?.preset ?? "none"
+                shapeJSON["depth"] = EMU.points(shape.shape3D?.extrusionHeight ?? 0)
+                shapeJSON["camera"] = shape.scene3D?.camera ?? "orthographicFront"
+            }
+            if shape.kind == .shape, let text = shape.text {
+                shapeJSON["warp"] = text.properties.warp?.preset ?? "textNoShape"
+            }
         }
         if let link = shape.link { shapeJSON["link"] = WebRenderer.link(link, tooltip: shape.linkTooltip) as Any }
         if case .picture(let picture) = shape.kind {
