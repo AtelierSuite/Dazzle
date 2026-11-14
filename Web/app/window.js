@@ -279,6 +279,13 @@ export class PresentationWindow {
     return this.chartItems();
   }
 
+  /** Play ▸ Play Custom Show: each of the presentation's custom shows. */
+  customShowItems() {
+    const shows = this.engine.info?.customShows ?? [];
+    if (!shows.length) return [{ label: t("CustomShow.None"), disabled: true }];
+    return shows.map((show) => ({ label: show.name, disabled: !show.slides.length, action: () => this.play(null, { customShow: show.id }) }));
+  }
+
   layoutItems() {
     // In master view, what is added is a layout.
     if (this.engine.state?.masterView) return [this.item("newSlide")];
@@ -475,6 +482,7 @@ export class PresentationWindow {
       playHere: { label: t("Web.Play.ThisWindow"), enabled: has && !master, run: () => this.play(this.selection.slide, { presenter: false }) },
       playPresenter: { label: t("Web.Play.PresenterView"), enabled: has && !master, run: () => this.play(this.selection.slide, { presenter: true }) },
       previewAnimations: { label: t("Menu.Play.PreviewAnimations"), enabled: has, run: () => this.previewAnimations() },
+      customShows: { label: t("Menu.Play.CustomShows"), enabled: has, run: () => this.showCustomShows() },
       zoomIn: { label: t("Menu.View.ZoomIn"), shortcut: shortcut("="), enabled: has, run: () => this.stepZoom(1) },
       zoomOut: { label: t("Menu.View.ZoomOut"), shortcut: shortcut("-", { alt: true }), enabled: has, run: () => this.stepZoom(-1) },
       zoomToFit: { label: t("Menu.View.ZoomToFit"), shortcut: shortcut("9"), enabled: has, run: () => this.setZoom("fit") },
@@ -589,7 +597,13 @@ export class PresentationWindow {
           self.item("fullScreen"),
         ];
       } },
-      { label: t("Menu.Play"), get items() { return self.items("playFromStart", "playFromCurrent", "-", "playPresenter", "playHere", "-", "previewAnimations"); } },
+      { label: t("Menu.Play"), get items() {
+        return [
+          ...self.items("playFromStart", "playFromCurrent"),
+          { label: t("Toolbar.PlayCustomShow"), disabled: !self.hasDocument, submenu: self.customShowItems() },
+          ...self.items("customShows", "-", "playPresenter", "playHere", "-", "previewAnimations"),
+        ];
+      } },
       { label: t("Menu.Window"), get items() {
         return self.document ? [{ label: self.document.name, checked: true, action: () => self.canvas.element.focus() }] : [{ label: "Dazzle", disabled: true }];
       } },
@@ -947,7 +961,7 @@ export class PresentationWindow {
     await this.canvas.endEditing();
     await this.flushNotes();
     const presenter = options.presenter ?? hasSecondDisplay();
-    await this.slideshow.start(slideID ?? this.engine.state.slides[0]?.id, { presenter });
+    await this.slideshow.start(slideID ?? this.engine.state.slides[0]?.id, { presenter, customShow: options.customShow });
     if (presenter && this.slideshow.mode !== "presenter") this.showMessage(t("Web.Play.PopupBlocked"), "info");
   }
 
@@ -1449,6 +1463,116 @@ export class PresentationWindow {
     backdrop.querySelector(".app__about-suite a").textContent = t("Web.About.Suite");
     backdrop.querySelector("[data-source]").addEventListener("click", () => window.open(SOURCE_CODE_URL, "_blank", "noopener"));
     backdrop.querySelector("[data-cancel]").focus();
+  }
+
+  /**
+   * Custom Shows: the presentation's named selections of slides. Shows are made,
+   * renamed and removed on the left; on the right, a show's slides are picked and
+   * put in order. Each change is made at once, and can be undone.
+   */
+  showCustomShows() {
+    let selected = this.engine.info?.customShows?.[0]?.id ?? null;
+    const backdrop = this.sheet(`
+      <form class="ds-sheet app__custom-shows-sheet" role="dialog" aria-labelledby="cs-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="cs-title">${escapeHTML(t("CustomShow.Title"))}</h2>
+          <div class="app__custom-shows"></div>
+          <p class="ds-caption app__note">${escapeHTML(t("CustomShow.Footer"))}</p>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-play>${escapeHTML(t("CustomShow.Play"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Web.Common.Done"))}</button>
+        </div>
+      </form>`);
+    const body = backdrop.querySelector(".app__custom-shows");
+    const slideLabel = (id) => {
+      const slide = (this.engine.info?.outline ?? []).find((entry) => entry.id === id);
+      return slide ? `${slide.number}. ${slide.title || t("Slide.Untitled")}` : "";
+    };
+    const render = () => {
+      const shows = this.engine.info?.customShows ?? [];
+      if (!shows.some((show) => show.id === selected)) selected = shows[0]?.id ?? null;
+      const show = shows.find((entry) => entry.id === selected);
+      const outline = this.engine.info?.outline ?? [];
+      body.innerHTML = `
+        <div class="app__custom-shows-list">
+          <nav class="ds-source-list" aria-label="${escapeHTML(t("CustomShow.Title"))}">${shows.map((entry) => `
+            <button class="ds-source-list__item" type="button" data-show="${entry.id}" aria-selected="${entry.id === selected}">${escapeHTML(entry.name)}<span class="ds-source-list__count">${entry.slides.length}</span></button>`).join("")}
+          </nav>
+          <span class="app__inspector-buttons">
+            <button class="ds-button ds-button--bordered ds-button--xs" type="button" data-op="new">${escapeHTML(t("CustomShow.New"))}</button>
+            <button class="ds-button ds-button--bordered ds-button--xs" type="button" data-op="duplicate"${show ? "" : " disabled"}>${escapeHTML(t("CustomShow.Duplicate"))}</button>
+            <button class="ds-button ds-button--bordered ds-button--xs" type="button" data-op="delete"${show ? "" : " disabled"}>${escapeHTML(t("CustomShow.Delete"))}</button>
+          </span>
+        </div>
+        ${show ? `<div class="app__custom-show">
+          <label class="ds-form app__custom-show-name"><span class="ds-form__label">${escapeHTML(t("CustomShow.Name"))}</span><span class="ds-form__control"><input class="ds-text-input ds-text-input--xs" name="name" value="${escapeHTML(show.name)}"></span></label>
+          <div class="app__custom-show-columns">
+            <div class="app__custom-show-table"><table class="ds-table"><thead><tr><th>${escapeHTML(t("CustomShow.AllSlides"))}</th></tr></thead><tbody>${outline.map((slide) => `
+              <tr><td><label class="ds-check"><input type="checkbox" data-include="${slide.id}"${show.slides.includes(slide.id) ? " checked" : ""}>${escapeHTML(slideLabel(slide.id))}</label></td></tr>`).join("")}
+            </tbody></table></div>
+            <div class="app__custom-show-table"><table class="ds-table"><thead><tr><th colspan="2">${escapeHTML(t("CustomShow.InShow"))}</th></tr></thead><tbody>${show.slides.length ? show.slides.map((id, index) => `
+              <tr><td>${escapeHTML(slideLabel(id))}</td><td class="app__custom-show-moves">
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-move="${index}:-1"${index ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveUp"))}" title="${escapeHTML(t("CustomShow.MoveUp"))}">${icon("chevronUp")}</button>
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-move="${index}:1"${index < show.slides.length - 1 ? "" : " disabled"} aria-label="${escapeHTML(t("CustomShow.MoveDown"))}" title="${escapeHTML(t("CustomShow.MoveDown"))}">${icon("chevronDown")}</button>
+                <button class="ds-button ds-button--ghost ds-button--icon ds-button--xs" type="button" data-remove="${index}" aria-label="${escapeHTML(t("CustomShow.Remove"))}" title="${escapeHTML(t("CustomShow.Remove"))}">${icon("close")}</button>
+              </td></tr>`).join("") : `<tr><td class="ds-caption">${escapeHTML(t("CustomShow.Empty"))}</td></tr>`}
+            </tbody></table></div>
+          </div>
+        </div>` : ""}`;
+      backdrop.querySelector("[data-play]").disabled = !show?.slides.length;
+      const setSlides = (slides) => this.engine.call("setCustomShowSlides", { id: selected, slides }).then(render);
+      for (const button of body.querySelectorAll("[data-show]")) {
+        button.addEventListener("click", () => {
+          selected = Number(button.dataset.show);
+          render();
+        });
+      }
+      body.querySelector('[data-op="new"]').addEventListener("click", async () => {
+        const first = this.selection.slide ? [this.selection.slide] : [];
+        selected = await this.engine.call("addCustomShow", { slides: first });
+        render();
+        body.querySelector('input[name="name"]')?.select();
+      });
+      body.querySelector('[data-op="duplicate"]').addEventListener("click", async () => {
+        await this.engine.call("duplicateCustomShow", { id: selected });
+        selected = (this.engine.info?.customShows ?? []).at(-1)?.id ?? selected;
+        render();
+      });
+      body.querySelector('[data-op="delete"]').addEventListener("click", () => this.engine.call("deleteCustomShow", { id: selected }).then(render));
+      body.querySelector('input[name="name"]')?.addEventListener("change", (event) => {
+        this.engine.call("renameCustomShow", { id: selected, name: event.target.value }).then(render);
+      });
+      for (const box of body.querySelectorAll("[data-include]")) {
+        box.addEventListener("change", () => {
+          const id = box.dataset.include;
+          setSlides(box.checked ? [...show.slides, id] : show.slides.filter((entry) => entry !== id));
+        });
+      }
+      for (const button of body.querySelectorAll("[data-move]")) {
+        button.addEventListener("click", () => {
+          const [index, step] = button.dataset.move.split(":").map(Number);
+          const slides = [...show.slides];
+          const [moving] = slides.splice(index, 1);
+          slides.splice(index + step, 0, moving);
+          setSlides(slides);
+        });
+      }
+      for (const button of body.querySelectorAll("[data-remove]")) {
+        button.addEventListener("click", () => setSlides(show.slides.filter((_, index) => index !== Number(button.dataset.remove))));
+      }
+    };
+    render();
+    backdrop.querySelector("[data-play]").addEventListener("click", async () => {
+      document.activeElement?.blur();
+      await dismissSheet(backdrop);
+      if (selected != null) this.play(null, { customShow: selected });
+    });
+    backdrop.querySelector("form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      document.activeElement?.blur();
+      dismissSheet(backdrop);
+    });
   }
 
   /** The date, slide number and footer, on this slide or every slide. */

@@ -49,7 +49,7 @@ final class MediaPlayback {
             players[shape.id] = player
             settings[shape.id] = media
             prepare(player, id: shape.id, media: media)
-            if media.playsAutomatically { play(shape.id) }
+            if media.playsAutomatically, !media.isNarration || presentation.showSettings.playsNarration { play(shape.id) }
         }
     }
 

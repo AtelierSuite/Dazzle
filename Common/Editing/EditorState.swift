@@ -523,6 +523,12 @@ final class EditorState {
         presentation.isShowSettingsModified = true
     }
 
+    /// Changes how every slideshow of the presentation plays.
+    func updateShowSettings(in presentation: inout Presentation, _ change: (inout SlideshowSettings) -> Void) {
+        change(&presentation.showSettings)
+        presentation.isShowSettingsModified = true
+    }
+
     func setProperty(_ field: DocumentProperties.Field, to value: String, in presentation: inout Presentation) {
         guard presentation.properties[field] != value else { return }
         presentation.properties[field] = value

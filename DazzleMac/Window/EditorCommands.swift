@@ -297,12 +297,25 @@ extension DocumentWindowController: NSMenuItemValidation {
     @objc func playSlideshow(_ sender: Any?) { play(from: deck.selectedIndex) }
     @objc func playFromBeginning(_ sender: Any?) { play(from: 0) }
 
-    func play(from index: Int) {
+    func play(from index: Int, customShow: CustomShow.ID? = nil) {
         // The slideshow shows the slides, which master view has set aside.
         guard !deck.presentation.isInMasterView else { return }
         state.endEditingText()
         state.stopPreviewingAnimations()
-        SlideshowController.shared.start(deck: deck, title: name, from: index, editorWindow: window)
+        SlideshowController.shared.start(deck: deck, title: name, from: index, customShow: customShow, editorWindow: window)
+    }
+
+    /// Plays the custom show a menu item stands for, by its tag.
+    @objc func playCustomShow(_ sender: Any?) {
+        guard let id = (sender as? NSMenuItem)?.tag, deck.presentation.customShow(withID: id) != nil else { return }
+        play(from: 0, customShow: id)
+    }
+
+    @objc func showCustomShows(_ sender: Any?) {
+        guard let window else { return }
+        let sheet = CustomShowsSheet(deck: deck) { [weak self] id in self?.play(from: 0, customShow: id) }
+        customShows = sheet
+        sheet.present(over: window)
     }
 
     @objc func previewAnimations(_ sender: Any?) {

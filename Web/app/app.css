@@ -915,6 +915,56 @@ body {
   margin-top: var(--ds-spacing-04);
 }
 
+.app__custom-shows-sheet {
+  width: min(860px, calc(100vw - 2 * var(--ds-spacing-05)));
+}
+
+.app__custom-shows {
+  display: flex;
+  gap: var(--ds-spacing-05);
+  margin: var(--ds-spacing-04) 0;
+}
+
+.app__custom-shows-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-spacing-03);
+}
+
+.app__custom-shows-list .ds-source-list {
+  width: 200px;
+  height: 320px;
+  border: 1px solid var(--ds-border-subtle-01);
+}
+
+.app__custom-show {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-spacing-04);
+}
+
+.app__custom-show-columns {
+  display: flex;
+  gap: var(--ds-spacing-04);
+}
+
+.app__custom-show-table {
+  flex: 1;
+  min-width: 0;
+  height: 280px;
+  overflow: auto;
+  border: 1px solid var(--ds-border-subtle-01);
+}
+
+.app__custom-show-moves {
+  width: 1%;
+  padding-inline: var(--ds-spacing-02);
+  text-align: end;
+  white-space: nowrap;
+}
+
 .app__properties {
   margin-top: var(--ds-spacing-04);
 }

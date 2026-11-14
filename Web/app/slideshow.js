@@ -73,15 +73,20 @@ export class Slideshow extends EventTarget {
    * asks for the audience window and presenter view; without it, or when the
    * window can't open, the show plays full screen here.
    */
-  async start(slideID, { presenter = hasSecondDisplay() } = {}) {
+  async start(slideID, { presenter = hasSecondDisplay(), customShow = null } = {}) {
     if (this.active) return;
     const state = this.engine.state;
     const slides = state.slides;
-    // Hidden slides are left out, unless every slide is.
-    this.order = slides.filter((slide) => !slide.hidden).map((slide) => slide.id);
+    // Hidden slides are left out, unless every slide is; a custom show plays its own.
+    this.order = await this.engine.call("slideshowOrder", customShow != null ? { customShow } : {});
     if (!this.order.length) this.order = slides.map((slide) => slide.id);
     const startIndex = slides.findIndex((slide) => slide.id === slideID);
-    this.position = Math.max(this.order.findIndex((id) => slides.findIndex((slide) => slide.id === id) >= startIndex), 0);
+    this.position = customShow != null ? 0 : Math.max(this.order.findIndex((id) => slides.findIndex((slide) => slide.id === id) >= startIndex), 0);
+    // Where to come back to as each custom show a link started ends, the latest last.
+    this.returnPoints = [];
+    // How the presentation asks to be played: a kiosk show moves on only by its timings and links.
+    this.settings = { ...(this.engine.info?.show ?? {}) };
+    this.startingOrder = [...this.order];
     this.active = true;
     this.blanked = false;
     this.startedAt = Date.now();
@@ -107,6 +112,7 @@ export class Slideshow extends EventTarget {
     window.addEventListener("pagehide", this.unloading);
     this.watchAudience();
     await this.showSlide({ fullyBuilt: false });
+    this.noteActivity();
     this.dispatchEvent(new CustomEvent("start"));
   }
 
@@ -140,6 +146,7 @@ export class Slideshow extends EventTarget {
 
   /** Ends the show, closing the audience window and going back to editing. */
   end() {
+    clearTimeout(this.restartTimer);
     if (!this.active) return;
     this.active = false;
     this.transitions?.finish();
@@ -185,6 +192,28 @@ export class Slideshow extends EventTarget {
     return this.timelines.get(id);
   }
 
+  /** Someone touched the show: a kiosk show waits that much longer before starting over. */
+  noteActivity() {
+    clearTimeout(this.restartTimer);
+    if (!this.active || !this.settings.kiosk) return;
+    this.restartTimer = setTimeout(async () => {
+      if (!this.active) return;
+      this.returnPoints = [];
+      this.order = [...this.startingOrder];
+      this.setBlank(false, { quiet: true });
+      const moving = this.position !== 0;
+      this.position = 0;
+      await this.showSlide({ fullyBuilt: false, transition: moving });
+      this.noteActivity();
+    }, Math.max(this.settings.restart ?? 300, 1) * 1000);
+  }
+
+  /** Whether taps and keys move the show on: not at a kiosk. */
+  get isManual() {
+    this.noteActivity();
+    return !this.settings.kiosk;
+  }
+
   /** Plays the slide's next animation step, or with none left, moves on. */
   async next() {
     if (!this.active) return;
@@ -200,15 +229,20 @@ export class Slideshow extends EventTarget {
       this.updatePresenter();
       return;
     }
+    let fullyBuilt = false;
     if (this.position < this.order.length - 1) {
       this.position += 1;
+    } else if (this.returnPoints.length) {
+      // A custom show played from a link comes back to the link's slide, as it was left.
+      ({ order: this.order, position: this.position } = this.returnPoints.pop());
+      fullyBuilt = true;
     } else if (timeline.loop) {
       this.position = 0;
     } else {
       // Moving on from the last slide ends the show, as in Keynote.
       return this.end();
     }
-    await this.showSlide({ fullyBuilt: false, transition: true });
+    await this.showSlide({ fullyBuilt, transition: true });
   }
 
   /** Takes back the last animation step, or with none played, goes back a slide. */
@@ -218,7 +252,7 @@ export class Slideshow extends EventTarget {
     if (this.transitions?.isPlaying) this.finishTransition();
     this.setBlank(false, { quiet: true });
     const timeline = await this.timeline();
-    if (this.builds > timeline.initial) {
+    if (this.settings.animations !== false && this.builds > timeline.initial) {
       // Back to how the slide looked before the step, without playing it backwards.
       this.builds -= 1;
       this.buildStartedAt = -Infinity;
@@ -250,6 +284,18 @@ export class Slideshow extends EventTarget {
     await this.go(index);
   }
 
+  /** Plays a custom show from its start, coming back afterwards when `returns`. */
+  async playCustomShow(id, returns) {
+    const order = await this.engine.call("slideshowOrder", { customShow: id });
+    const show = (this.engine.info?.customShows ?? []).find((entry) => entry.id === id);
+    if (!this.active || !show?.slides.length || !order.length) return;
+    if (returns) this.returnPoints.push({ order: this.order, position: this.position });
+    this.order = order;
+    this.position = 0;
+    this.setBlank(false, { quiet: true });
+    await this.showSlide({ fullyBuilt: false, transition: true });
+  }
+
   setBlank(on, { quiet = false } = {}) {
     this.blanked = on;
     this.post({ type: "blank", on });
@@ -264,8 +310,10 @@ export class Slideshow extends EventTarget {
   async showSlide({ fullyBuilt, transition: withTransition = false }) {
     const id = this.slideID;
     const timeline = await this.timeline(id);
-    this.builds = fullyBuilt ? timeline.steps : timeline.initial;
-    this.buildStartedAt = fullyBuilt ? -Infinity : performance.now();
+    // Without animations, every slide shows as it ends up.
+    const built = fullyBuilt || this.settings.animations === false;
+    this.builds = built ? timeline.steps : timeline.initial;
+    this.buildStartedAt = built ? -Infinity : performance.now();
     this.stopMedia();
     const scene = await this.engine.call("scene", { slide: id });
     if (id !== this.slideID) return;
@@ -327,7 +375,7 @@ export class Slideshow extends EventTarget {
   /** Moves on by itself after the slide's time, once its transition and running animations have settled. */
   scheduleAdvance(timeline) {
     clearTimeout(this.advanceTimer);
-    if (!this.active || this.blanked || timeline.after == null || this.builds < timeline.steps) return;
+    if (!this.active || this.blanked || timeline.after == null || this.builds < timeline.steps || this.settings.timings === false) return;
     let settling = Math.max(((this.transitionEndsAt ?? 0) - performance.now()) / 1000, 0);
     if (this.builds > 0) {
       const duration = timeline.durations[this.builds - 1];
@@ -365,7 +413,7 @@ export class Slideshow extends EventTarget {
   playOpeningMedia(timeline, scene) {
     const ids = new Set();
     for (let step = 0; step < this.builds; step++) for (const id of timeline.media?.[step] ?? []) ids.add(id);
-    for (const node of scene.shapes) if (node.media?.auto) ids.add(node.id);
+    for (const node of scene.shapes) if (node.media?.auto && (!node.media.narration || this.settings.narration !== false)) ids.add(node.id);
     for (const id of ids) this.playMedia(id, "play");
   }
 
@@ -394,6 +442,8 @@ export class Slideshow extends EventTarget {
   }
 
   handleKey(key, shift = false) {
+    // At a kiosk only Escape does anything: the show moves on by itself.
+    if (key !== "Escape" && !this.isManual) return;
     switch (key) {
       case "ArrowRight": case "ArrowDown": case "PageDown": case " ": case "Enter": case "n": case "N":
         if (shift && key === " ") this.previous();
@@ -456,15 +506,19 @@ export class Slideshow extends EventTarget {
       this.follow(link);
       return;
     }
+    if (!this.isManual) return;
     const timeline = await this.timeline();
     if (this.builds < timeline.steps || timeline.onClick) this.next();
   }
 
   follow(link) {
+    this.noteActivity();
     if (link.url) {
       window.open(link.url, "_blank", "noopener");
     } else if (link.slide) {
       this.goToSlide(link.slide);
+    } else if (link.customShow != null) {
+      this.playCustomShow(link.customShow, link.return);
     } else {
       ({ next: () => this.next(), previous: () => this.previous(), first: () => this.go(0), last: () => this.go(this.order.length - 1), end: () => this.end() })[link.action]?.();
     }
@@ -591,8 +645,8 @@ export class Slideshow extends EventTarget {
           case "fill": return this.fillAudienceScreen();
           case "blank": return this.setBlank(!this.blanked);
           case "end": return this.end();
-          case "previous": return this.previous();
-          case "next": return this.next();
+          case "previous": return this.isManual && this.previous();
+          case "next": return this.isManual && this.next();
           default: return null;
         }
       });

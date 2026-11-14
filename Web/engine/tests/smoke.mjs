@@ -1675,6 +1675,55 @@ test("keeps WordArt warps when the text is typed into, saved and reopened", () =
   assert.equal(again.find((node) => node.name === "Arched").text.warp?.[0].out, true);
 });
 
+test("makes custom shows, plays them in their order and keeps them on saving", () => {
+  call("new", { name: "Shows.pptx" });
+  const layout = call("info").result.layouts[1].path;
+  call("addSlide", { layout });
+  call("addSlide", { layout });
+  const slides = call("info").state.slides.map((slide) => slide.id);
+  const id = call("addCustomShow", { slides: [slides[2]] }).result;
+  call("setCustomShowSlides", { id, slides: [slides[2], slides[0]] });
+  call("renameCustomShow", { id, name: "Highlights" });
+  const info = call("info").result;
+  assert.deepEqual(info.customShows, [{ id, name: "Highlights", slides: [slides[2], slides[0]] }]);
+  assert.deepEqual(call("slideshowOrder", { customShow: id }).result, [slides[2], slides[0]]);
+  assert.deepEqual(call("slideshowOrder").result, slides);
+
+  call("insertTextBox");
+  call("setLink", { link: { customShow: id, return: true } });
+  const linked = call("scene", { slide: slides[2] }).result.shapes.find((node) => node.link);
+  assert.deepEqual(linked.link, { customShow: id, return: true });
+
+  const saved = call("save", { format: "pptx", keep: true }).payload;
+  const reopened = call("open", { name: "Shows again.pptx" }, saved);
+  const again = reopened.state.slides.map((slide) => slide.id);
+  assert.deepEqual(call("info").result.customShows.map((show) => show.slides), [[again[2], again[0]]]);
+  call("duplicateCustomShow", { id });
+  call("deleteCustomShow", { id });
+  assert.deepEqual(call("info").result.customShows.map((show) => show.name), ["Highlights Copy"]);
+});
+
+test("honours and keeps the slideshow settings", () => {
+  call("new", { name: "Settings.pptx" });
+  const layout = call("info").result.layouts[1].path;
+  call("addSlide", { layout });
+  call("addSlide", { layout });
+  const slides = call("info").state.slides.map((slide) => slide.id);
+  call("toggleHidden", { ids: [slides[1]] });
+  call("showSettings", { range: "slides", from: 2, to: 3 });
+  assert.deepEqual(call("slideshowOrder").result, [slides[2]], "plays the range, without its hidden slide");
+  call("showSettings", { kiosk: true, restart: 120, timings: false, animations: false, narration: false });
+  const show = call("info").result.show;
+  assert.deepEqual(show, { range: "slides", from: 2, to: 3, kiosk: true, restart: 120, loop: true, timings: true, animations: false, narration: false });
+  assert.equal(call("timeline", { slide: slides[0] }).result.loop, true, "a kiosk show loops");
+
+  const saved = call("save", { format: "pptx", keep: true }).payload;
+  call("open", { name: "Settings again.pptx" }, saved);
+  assert.deepEqual(call("info").result.show, show);
+  call("showSettings", { range: "all", kiosk: false });
+  assert.equal(call("info").result.show.timings, false);
+});
+
 test("reads, edits and saves document properties", () => {
   call("new", { name: "Properties.pptx" });
   call("setProperties", { title: "Quarterly <Review>", author: "Ada", keywords: "plans, numbers", comments: "Line one\nLine two" });

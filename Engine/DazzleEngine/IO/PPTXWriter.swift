@@ -68,7 +68,7 @@ private struct PackageBuilder {
         if slides.contains(where: \.areCommentsModified) {
             writeCommentAuthors()
         }
-        if presentation.isStructureModified || createdNotesMasterRelationship != nil {
+        if presentation.isStructureModified || presentation.areCustomShowsModified || createdNotesMasterRelationship != nil {
             try writePresentationPart()
         }
         if presentation.isShowSettingsModified {
@@ -278,7 +278,7 @@ private struct PackageBuilder {
             if let created { root.insertChild(created, at: (after ?? -1) + 1) }
             return created
         }()
-        settings?.setAttribute("loop", presentation.loopsSlideshow ? "1" : nil)
+        if let settings { Self.write(presentation.showSettings, into: settings) }
         guard let xml = XMLLite.serialize(root) else { throw PresentationWriteError.unwritablePart(path) }
         parts[path] = Data((PackagePath.declaration + xml).utf8)
         if existing == nil {
@@ -287,6 +287,42 @@ private struct PackageBuilder {
                 id: Relationship.unusedID(in: mainRelationships), type: OOXML.RelationshipType.presProps,
                 target: PackagePath.relativeTarget(to: path, from: mainPart)
             ))
+        }
+    }
+
+    /// The settings into a `p:showPr`, keeping its pen colour and extensions.
+    static func write(_ show: SlideshowSettings, into settings: XMLElement) {
+        settings.setAttribute("loop", show.loops ? "1" : nil)
+        settings.setAttribute("useTimings", show.usesTimings ? nil : "0")
+        settings.setAttribute("showAnimation", show.showsAnimations ? nil : "0")
+        settings.setAttribute("showNarration", show.playsNarration ? "1" : nil)
+        // How it is shown: by a speaker, browsed in a window, or at a kiosk.
+        let kinds = ["present", "browse", "kiosk"]
+        let current = settings.children.first { kinds.contains($0.name) }
+        if show.isKiosk {
+            let restart = Int((show.kioskRestartAfter * 1_000).rounded())
+            if let current, current.name == "kiosk" {
+                current.setAttribute("restart", restart == 300_000 ? nil : String(restart))
+            } else if let kiosk = XMLLite.fragment("<p:kiosk/>", namespaces: OOXML.namespaces) {
+                kiosk.setAttribute("restart", restart == 300_000 ? nil : String(restart))
+                if let current { settings.removeChild(current) }
+                settings.insertChild(kiosk, at: 0)
+            }
+        } else if current?.name == "kiosk", let current {
+            settings.removeChild(current)
+            if let present = XMLLite.fragment("<p:present/>", namespaces: OOXML.namespaces) { settings.insertChild(present, at: 0) }
+        }
+        // Which slides: after how it is shown.
+        let ranges = ["sldAll", "sldRg", "custShow"]
+        let xml: String? = switch show.range {
+        case .all: settings.children.contains { ranges.contains($0.name) } ? "<p:sldAll/>" : nil
+        case .slides(let from, let to): "<p:sldRg st=\"\(min(from, to))\" end=\"\(max(from, to))\"/>"
+        case .customShow(let id): "<p:custShow id=\"\(id)\"/>"
+        }
+        for element in settings.children where ranges.contains(element.name) { settings.removeChild(element) }
+        if let xml, let range = XMLLite.fragment(xml, namespaces: OOXML.namespaces) {
+            let after = settings.children.lastIndex { kinds.contains($0.name) }
+            settings.insertChild(range, at: (after ?? -1) + 1)
         }
     }
 
@@ -514,6 +550,10 @@ private struct PackageBuilder {
             pruneSlideReferences(in: root, keeping: keptIDs)
         }
 
+        if presentation.isStructureModified || presentation.areCustomShowsModified {
+            writeCustomShows(in: root, namespaces: namespaces)
+        }
+
         if let notesMaster = createdNotesMasterRelationship, root.firstChild(named: "notesMasterIdLst") == nil {
             let after = root.children.firstIndex { $0.name == "sldMasterIdLst" } ?? -1
             insert(
@@ -524,6 +564,43 @@ private struct PackageBuilder {
 
         guard let xml = XMLLite.serialize(root) else { throw PresentationWriteError.unwritablePart(mainPart) }
         parts[mainPart] = Data((PackagePath.declaration + xml).utf8)
+    }
+
+    /// `p:custShowLst`, from the custom shows as they are now. A show keeps
+    /// whatever else its element held.
+    private func writeCustomShows(in root: XMLElement, namespaces: [String: String]) {
+        let existing = root.firstChild(named: "custShowLst")
+        let elements = Dictionary(
+            (existing?.children(named: "custShow") ?? []).compactMap { show in show.attribute("id").map { ($0, show) } }
+        ) { first, _ in first }
+        if let existing { root.removeChild(existing) }
+        guard !presentation.customShows.isEmpty,
+              let list = XMLLite.fragment("<p:custShowLst/>", namespaces: namespaces) else { return }
+        let mainPart = mainPart
+        for show in presentation.customShows {
+            let entries = show.slideIDs.compactMap { id -> String? in
+                guard let path = slides.first(where: { $0.id == id })?.partName, let relationship = mainRelationships.first(where: {
+                    $0.type == OOXML.RelationshipType.slide && PackagePath.resolve($0.target, from: mainPart) == path
+                }) else { return nil }
+                return "<p:sld r:id=\"\(relationship.id)\"/>"
+            }
+            let fresh = "<p:custShow name=\"\(XMLLite.escape(show.name))\" id=\"\(show.id)\"><p:sldLst>\(entries.joined())</p:sldLst></p:custShow>"
+            guard let created = XMLLite.fragment(fresh, namespaces: namespaces) else { continue }
+            if let kept = elements[String(show.id)] {
+                kept.setAttribute("name", show.name)
+                if let slideList = kept.firstChild(named: "sldLst") { kept.removeChild(slideList) }
+                if let slideList = created.firstChild(named: "sldLst") { kept.insertChild(slideList, at: 0) }
+                list.insertChild(kept, at: list.children.count)
+            } else {
+                list.insertChild(created, at: list.children.count)
+            }
+        }
+        // After the slide list, sizes, tags and fonts; before the rest.
+        let after = root.children.lastIndex {
+            ["sldMasterIdLst", "notesMasterIdLst", "handoutMasterIdLst", "sldIdLst", "sldSz", "notesSz", "smartTags", "embeddedFontLst"]
+                .contains($0.name)
+        }
+        root.insertChild(list, at: (after ?? -1) + 1)
     }
 
     /// Custom shows and sections list slides too. Entries for slides that

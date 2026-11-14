@@ -536,7 +536,7 @@ struct WebRenderer {
         if let media = picture.media {
             node["media"] = [
                 "kind": media.kind == .video ? "video" : "audio", "path": media.path as Any, "url": media.url as Any,
-                "auto": media.playsAutomatically,
+                "auto": media.playsAutomatically, "narration": media.isNarration,
                 "trim": [media.trimStart, media.trimEnd], "fade": [media.fadeIn, media.fadeOut],
                 "volume": media.effectiveVolume, "loop": media.loops, "rewind": media.rewinds,
                 "full": media.kind == .video && media.playsFullScreen, "hide": media.hidesWhenNotPlaying,
@@ -854,6 +854,7 @@ struct WebRenderer {
         case .firstSlide: ["action": "first"]
         case .lastSlide: ["action": "last"]
         case .endShow: ["action": "end"]
+        case .customShow(let id, let returns): ["customShow": id, "return": returns]
         case .slidePart, .other: nil
         }
     }

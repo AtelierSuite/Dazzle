@@ -17,6 +17,7 @@ struct LinkEditor: View {
         case first
         case last
         case end
+        case customShow
         case other
     }
 
@@ -30,6 +31,7 @@ struct LinkEditor: View {
         case .firstSlide?: .first
         case .lastSlide?: .last
         case .endShow?: .end
+        case .customShow?: .customShow
         case .other?: .other
         }
     }
@@ -44,6 +46,9 @@ struct LinkEditor: View {
             Text("Link.First").tag(Kind.first)
             Text("Link.Last").tag(Kind.last)
             Text("Link.End").tag(Kind.end)
+            if !presentation.customShows.isEmpty || kind == .customShow {
+                Text("Link.CustomShow").tag(Kind.customShow)
+            }
             if kind == .other { Text("Link.Other").tag(Kind.other) }
         }
         .accessibilityIdentifier("linkKind")
@@ -63,6 +68,19 @@ struct LinkEditor: View {
                 }
             }
         }
+        if case .customShow(let id, let returns)? = link {
+            Picker("Link.CustomShow", selection: Binding(get: { id }, set: { onChange(.customShow($0, returns: returns)) })) {
+                ForEach(presentation.customShows) { show in
+                    Text(verbatim: show.name).tag(show.id)
+                }
+                if presentation.customShow(withID: id) == nil {
+                    Text("Link.CustomShow.Missing").tag(id)
+                }
+            }
+            .accessibilityIdentifier("linkCustomShow")
+            Toggle("Link.CustomShow.Return", isOn: Binding(get: { returns }, set: { onChange(.customShow(id, returns: $0)) }))
+                .accessibilityIdentifier("linkCustomShowReturn")
+        }
     }
 
     private func choose(_ kind: Kind) {
@@ -75,6 +93,7 @@ struct LinkEditor: View {
         case .first: onChange(.firstSlide)
         case .last: onChange(.lastSlide)
         case .end: onChange(.endShow)
+        case .customShow: onChange(presentation.customShows.first.map { .customShow($0.id, returns: true) })
         case .other: break
         }
     }

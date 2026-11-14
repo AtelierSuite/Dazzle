@@ -222,6 +222,51 @@ final class Bridge {
             }
         case "loop":
             edit { state, presentation in state.setLoopsSlideshow(r["on"] as? Bool ?? false, in: &presentation) }
+        case "showSettings":
+            // Any of: range ("all", "slides", "customShow") with from, to and show; kiosk, restart
+            // (seconds), timings, animations, narration.
+            edit { state, presentation in
+                let slideCount = max(presentation.slides.count, 1)
+                let firstShow = presentation.customShows.first?.id
+                state.updateShowSettings(in: &presentation) { settings in
+                    switch r["range"] as? String {
+                    case "all": settings.range = .all
+                    case "slides":
+                        let from = min(max(r["from"] as? Int ?? 1, 1), slideCount)
+                        let to = min(max(r["to"] as? Int ?? slideCount, from), slideCount)
+                        settings.range = .slides(from: from, to: to)
+                    case "customShow":
+                        settings.range = (r["show"] as? Int ?? firstShow).map(SlideshowSettings.Range.customShow) ?? .all
+                    default: break
+                    }
+                    if let kiosk = r["kiosk"] as? Bool { settings.isKiosk = kiosk }
+                    if let restart = r["restart"] as? Double { settings.kioskRestartAfter = max(restart, 60) }
+                    if let timings = r["timings"] as? Bool { settings.usesTimings = timings }
+                    if let animations = r["animations"] as? Bool { settings.showsAnimations = animations }
+                    if let narration = r["narration"] as? Bool { settings.playsNarration = narration }
+                }
+            }
+
+        // Custom shows
+        case "addCustomShow":
+            var id = 0
+            edit { state, presentation in id = state.addCustomShow(slides: uuids(r["slides"]), in: &presentation) }
+            return id
+        case "renameCustomShow":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.renameCustomShow(id, to: r["name"] as? String ?? "", in: &presentation) }
+        case "setCustomShowSlides":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.setCustomShowSlides(id, to: uuids(r["slides"]), in: &presentation) }
+        case "duplicateCustomShow":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.duplicateCustomShow(id, in: &presentation) }
+        case "deleteCustomShow":
+            guard let id = r["id"] as? Int else { break }
+            edit { state, presentation in state.deleteCustomShow(id, in: &presentation) }
+        case "slideshowOrder":
+            // The slides a slideshow plays, in order: a custom show's when asked for.
+            return presentation.slideshowOrder(customShow: r["customShow"] as? Int).map { presentation.slides[$0].id.uuidString }
         case "properties":
             let properties = presentation.properties
             var json: [String: Any] = Dictionary(uniqueKeysWithValues: DocumentProperties.Field.allCases.map { ($0.rawValue, properties[$0]) })
@@ -518,7 +563,7 @@ final class Bridge {
                 },
                 "through": timeline.playingThroughDuration.isFinite ? timeline.playingThroughDuration : -1,
                 "after": slide.autoAdvanceAfter as Any, "onClick": slide.advancesOnClick, "notes": slide.notes,
-                "loop": presentation.loopsSlideshow,
+                "loop": presentation.showSettings.playsInLoop,
                 "transition": slide.transition.map { $0.isAnimated ? $0.duration : 0 } ?? 0,
             ]
         case "transition":
@@ -712,10 +757,24 @@ final class Bridge {
         }
     }
 
+    private func showSettingsJSON(_ settings: SlideshowSettings) -> [String: Any] {
+        var json: [String: Any] = [
+            "kiosk": settings.isKiosk, "restart": settings.kioskRestartAfter, "loop": settings.playsInLoop,
+            "timings": settings.followsTimings, "animations": settings.showsAnimations, "narration": settings.playsNarration,
+        ]
+        switch settings.range {
+        case .all: json["range"] = "all"
+        case .slides(let from, let to): json["range"] = "slides"; json["from"] = from; json["to"] = to
+        case .customShow(let id): json["range"] = "customShow"; json["show"] = id
+        }
+        return json
+    }
+
     private func hyperlink(_ value: Any?) -> Hyperlink? {
         guard let json = value as? [String: Any] else { return nil }
         if let url = json["url"] as? String, !url.isEmpty { return .url(Hyperlink.normalizedAddress(url)) }
         if let slide = uuid(json["slide"]) { return .slide(slide) }
+        if let show = json["customShow"] as? Int { return .customShow(show, returns: json["return"] as? Bool ?? true) }
         switch json["action"] as? String {
         case "next": return .nextSlide
         case "previous": return .previousSlide
@@ -1014,6 +1073,13 @@ final class Bridge {
             "sizePreset": SlideSizeConverter.Preset.matching(presentation.slideSize)?.rawValue as Any,
             "layouts": presentation.resources.orderedLayouts.map { ["path": $0.path, "name": $0.name] },
             "loop": presentation.loopsSlideshow,
+            "show": showSettingsJSON(presentation.showSettings),
+            "customShows": presentation.customShows.map { show -> [String: Any] in
+                [
+                    "id": show.id, "name": show.name,
+                    "slides": show.slideIDs.filter { presentation.index(of: $0) != nil }.map(\.uuidString),
+                ]
+            },
             "fonts": fonts.sorted(),
             "hasEmbeddedFonts": !presentation.resources.embeddedFonts.isEmpty,
             // The typefaces the slides ask for that the presentation doesn't carry,
