@@ -456,8 +456,12 @@ public struct RunProperties: Equatable, Hashable, Sendable {
     public var size: Int?
     public var isBold: Bool?
     public var isItalic: Bool?
-    public var isUnderlined: Bool?
-    public var isStruckThrough: Bool?
+    /// `u`: how the text is underlined, `none` taking away an inherited one.
+    public var underline: UnderlineStyle?
+    /// `strike`: how the text is struck through, `none` taking away an inherited one.
+    public var strike: StrikeStyle?
+    /// `a:uFill`, or failing that `a:uLn`'s fill: the underline's own colour, where it isn't the text's.
+    public var underlineColor: DrawingColor?
     public var color: DrawingColor?
     /// A typeface name, or a theme font such as `+mn-lt`.
     public var latinFont: String?
@@ -485,6 +489,20 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         // Every property unsaid: inherited.
     }
 
+    /// Whether the text is underlined. Turning it on keeps the style the text
+    /// already has, or underlines it with a single line.
+    public var isUnderlined: Bool? {
+        get { underline.map { $0 != .none } }
+        set { underline = newValue.map { $0 ? (underline.flatMap { $0 == .none ? nil : $0 } ?? .single) : UnderlineStyle.none } }
+    }
+
+    /// Whether the text is struck through. Turning it on keeps the style the
+    /// text already has, or strikes it with a single line.
+    public var isStruckThrough: Bool? {
+        get { strike.map { $0 != .none } }
+        set { strike = newValue.map { $0 ? (strike.flatMap { $0 == .none ? nil : $0 } ?? .single) : StrikeStyle.none } }
+    }
+
     public init(element: XMLElement?) {
         guard let element else { return }
         func flag(_ key: String) -> Bool? {
@@ -493,8 +511,14 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         size = element.attribute("sz").flatMap(Int.init)
         isBold = flag("b")
         isItalic = flag("i")
-        isUnderlined = element.attribute("u").map { $0 != "none" }
-        isStruckThrough = element.attribute("strike").map { $0 != "noStrike" }
+        // A style Dazzle doesn't know is still a line under the text.
+        underline = element.attribute("u").map { UnderlineStyle(rawValue: $0) ?? .single }
+        strike = element.attribute("strike").map { StrikeStyle(rawValue: $0) ?? .single }
+        if let fill = element.firstChild(named: "uFill")?.firstChild(named: "solidFill") {
+            underlineColor = DrawingColor.first(in: fill)
+        } else if let fill = element.firstChild(named: "uLn")?.firstChild(named: "solidFill") {
+            underlineColor = DrawingColor.first(in: fill)
+        }
         baseline = element.attribute("baseline").flatMap(Int.init)
         spacing = element.attribute("spc").flatMap(Int.init)
         capitalization = element.attribute("cap").flatMap { $0 == "none" ? nil : $0 }
@@ -520,8 +544,9 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         result.size = size ?? base.size
         result.isBold = isBold ?? base.isBold
         result.isItalic = isItalic ?? base.isItalic
-        result.isUnderlined = isUnderlined ?? base.isUnderlined
-        result.isStruckThrough = isStruckThrough ?? base.isStruckThrough
+        result.underline = underline ?? base.underline
+        result.strike = strike ?? base.strike
+        result.underlineColor = underlineColor ?? base.underlineColor
         result.color = color ?? base.color
         result.latinFont = latinFont ?? base.latinFont
         result.eastAsianFont = eastAsianFont ?? base.eastAsianFont
@@ -534,6 +559,60 @@ public struct RunProperties: Equatable, Hashable, Sendable {
         result.highlight = highlight ?? base.highlight
         return result
     }
+}
+
+/// `u` in run properties: the line drawn under the text.
+public enum UnderlineStyle: String, CaseIterable, Hashable, Sendable {
+    case none
+    /// A single line under the words, leaving the spaces between them bare.
+    case words
+    case single = "sng"
+    case double = "dbl"
+    case heavy
+    case dotted
+    case dottedHeavy
+    case dash
+    case dashHeavy
+    case dashLong
+    case dashLongHeavy
+    case dotDash
+    case dotDashHeavy
+    case dotDotDash
+    case dotDotDashHeavy
+    case wavy
+    case wavyHeavy
+    case wavyDouble = "wavyDbl"
+
+    /// Drawn twice as thick as the font's own underline.
+    public var isHeavy: Bool {
+        switch self {
+        case .heavy, .dottedHeavy, .dashHeavy, .dashLongHeavy, .dotDashHeavy, .dotDotDashHeavy, .wavyHeavy: true
+        default: false
+        }
+    }
+
+    public var isDouble: Bool { self == .double || self == .wavyDouble }
+
+    public var isWavy: Bool { self == .wavy || self == .wavyHeavy || self == .wavyDouble }
+
+    /// Dashes and gaps along the line, in multiples of its thickness; empty for a solid line.
+    public var dashPattern: [Double] {
+        switch self {
+        case .dotted, .dottedHeavy: [1, 1]
+        case .dash, .dashHeavy: [4, 2]
+        case .dashLong, .dashLongHeavy: [8, 3]
+        case .dotDash, .dotDashHeavy: [4, 2, 1, 2]
+        case .dotDotDash, .dotDotDashHeavy: [4, 2, 1, 2, 1, 2]
+        default: []
+        }
+    }
+}
+
+/// `strike` in run properties: the line drawn through the text.
+public enum StrikeStyle: String, CaseIterable, Hashable, Sendable {
+    case none = "noStrike"
+    case single = "sngStrike"
+    case double = "dblStrike"
 }
 
 /// `a:ln` in run properties: a line around each letter, or none, which

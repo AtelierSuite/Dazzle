@@ -790,8 +790,8 @@ public struct ShapeWriter {
         if let size = properties.size { element.setAttribute("sz", String(size)) }
         if let bold = properties.isBold { element.setAttribute("b", bold ? "1" : "0") }
         if let italic = properties.isItalic { element.setAttribute("i", italic ? "1" : "0") }
-        if let underline = properties.isUnderlined { element.setAttribute("u", underline ? "sng" : "none") }
-        if let strike = properties.isStruckThrough { element.setAttribute("strike", strike ? "sngStrike" : "noStrike") }
+        if let underline = properties.underline { element.setAttribute("u", underline.rawValue) }
+        if let strike = properties.strike { element.setAttribute("strike", strike.rawValue) }
         if let baseline = properties.baseline { element.setAttribute("baseline", baseline == 0 ? nil : String(baseline)) }
         if let spacing = properties.spacing { element.setAttribute("spc", spacing == 0 ? nil : String(spacing)) }
         if let color = properties.color, let fill = fragment("<a:solidFill>\(color.xml)</a:solidFill>") {
@@ -809,6 +809,14 @@ public struct ShapeWriter {
            element.firstChild(named: "effectDag") == nil, let effects = fragment(shadow.xml) {
             let after = element.children.lastIndex { $0.name == "ln" || Fill.elementNames.contains($0.name) }
             element.insertChild(effects, at: after.map { $0 + 1 } ?? 0)
+        }
+        // An underline colour the file had is kept as written.
+        if let color = properties.underlineColor, !element.children.contains(where: { ["uFill", "uFillTx"].contains($0.name) }),
+           let fill = fragment("<a:uFill><a:solidFill>\(color.xml)</a:solidFill></a:uFill>") {
+            let before = element.children.firstIndex {
+                ["latin", "ea", "cs", "sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"].contains($0.name)
+            }
+            element.insertChild(fill, at: before ?? element.children.count)
         }
         switch properties.highlight {
         case .color(let color)?:
