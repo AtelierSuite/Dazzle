@@ -1318,6 +1318,26 @@ body {
   overflow: hidden;
 }
 
+.presenter__media-buttons {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.presenter__media-button {
+  position: absolute;
+  padding: 0;
+  background: none;
+  border: 0;
+  pointer-events: auto;
+}
+
+.presenter__media-button svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .presenter.is-blanked .presenter__current .presenter__stage {
   opacity: 0.35;
 }

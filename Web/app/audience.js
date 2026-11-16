@@ -5,7 +5,7 @@
 import "../design/base.js";
 import { loadStrings, t } from "./i18n.js";
 import { SlideDrawer, MediaStore, applyFrame } from "./slide.js";
-import { toggleMedia, showLinkTips } from "./slideshow.js";
+import { toggleMedia, showLinkTips, playingMedia } from "./slideshow.js";
 import { TransitionPlayer } from "./transition.js";
 
 const stage = document.querySelector(".audience__stage");
@@ -81,8 +81,12 @@ window.addEventListener("message", async (event) => {
       document.body.classList.toggle("is-blanked", Boolean(message.on));
       break;
     case "media":
-      if (message.action === "stop") for (const player of stage.querySelectorAll(".slideshow__media")) player.remove();
-      else toggleMedia(current, message.id, media, message.action);
+      if (message.action === "stop") {
+        for (const player of stage.querySelectorAll(".slideshow__media")) player.remove();
+        reported = "";
+      } else {
+        toggleMedia(current, message.id, media, message.action);
+      }
       break;
     case "fonts": {
       const bytes = new Uint8Array(message.data);
@@ -110,6 +114,17 @@ window.addEventListener("message", async (event) => {
       break;
   }
 });
+
+// What is playing, so the presenter's window can offer to play the rest.
+let reported = "";
+function reportMedia() {
+  const playing = playingMedia(stage);
+  const key = playing.join(",");
+  if (key === reported) return;
+  reported = key;
+  tell({ type: "mediaState", playing });
+}
+for (const name of ["play", "pause", "ended", "emptied"]) stage.addEventListener(name, () => queueMicrotask(reportMedia), true);
 
 window.addEventListener("keydown", (event) => {
   // Keys a clicker or keyboard sends here run the show from the presenter's window.
