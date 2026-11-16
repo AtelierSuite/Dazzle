@@ -96,6 +96,21 @@ export async function saveFileAs(bytes, suggestedName, { mime, extension, descri
   return { name: suggestedName };
 }
 
+/**
+ * Asks where to save a file before it is made, while the click that asked
+ * still counts. Resolves with a handle, null if the user cancelled, or
+ * undefined where the browser can't ask (the file is then downloaded).
+ */
+export async function pickSaveHandle(suggestedName, { mime, extension, description }) {
+  if (!canSaveInPlace) return undefined;
+  try {
+    return await window.showSaveFilePicker({ suggestedName, types: [{ description, accept: { [mime]: [`.${extension}`] } }] });
+  } catch (error) {
+    if (error?.name === "AbortError") return null;
+    throw error;
+  }
+}
+
 export const canPickFolders = typeof window.showDirectoryPicker === "function";
 
 /** Asks for a folder to write files into. Resolves with its handle, or null if the user cancelled. */

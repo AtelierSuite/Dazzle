@@ -14,7 +14,7 @@ import { SlideCanvas } from "./canvas.js";
 import { SlideNavigator } from "./navigator.js";
 import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js";
 import { Slideshow, hasSecondDisplay, sceneMedia } from "./slideshow.js";
-import { PAGE_LAYOUTS, RESOLUTIONS, SlideRasteriser, encodeImage, layoutPages, zip } from "./export.js";
+import { PAGE_LAYOUTS, RESOLUTIONS, SlideRasteriser, canMakeMovies, encodeImage, layoutPages, makeMovie, zip } from "./export.js";
 import { closeTablePicker, openTablePicker } from "./table-picker.js";
 
 const isApple = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -416,6 +416,7 @@ export class PresentationWindow {
       exportPowerPoint: { label: t("Menu.File.Export.PowerPoint"), enabled: has, run: () => this.exportAs({ key: "pptx", extension: "pptx", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }) },
       exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.showExport("pdf") },
       exportImages: { label: t("Menu.File.Export.Images"), enabled: has && !master, run: () => this.showExport("images") },
+      exportMovie: { label: t("Menu.File.Export.Movie"), enabled: has && !master && canMakeMovies, run: () => this.showExport("video") },
       print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has && !master, run: () => this.print() },
       undo: { label: t("Toolbar.Undo"), shortcut: shortcut("Z"), enabled: has && (state?.canUndo || editingText), run: () => this.undo() },
       redo: { label: t("Toolbar.Redo"), shortcut: shortcut("Z", { shift: true }), enabled: has && (state?.canRedo || editingText), run: () => this.redo() },
@@ -647,7 +648,7 @@ export class PresentationWindow {
       ...this.items("close", "save", "saveAs", "rename"),
       { separator: true },
       { label: t("Menu.File.ExportTo"), disabled: !this.document, submenu: [
-        this.item("exportPDF"), this.item("exportImages"), this.item("exportPowerPoint"),
+        this.item("exportPDF"), this.item("exportImages"), this.item("exportMovie"), this.item("exportPowerPoint"),
         ...(keynote ? [{ label: t("Web.Export.Keynote"), action: () => this.exportAs(keynote) }] : []),
       ] },
       { separator: true },
@@ -1044,17 +1045,17 @@ export class PresentationWindow {
     return (this.document?.name ?? "Presentation").replace(/\.[^.]+$/, "").replace(/[/:\\?%*|"<>]/g, "-").trim() || "Presentation";
   }
 
-  /** Export as PDF or Images: what to export and how, as the options under the Mac's save panel. */
+  /** Export as PDF, Images or Movie: what to export and how, as the options under the Mac's save panel. */
   showExport(format) {
     if (!this.hasDocument) return;
-    const options = { scope: "all", hidden: false, layout: "slides", image: "png", width: 1920, ...this.exportOptions };
+    const options = { scope: "all", hidden: false, layout: "slides", image: "png", width: 1920, seconds: 5, ...this.exportOptions };
     const size = this.engine.info.size;
     const resolution = (width) => `${width} × ${Math.round(width / (size.w / size.h))}`;
     const row = (label, control) => `<span class="ds-form__label">${escapeHTML(label)}</span><span class="ds-form__control">${control}</span>`;
     const popup = (name, label, entries, value) => `<span class="ds-popup ds-popup--xs"><select class="ds-popup__select" name="${name}" aria-label="${escapeHTML(label)}">${
       entries.map(([key, text]) => `<option value="${escapeHTML(String(key))}"${String(key) === String(value) ? " selected" : ""}>${escapeHTML(text)}</option>`).join("")
     }</select>${icon("chevronDown", "ds-popup__chevron")}</span>`;
-    const title = format === "pdf" ? "Menu.File.Export.PDF" : "Menu.File.Export.Images";
+    const title = { pdf: "Menu.File.Export.PDF", images: "Menu.File.Export.Images", video: "Menu.File.Export.Movie" }[format];
     const backdrop = this.sheet(`
       <form class="ds-sheet" role="dialog" aria-labelledby="export-title">
         <div class="ds-sheet__body">
@@ -1065,6 +1066,7 @@ export class PresentationWindow {
             ${format === "pdf" ? row(t("Export.Layout"), popup("layout", t("Export.Layout"), PAGE_LAYOUTS.map(([key, label]) => [key, t(label)]), options.layout)) : ""}
             ${format === "images" ? row(t("Export.ImageFormat"), popup("image", t("Export.ImageFormat"), [["png", "PNG"], ["jpeg", "JPEG"]], options.image)) : ""}
             ${format !== "pdf" ? row(t("Export.Resolution"), popup("width", t("Export.Resolution"), RESOLUTIONS.map((width) => [width, resolution(width)]), options.width)) : ""}
+            ${format === "video" ? row(t("Export.SecondsPerSlide"), `<span class="ds-stepper ds-stepper--xs"><input class="ds-stepper__input ds-numeric" type="number" name="seconds" min="1" max="60" step="1" value="${options.seconds}" aria-label="${escapeHTML(t("Export.SecondsPerSlide"))}"></span><span class="ds-caption">${escapeHTML(t("Export.Seconds", "").trim())}</span>`) : ""}
           </div>
         </div>
         <div class="ds-sheet__buttons">
@@ -1082,12 +1084,14 @@ export class PresentationWindow {
         ...(format === "pdf" ? { layout: data.get("layout") } : {}),
         ...(format === "images" ? { image: data.get("image") } : {}),
         ...(format !== "pdf" ? { width: Number(data.get("width")) } : {}),
+        ...(format === "video" ? { seconds: Math.min(Math.max(Number(data.get("seconds")) || 5, 1), 60) } : {}),
       });
       this.exportOptions = options;
       dismissSheet(backdrop);
       // Asking where to save comes first, while this click still lets the page ask.
       if (format === "pdf") this.exportPDF(options);
-      else this.exportImages(options);
+      else if (format === "images") this.exportImages(options);
+      else this.exportMovie(options);
     });
   }
 
@@ -1149,6 +1153,60 @@ export class PresentationWindow {
       else files.download(zip(made), `${base}.zip`, "application/zip");
     }
     if (failed) this.showMessage(t("Mac.Export.Images.Failed"), "error");
+  }
+
+  /** A movie of the slides, each held for its own time or the seconds asked for, with a sheet showing how far it has got. */
+  async exportMovie(options) {
+    const name = `${this.exportName()}.mp4`;
+    const kind = { mime: "video/mp4", extension: "mp4", description: t("Export.Format.Video") };
+    let handle;
+    try {
+      handle = await files.pickSaveHandle(name, kind);
+    } catch (error) {
+      this.showMessage(error.message, "error");
+      return;
+    }
+    if (handle === null) return;
+    await this.flushEdits();
+    const ids = this.exportedSlides(options);
+    // Slides that move on by themselves keep their own time.
+    const durations = [];
+    for (const id of ids) durations.push((await this.engine.call("timeline", { slide: id })).after ?? options.seconds);
+    const size = this.engine.info.size;
+    const width = options.width;
+    const height = Math.round(width / (size.w / size.h));
+    let cancelled = false;
+    const backdrop = this.sheet(`
+      <div class="ds-sheet" role="dialog" aria-labelledby="movie-title">
+        <div class="ds-sheet__body app__update-body">
+          <h2 class="ds-sheet__title" id="movie-title">${escapeHTML(t("Mac.Export.Movie.Progress"))}</h2>
+          <div class="ds-progress" role="progressbar" aria-labelledby="movie-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="ds-progress__bar"></div></div>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+        </div>
+      </div>`);
+    backdrop.querySelector("[data-cancel]").addEventListener("click", () => { cancelled = true; });
+    const bar = backdrop.querySelector(".ds-progress");
+    const rasteriser = new SlideRasteriser(this.media, this.fontFiles ?? []);
+    try {
+      const movie = await makeMovie({
+        count: ids.length, durations, width, height,
+        picture: (index) => this.slidePicture(rasteriser, ids[index], width),
+        progress: (fraction) => {
+          bar.setAttribute("aria-valuenow", String(Math.round(fraction * 100)));
+          bar.style.setProperty("--ds-progress", `${fraction * 100}%`);
+        },
+        cancelled: () => cancelled,
+      });
+      if (!movie) return;
+      if (handle) await files.writeHandle(handle, movie);
+      else files.download(movie, name, kind.mime);
+    } catch {
+      if (!cancelled) this.showMessage(t("Error.VideoExport"), "error");
+    } finally {
+      dismissSheet(backdrop);
+    }
   }
 
   /** Plays the slide's animations through on the canvas, one step after another. */

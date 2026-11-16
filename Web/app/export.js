@@ -1,12 +1,14 @@
-// Exporting slides as pictures and as printed pages, as the Mac's
-// ExportController does with SlideExporter.
+// Exporting slides as pictures, as a movie and as printed pages, as the Mac's
+// ExportController does with SlideExporter and VideoExporter.
 //
 // The browser draws slides as HTML and SVG (slide.js), so a slide becomes a
 // picture by drawing that markup into a canvas: it is copied into an SVG
 // <foreignObject> with the page's styles, the presentation's own fonts and its
-// pictures written in, and the SVG is drawn as an image.
+// pictures written in, and the SVG is drawn as an image. A movie is made of
+// those pictures with WebCodecs and written into an MP4 file here, since the
+// web build uses no packages.
 
-/** Widths offered for pictures, in pixels, as on the Mac. */
+/** Widths offered for pictures and movies, in pixels, as on the Mac. */
 export const RESOLUTIONS = [1280, 1920, 3840];
 
 /** The page layouts offered for PDF, as on the Mac: slides, notes pages, and handouts of 2, 3, 4 or 6. */
@@ -15,6 +17,10 @@ export const PAGE_LAYOUTS = [
   ["handouts2", "Mac.Export.Layout.Handouts2"], ["handouts3", "Mac.Export.Layout.Handouts3"],
   ["handouts4", "Mac.Export.Layout.Handouts4"], ["handouts6", "Mac.Export.Layout.Handouts6"],
 ];
+
+/** Seconds each slide of a movie dissolves into the next, and frames a second, as VideoExporter has them. */
+const DISSOLVE = 0.5;
+const FRAMES_PER_SECOND = 30;
 
 // MARK: - Drawing slides as pictures
 
@@ -209,6 +215,222 @@ function concat(parts) {
     at += part.length;
   }
   return out;
+}
+
+// MARK: - MP4
+
+/** Writes boxes, big-endian, as ISO/IEC 14496-12 lays them out. */
+class BoxWriter {
+  constructor() {
+    this.parts = [];
+  }
+
+  static box(type, ...contents) {
+    const body = concat(contents);
+    const header = new DataView(new ArrayBuffer(8));
+    header.setUint32(0, body.length + 8);
+    for (let index = 0; index < 4; index++) header.setUint8(4 + index, type.charCodeAt(index));
+    return concat([new Uint8Array(header.buffer), body]);
+  }
+
+  static fullBox(type, version, flags, ...contents) {
+    return BoxWriter.box(type, BoxWriter.u8(version), BoxWriter.u24(flags), ...contents);
+  }
+
+  static u8(value) {
+    return new Uint8Array([value & 0xff]);
+  }
+
+  static u16(value) {
+    return new Uint8Array([(value >>> 8) & 0xff, value & 0xff]);
+  }
+
+  static u24(value) {
+    return new Uint8Array([(value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
+  }
+
+  static u32(value) {
+    const view = new DataView(new ArrayBuffer(4));
+    view.setUint32(0, value >>> 0);
+    return new Uint8Array(view.buffer);
+  }
+
+  static u32s(...values) {
+    return concat(values.map((value) => BoxWriter.u32(value)));
+  }
+
+  static ascii(text) {
+    return new TextEncoder().encode(text);
+  }
+}
+
+const MATRIX = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000];
+
+/**
+ * An MP4 file holding one H.264 video track: `samples` are the encoder's
+ * chunks in decoding order, each with its duration in microseconds and
+ * whether it is a key frame; `avcC` is the decoder configuration the encoder gave.
+ */
+export function mp4({ width, height, avcC, samples }) {
+  const { box, fullBox, u8, u16, u32, u32s, ascii } = BoxWriter;
+  const timescale = 90_000;
+  const ticks = samples.map((sample) => Math.max(Math.round((sample.duration * timescale) / 1e6), 1));
+  const duration = ticks.reduce((total, value) => total + value, 0);
+  const movieDuration = Math.round((duration * 1000) / timescale);
+
+  const ftyp = box("ftyp", ascii("isom"), u32(0x200), ascii("isomiso2avc1mp41"));
+  const mdatSize = samples.reduce((total, sample) => total + sample.data.length, 0) + 8;
+  // The samples, one chunk each, start after the file type and the media data's header.
+  const offsets = [];
+  let at = ftyp.length + 8;
+  for (const sample of samples) {
+    offsets.push(at);
+    at += sample.data.length;
+  }
+
+  // Durations, run-length coded.
+  const runs = [];
+  for (const value of ticks) {
+    if (runs.length && runs.at(-1)[1] === value) runs.at(-1)[0] += 1;
+    else runs.push([1, value]);
+  }
+  const keys = samples.map((sample, index) => (sample.key ? index + 1 : 0)).filter(Boolean);
+
+  const avc1 = box("avc1",
+    new Uint8Array(6), u16(1), // Reserved; the data reference.
+    new Uint8Array(16), u16(width), u16(height),
+    u32s(0x00480000, 0x00480000, 0), u16(1),
+    new Uint8Array(32), u16(0x0018), u16(0xffff),
+    box("avcC", avcC));
+  const stbl = box("stbl",
+    fullBox("stsd", 0, 0, u32(1), avc1),
+    fullBox("stts", 0, 0, u32(runs.length), ...runs.map(([count, delta]) => u32s(count, delta))),
+    fullBox("stss", 0, 0, u32(keys.length), ...keys.map((key) => u32(key))),
+    fullBox("stsc", 0, 0, u32s(1, 1, 1, 1)),
+    fullBox("stsz", 0, 0, u32s(0, samples.length), ...samples.map((sample) => u32(sample.data.length))),
+    fullBox("stco", 0, 0, u32(offsets.length), ...offsets.map((offset) => u32(offset))));
+  const minf = box("minf",
+    fullBox("vmhd", 0, 1, new Uint8Array(8)),
+    box("dinf", fullBox("dref", 0, 0, u32(1), fullBox("url ", 0, 1))),
+    stbl);
+  const mdia = box("mdia",
+    fullBox("mdhd", 0, 0, u32s(0, 0, timescale, duration), u16(0x55c4), u16(0)),
+    fullBox("hdlr", 0, 0, u32(0), ascii("vide"), new Uint8Array(12), ascii("VideoHandler"), u8(0)),
+    minf);
+  const tkhd = fullBox("tkhd", 0, 3,
+    u32s(0, 0, 1, 0, movieDuration, 0, 0), u16(0), u16(0), u16(0), u16(0),
+    u32s(...MATRIX), u32s(width * 0x10000, height * 0x10000));
+  const mvhd = fullBox("mvhd", 0, 0,
+    u32s(0, 0, 1000, movieDuration, 0x00010000), u16(0x0100), new Uint8Array(10),
+    u32s(...MATRIX), new Uint8Array(24), u32(2));
+  const moov = box("moov", mvhd, box("trak", tkhd, mdia));
+  const mdatHeader = concat([u32(mdatSize), ascii("mdat")]);
+  return concat([ftyp, mdatHeader, ...samples.map((sample) => sample.data), moov]);
+}
+
+/** Whether this browser can make movies: WebCodecs with an H.264 encoder. */
+export const canMakeMovies = typeof globalThis.VideoEncoder === "function" && typeof globalThis.VideoFrame === "function";
+
+/** An H.264 configuration this browser can encode at `width` by `height`, or null. */
+async function movieConfig(width, height) {
+  // High, Main and Baseline profiles, at a level that holds the size at 30 frames a second.
+  const level = width * height > 2_228_224 ? "33" : width * height > 921_600 ? "28" : "1F";
+  for (const profile of ["6400", "4D00", "4200"]) {
+    const config = {
+      codec: `avc1.${profile}${level}`, width, height, framerate: FRAMES_PER_SECOND, avc: { format: "avc" },
+      bitrate: Math.round(width * height * FRAMES_PER_SECOND * 0.1), latencyMode: "quality",
+    };
+    try {
+      if ((await VideoEncoder.isConfigSupported(config)).supported) return config;
+    } catch {
+      // Try the next.
+    }
+  }
+  return null;
+}
+
+/**
+ * A movie of slides, each held for its number of seconds and dissolving into
+ * the next over the last half second, as VideoExporter makes it on Apple
+ * platforms. `picture(index)` draws slide `index` as a canvas; `progress` hears
+ * how far it has got, 0…1; `cancelled()` stops it.
+ * @returns {Promise<Uint8Array | null>} the MP4 file, or null if cancelled
+ */
+export async function makeMovie({ count, durations, width, height, picture, progress = () => {}, cancelled = () => false }) {
+  // Encoders want even sizes.
+  width -= width % 2;
+  height -= height % 2;
+  const config = await movieConfig(width, height);
+  if (!config) throw new Error("No H.264 encoder.");
+  const samples = [];
+  let avcC = null;
+  let failure = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, metadata) => {
+      const description = metadata?.decoderConfig?.description;
+      if (description) avcC = ArrayBuffer.isView(description) ? new Uint8Array(description.buffer, description.byteOffset, description.byteLength).slice() : new Uint8Array(description).slice();
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      samples.push({ data, timestamp: chunk.timestamp, key: chunk.type === "key" });
+    },
+    error: (error) => { failure = error; },
+  });
+  encoder.configure(config);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  const frameLength = 1e6 / FRAMES_PER_SECOND;
+  const ends = []; // When each frame ends, in microseconds, in order.
+  let time = 0;
+  const emit = (length, key) => {
+    const frame = new VideoFrame(canvas, { timestamp: Math.round(time), duration: Math.round(length) });
+    encoder.encode(frame, { keyFrame: key });
+    frame.close();
+    time += length;
+    ends.push(Math.round(time));
+  };
+  const total = durations.reduce((sum, value) => sum + value, 0) || 1;
+  let done = 0;
+  let next = count ? await picture(0) : null;
+  try {
+    for (let index = 0; index < count; index++) {
+      if (cancelled()) return null;
+      const current = next;
+      next = index + 1 < count ? await picture(index + 1) : null;
+      if (cancelled()) return null;
+      const hold = Math.max(durations[index], 1 / FRAMES_PER_SECOND);
+      const dissolveFrames = next ? Math.min(Math.round(DISSOLVE * FRAMES_PER_SECOND), Math.floor((hold * FRAMES_PER_SECOND) / 2)) : 0;
+      // The slide, still, as one long frame; then the frames that dissolve into the next.
+      context.globalAlpha = 1;
+      context.drawImage(current, 0, 0, width, height);
+      emit((hold * 1e6) - dissolveFrames * frameLength, true);
+      for (let step = 1; step <= dissolveFrames; step++) {
+        context.globalAlpha = 1;
+        context.drawImage(current, 0, 0, width, height);
+        context.globalAlpha = step / (dissolveFrames + 1);
+        context.drawImage(next, 0, 0, width, height);
+        emit(frameLength, false);
+      }
+      // Don't let the encoder fall far behind.
+      while (encoder.encodeQueueSize > 8) await new Promise((resolve) => setTimeout(resolve, 5));
+      if (failure) throw failure;
+      done += durations[index];
+      progress(Math.min(done / total, 1) * 0.95);
+    }
+    await encoder.flush();
+  } finally {
+    if (encoder.state !== "closed") encoder.close();
+  }
+  if (failure) throw failure;
+  if (!avcC || !samples.length) throw new Error("The encoder made nothing.");
+  // Each sample lasts until the next starts; the last, until its frame ends.
+  samples.sort((a, b) => a.timestamp - b.timestamp);
+  for (let index = 0; index < samples.length; index++) {
+    samples[index].duration = index + 1 < samples.length ? samples[index + 1].timestamp - samples[index].timestamp : ends.at(-1) - samples[index].timestamp;
+  }
+  progress(1);
+  return mp4({ width, height, avcC, samples });
 }
 
 // MARK: - Pages for printing

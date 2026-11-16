@@ -13,7 +13,7 @@ import { inflateRawSync } from "node:zlib";
 import { strict as assert } from "node:assert";
 import { Engine } from "../engine.js";
 import { bandForLine, letterTransform, placement, warpBands, warpPoint } from "../../app/warp.js";
-import { zip as zipFiles } from "../../app/export.js";
+import { mp4, zip as zipFiles } from "../../app/export.js";
 import { COLUMN_LIMIT, INITIAL_GRID, LARGEST_GRID, ROW_LIMIT, TableSizeSelection, cellAt } from "../../app/table-size.js";
 
 const web = new URL("../../", import.meta.url);
@@ -2167,6 +2167,33 @@ test("writes exported pictures into a zip", () => {
   const entries = unzip(zipFiles(files));
   assert.deepEqual([...entries.keys()], ["Deck 001.png", "Deck 002.png"]);
   assert.deepEqual([...entries.get("Deck 001.png")], [...PIXEL]);
+});
+
+test("writes a movie's H.264 samples into an MP4 file", () => {
+  const samples = [
+    { data: new Uint8Array([0, 0, 0, 2, 0x65, 1]), key: true, duration: 4_500_000 },
+    { data: new Uint8Array([0, 0, 0, 1, 0x41]), key: false, duration: 1e6 / 30 },
+    { data: new Uint8Array([0, 0, 0, 1, 0x41]), key: false, duration: 1e6 / 30 },
+  ];
+  const file = mp4({ width: 1920, height: 1080, avcC: new Uint8Array([1, 0x64, 0, 0x28, 0xff, 0xe0, 0]), samples });
+  const view = new DataView(file.buffer);
+  const boxes = (start, end) => {
+    const found = new Map();
+    for (let at = start; at < end; at += view.getUint32(at)) found.set(new TextDecoder().decode(file.subarray(at + 4, at + 8)), [at + 8, at + view.getUint32(at)]);
+    return found;
+  };
+  const top = boxes(0, file.length);
+  assert.deepEqual([...top.keys()], ["ftyp", "mdat", "moov"]);
+  let [start, end] = top.get("moov");
+  for (const name of ["trak", "mdia", "minf", "stbl"]) [start, end] = boxes(start, end).get(name);
+  const table = boxes(start, end);
+  const [stco] = table.get("stco");
+  const offsets = [0, 1, 2].map((index) => view.getUint32(stco + 8 + index * 4));
+  assert.deepEqual(offsets.map((offset, index) => [...file.subarray(offset, offset + samples[index].data.length)]), samples.map((sample) => [...sample.data]), "each sample where the table says");
+  const [stss] = table.get("stss");
+  assert.deepEqual([view.getUint32(stss + 4), view.getUint32(stss + 8)], [1, 1], "the first frame is the key frame");
+  const [stts] = table.get("stts");
+  assert.deepEqual([view.getUint32(stts + 4), view.getUint32(stts + 8), view.getUint32(stts + 12), view.getUint32(stts + 16), view.getUint32(stts + 20)], [2, 1, 405_000, 2, 3_000], "the still held, then the dissolve's frames");
 });
 
 for (const path of process.argv.slice(2)) {
