@@ -429,8 +429,10 @@ export class Slideshow extends EventTarget {
     const arriving = transition ? transition.duration * 1000 : 0;
     this.transitionEndsAt = performance.now() + arriving;
     if (!fullyBuilt) this.buildStartedAt = performance.now() + arriving;
-    this.post({ type: "show", scene, frame, media, transition, number: this.position + 1, count: this.order.length });
+    const label = this.slideLabel(id);
+    this.post({ type: "show", scene, frame, media, transition, label, number: this.position + 1, count: this.order.length });
     this.drawLocal(scene, frame, transition);
+    this.announce(label);
     await this.drawNext();
     this.updatePresenter();
     if (!fullyBuilt) {
@@ -438,6 +440,26 @@ export class Slideshow extends EventTarget {
       this.animate();
     }
     this.scheduleAdvance(timeline);
+  }
+
+  /** What assistive technology calls a slide: its title, as on the Mac. */
+  slideLabel(id) {
+    const title = this.engine.state?.slides.find((slide) => slide.id === id)?.title?.trim();
+    return title || this.t("Slide.Untitled");
+  }
+
+  /** Names the slide now showing on this window's stage, and says it aloud to a screen reader. */
+  announce(label) {
+    if (!this.stage) return;
+    this.stage.setAttribute("role", "group");
+    this.stage.setAttribute("aria-label", label);
+    if (!this.announcer) {
+      this.announcer = document.createElement("p");
+      this.announcer.className = "ds-visually-hidden";
+      this.announcer.setAttribute("aria-live", "polite");
+    }
+    if (!this.announcer.isConnected) this.view?.append(this.announcer);
+    this.announcer.textContent = label;
   }
 
   /** The engine's AnimationFrame `elapsed` seconds into the latest step. */
@@ -692,7 +714,7 @@ export class Slideshow extends EventTarget {
     const media = {};
     for (const path of sceneMedia(this.scene)) media[path] = await this.media.blob(path);
     const frame = await this.frame((performance.now() - this.buildStartedAt) / 1000);
-    this.post({ type: "show", scene: this.scene, frame, media, number: this.position + 1, count: this.order.length });
+    this.post({ type: "show", scene: this.scene, frame, media, label: this.slideLabel(this.sceneID), number: this.position + 1, count: this.order.length });
     if (this.blanked) this.post({ type: "blank", on: true });
   }
 

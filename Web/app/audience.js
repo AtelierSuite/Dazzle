@@ -10,6 +10,7 @@ import { TransitionPlayer } from "./transition.js";
 
 const stage = document.querySelector(".audience__stage");
 const fill = document.querySelector(".audience__fill");
+const announcer = document.querySelector(".audience__announcer");
 /** Pictures and movies the presenter's window hands over with each slide. */
 const media = new MediaStore(null);
 const drawer = new SlideDrawer(media);
@@ -69,6 +70,12 @@ window.addEventListener("message", async (event) => {
       // The slide arrives with the transition the presenter's window worked out.
       if (message.transition && previous) transitions.play(message.transition, previous, slide);
       document.title = t("Slideshow.Position", message.number, message.count);
+      // The slide's title names it to assistive technology, as on the Mac.
+      if (message.label) {
+        stage.setAttribute("role", "group");
+        stage.setAttribute("aria-label", message.label);
+        announcer.textContent = message.label;
+      }
       break;
     }
     case "frame":
