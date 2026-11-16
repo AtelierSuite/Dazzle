@@ -616,6 +616,21 @@ body {
   outline: 1px dashed var(--ds-interactive);
 }
 
+.canvas__pin {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: #fff;
+  font: var(--ds-type-caption);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 30%);
+  cursor: grab;
+  pointer-events: auto;
+  user-select: none;
+}
+
 .canvas__handle {
   position: absolute;
   width: 8px;
@@ -1303,6 +1318,26 @@ body {
   overflow: hidden;
 }
 
+.presenter__media-buttons {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.presenter__media-button {
+  position: absolute;
+  padding: 0;
+  background: none;
+  border: 0;
+  pointer-events: auto;
+}
+
+.presenter__media-button svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .presenter.is-blanked .presenter__current .presenter__stage {
   opacity: 0.35;
 }
@@ -1404,8 +1439,43 @@ body {
 
 /* MARK: - Printing */
 
-.app__print {
-  display: none;
+/* Pages for printing, and slides being drawn as pictures, are laid out off screen so their text can be measured. */
+.app__print,
+.app__export-stage {
+  position: fixed;
+  top: 0;
+  left: -100000px;
+  pointer-events: none;
+}
+
+.app__print-page {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+}
+
+.app__print-frame {
+  border: 0.5pt solid #999;
+}
+
+.app__print-notes {
+  color: #000;
+  font: var(--ds-type-body);
+  font-size: 12pt; /* design-lint-allow (printed document content) */
+  white-space: pre-wrap;
+  overflow: hidden;
+}
+
+.app__print-number {
+  color: #737373;
+  font: var(--ds-type-caption);
+  font-size: 9pt; /* design-lint-allow (printed document content) */
+  text-align: center;
+}
+
+.app__print-line {
+  height: 0.5pt;
+  background: #bfbfbf;
 }
 
 /* Each slide prints on a page of its own, the size of the slide. */
@@ -1422,12 +1492,10 @@ body {
   }
 
   .app__print {
-    display: block;
+    position: static;
   }
 
   .app__print-page {
-    position: relative;
-    overflow: hidden;
     break-after: page;
   }
 }

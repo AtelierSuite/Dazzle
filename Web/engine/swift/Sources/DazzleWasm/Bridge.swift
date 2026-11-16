@@ -90,7 +90,15 @@ final class Bridge {
             guard let slide = slide(r["slide"]) else { throw Failure(message: "No such slide.") }
             var renderer = WebRenderer(presentation: presentation, slide: slide)
             renderer.options.editing = r["editing"] as? Bool ?? false
-            return renderer.scene()
+            var scene = renderer.scene()
+            if renderer.options.editing {
+                // Open comment threads left at a place on the slide, as pins over it.
+                scene["pins"] = slide.comments.filter { $0.position != nil && !$0.isResolved }.map { comment -> [String: Any] in
+                    let position = comment.position ?? .zero
+                    return ["id": comment.id, "x": Double(position.x), "y": Double(position.y), "initials": comment.initials, "author": comment.author]
+                }
+            }
+            return scene
         case "media":
             guard let path = r["path"] as? String, let data = presentation.data(at: path) else { throw Failure(message: "No such part.") }
             output = data
@@ -335,7 +343,13 @@ final class Bridge {
         case "insertPicture":
             guard let payload else { throw Failure(message: "No picture was given.") }
             let media = try prepared(payload, r)
-            let frame = (r["frame"] as? [String: Any]).map(rect)
+            var frame = (r["frame"] as? [String: Any]).map(rect)
+            if frame == nil, let point = self.point(r["at"]) {
+                // Dropped on the slide: fitted as it would be in the middle, but centred where it was let go, as on the Mac.
+                let bounds = presentation.slideSize.points
+                let scale = min(bounds.width * 0.6 / max(media.size.width, 1), bounds.height * 0.6 / max(media.size.height, 1), 1)
+                frame = Self.placed(CGSize(width: media.size.width * scale, height: media.size.height * scale), at: point, in: bounds)
+            }
             edit { state, presentation in state.insertPicture(media, frame: frame, name: r["name"] as? String, in: &presentation) }
         case "insertVideo":
             guard let payload, let posterLength = r["posterLength"] as? Int, posterLength < payload.count else {
@@ -344,7 +358,15 @@ final class Bridge {
             // The poster's PNG first, then the movie.
             let poster = PreparedMedia(png: payload.prefix(posterLength), size: CGSize(width: r["w"] as? Double ?? 640, height: r["h"] as? Double ?? 360))
             let video = PreparedVideo(data: payload.dropFirst(posterLength), poster: poster, size: poster.size)
-            edit { state, presentation in state.insertVideo(video, in: &presentation) }
+            let dropped = self.point(r["at"])
+            edit { state, presentation in
+                state.insertVideo(video, in: &presentation)
+                // Dropped on the slide: centred where it was let go.
+                if let dropped, let shape = state.selectedShapes(in: presentation).last {
+                    let frame = Self.placed(shape.frame.points.size, at: dropped, in: presentation.slideSize.points)
+                    state.setTransform(frame: frame, rotation: 0, of: shape.id, in: &presentation)
+                }
+            }
             if let ext = r["ext"] as? String, ext != "mp4" { renameLastMedia(to: ext) }
         case "insertTable":
             let rows = min(max(r["rows"] as? Int ?? 3, 1), 50)
@@ -520,6 +542,24 @@ final class Bridge {
             edit { state, presentation in
                 state.setCrop(frame: rect(frame), left: crop[0], top: crop[1], right: crop[2], bottom: crop[3], of: id, in: &presentation)
             }
+        case "setMedia":
+            // How the selected video or sound plays: only the settings given change.
+            guard let set = r["set"] as? [String: Any] else { throw Failure(message: "No settings were given.") }
+            edit { state, presentation in
+                state.setMedia(in: &presentation) { media in
+                    if let value = set["trimStart"] as? Double { media.trimStart = value }
+                    if let value = set["trimEnd"] as? Double { media.trimEnd = value }
+                    if let value = set["fadeIn"] as? Double { media.fadeIn = value }
+                    if let value = set["fadeOut"] as? Double { media.fadeOut = value }
+                    if let value = set["volume"] as? Double { media.volume = value }
+                    if let value = set["muted"] as? Bool { media.isMuted = value }
+                    if let value = set["loops"] as? Bool { media.loops = value }
+                    if let value = set["rewinds"] as? Bool { media.rewinds = value }
+                    if let value = set["fullScreen"] as? Bool { media.playsFullScreen = value }
+                    if let value = set["acrossSlides"] as? Bool { media.playsAcrossSlides = value }
+                    if let value = set["hidesWhenStopped"] as? Bool { media.hidesWhenNotPlaying = value }
+                }
+            }
         case "resetCrop":
             edit { state, presentation in state.resetCrop(in: &presentation) }
         case "replacePicture":
@@ -691,6 +731,12 @@ final class Bridge {
             }
         case "deleteComment":
             edit { state, presentation in state.deleteComment(r["thread"] as? String ?? "", replyID: r["reply"] as? String, in: &presentation) }
+        case "moveComment":
+            // Moves a thread's pin, in slide points, kept on the slide.
+            guard let thread = r["thread"] as? String else { throw Failure(message: "No comment.") }
+            let size = presentation.slideSize.points
+            let point = CGPoint(x: min(max(r["x"] as? Double ?? 0, 0), Double(size.width)), y: min(max(r["y"] as? Double ?? 0, 0), Double(size.height)))
+            edit { state, presentation in state.moveComment(thread, to: point, in: &presentation) }
         case "resolveComment":
             edit { state, presentation in state.setCommentResolved(r["thread"] as? String ?? "", r["resolved"] as? Bool ?? true, in: &presentation) }
 
@@ -774,6 +820,19 @@ final class Bridge {
     private func slide(_ value: Any?) -> Slide? {
         guard let id = uuid(value) else { return editor.selectedSlide(in: presentation) }
         return presentation.slides.first { $0.id == id }
+    }
+
+    /// A point on the slide, `{ x, y }` in points.
+    private func point(_ value: Any?) -> CGPoint? {
+        guard let json = value as? [String: Any], let x = json["x"] as? Double, let y = json["y"] as? Double else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    /// A rectangle of `size` centred on `point`, kept on the slide where it fits.
+    private static func placed(_ size: CGSize, at point: CGPoint, in bounds: CGSize) -> CGRect {
+        let x = min(max(point.x - size.width / 2, 0), max(bounds.width - size.width, 0))
+        let y = min(max(point.y - size.height / 2, 0), max(bounds.height - size.height, 0))
+        return CGRect(x: x, y: y, width: size.width, height: size.height)
     }
 
     private func rect(_ json: [String: Any]) -> CGRect {
@@ -1430,7 +1489,14 @@ final class Bridge {
             shapeJSON["crop"] = [picture.cropLeft, picture.cropTop, picture.cropRight, picture.cropBottom]
             let image = SlideShape.Picture.imageRect(frame: frame, picture: picture)
             shapeJSON["image"] = ["x": Double(image.minX), "y": Double(image.minY), "w": Double(image.width), "h": Double(image.height)]
-            if let media = picture.media { shapeJSON["media"] = ["kind": media.kind == .video ? "video" : "audio", "path": media.path as Any] }
+            if let media = picture.media {
+                shapeJSON["media"] = [
+                    "kind": media.kind == .video ? "video" : "audio", "path": media.path as Any,
+                    "trimStart": media.trimStart, "trimEnd": media.trimEnd, "fadeIn": media.fadeIn, "fadeOut": media.fadeOut,
+                    "volume": media.volume, "muted": media.isMuted, "loops": media.loops, "rewinds": media.rewinds,
+                    "fullScreen": media.playsFullScreen, "acrossSlides": media.playsAcrossSlides, "hidesWhenStopped": media.hidesWhenNotPlaying,
+                ]
+            }
         }
         if case .table(let table) = shape.kind {
             var tableJSON: [String: Any] = [

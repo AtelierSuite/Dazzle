@@ -429,8 +429,10 @@ export class Slideshow extends EventTarget {
     const arriving = transition ? transition.duration * 1000 : 0;
     this.transitionEndsAt = performance.now() + arriving;
     if (!fullyBuilt) this.buildStartedAt = performance.now() + arriving;
-    this.post({ type: "show", scene, frame, media, transition, number: this.position + 1, count: this.order.length });
+    const label = this.slideLabel(id);
+    this.post({ type: "show", scene, frame, media, transition, label, number: this.position + 1, count: this.order.length });
     this.drawLocal(scene, frame, transition);
+    this.announce(label);
     await this.drawNext();
     this.updatePresenter();
     if (!fullyBuilt) {
@@ -438,6 +440,26 @@ export class Slideshow extends EventTarget {
       this.animate();
     }
     this.scheduleAdvance(timeline);
+  }
+
+  /** What assistive technology calls a slide: its title, as on the Mac. */
+  slideLabel(id) {
+    const title = this.engine.state?.slides.find((slide) => slide.id === id)?.title?.trim();
+    return title || this.t("Slide.Untitled");
+  }
+
+  /** Names the slide now showing on this window's stage, and says it aloud to a screen reader. */
+  announce(label) {
+    if (!this.stage) return;
+    this.stage.setAttribute("role", "group");
+    this.stage.setAttribute("aria-label", label);
+    if (!this.announcer) {
+      this.announcer = document.createElement("p");
+      this.announcer.className = "ds-visually-hidden";
+      this.announcer.setAttribute("aria-live", "polite");
+    }
+    if (!this.announcer.isConnected) this.view?.append(this.announcer);
+    this.announcer.textContent = label;
   }
 
   /** The engine's AnimationFrame `elapsed` seconds into the latest step. */
@@ -524,6 +546,45 @@ export class Slideshow extends EventTarget {
   stopMedia() {
     this.post({ type: "media", action: "stop" });
     for (const video of this.view?.querySelectorAll(".slideshow__media") ?? []) video.remove();
+    this.playing = new Set();
+  }
+
+  /**
+   * A play button over each paused video or sound on the presenter's slide,
+   * as on the Mac, for the presenter to click: the movies play in the audience's window.
+   */
+  drawMediaButtons() {
+    const layer = this.mediaButtons;
+    if (!layer) return;
+    layer.replaceChildren();
+    if (!this.current || this.transitions?.isPlaying) return;
+    const origin = layer.getBoundingClientRect();
+    for (const element of this.current.querySelectorAll("[data-media]")) {
+      const info = JSON.parse(element.dataset.media);
+      const id = element.closest(".shape")?.dataset.id;
+      if (!id || info.hide || this.playing?.has(id)) continue;
+      const rect = element.getBoundingClientRect();
+      if (!rect.width || !rect.height) continue;
+      const side = Math.min(Math.max(Math.min(rect.width, rect.height) * 0.3, 24), 64);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "presenter__media-button";
+      button.setAttribute("aria-label", `${this.t("Toolbar.Play")}: ${element.closest(".shape")?.getAttribute("aria-label") || ""}`.replace(/: $/, ""));
+      Object.assign(button.style, {
+        left: `${rect.left - origin.left + rect.width / 2 - side / 2}px`, top: `${rect.top - origin.top + rect.height / 2 - side / 2}px`,
+        width: `${side}px`, height: `${side}px`,
+      });
+      // A play triangle for a movie; a speaker for a sound.
+      const glyph = info.kind === "audio"
+        ? '<path d="M7 10h3l4-3.5v11L10 14H7z" fill="#fff"/><path d="M16.5 9a4 4 0 0 1 0 6" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>'
+        : '<path d="M9.5 7.5v9l7.5-4.5z" fill="#fff"/>';
+      button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="rgba(0,0,0,0.45)"/>${glyph}</svg>`;
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.playMedia(id);
+      });
+      layer.append(button);
+    }
   }
 
   // MARK: - Input
@@ -531,17 +592,20 @@ export class Slideshow extends EventTarget {
   key(event) {
     if (!this.active) return;
     if (event.target.closest?.(".presenter__notes textarea")) return;
+    // Q on its own ends the show; with a modifier it is the browser's.
+    if ((event.key === "q" || event.key === "Q") && (event.metaKey || event.ctrlKey || event.altKey)) return;
     this.handleKey(event.key, event.shiftKey);
     if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter", "n", "N", "ArrowLeft", "ArrowUp", "PageUp", "Backspace", "p", "P",
-      "Escape", "b", "B", ".", "w", "W", ",", "Home", "End"].includes(event.key)) {
+      "Escape", "q", "Q", "b", "B", ".", "w", "W", ",", "Home", "End"].includes(event.key)) {
       event.preventDefault();
       event.stopPropagation();
     }
   }
 
   handleKey(key, shift = false) {
-    // At a kiosk only Escape does anything: the show moves on by itself.
-    if (key !== "Escape" && !this.isManual) return;
+    // At a kiosk only Escape and Q do anything: the show moves on by itself.
+    const ends = key === "Escape" || key === "q" || key === "Q";
+    if (!ends && !this.isManual) return;
     switch (key) {
       case "ArrowRight": case "ArrowDown": case "PageDown": case " ": case "Enter": case "n": case "N":
         if (shift && key === " ") this.previous();
@@ -559,7 +623,7 @@ export class Slideshow extends EventTarget {
       case "b": case "B": case ".": case "w": case "W": case ",":
         this.setBlank(!this.blanked);
         break;
-      case "Escape":
+      case "Escape": case "q": case "Q":
         this.end();
         break;
       default:
@@ -581,6 +645,10 @@ export class Slideshow extends EventTarget {
         break;
       case "click":
         this.clicked(message);
+        break;
+      case "mediaState":
+        this.playing = new Set(message.playing ?? []);
+        this.drawMediaButtons();
         break;
       case "fullscreen":
         this.audienceFullscreen = message.on;
@@ -646,7 +714,7 @@ export class Slideshow extends EventTarget {
     const media = {};
     for (const path of sceneMedia(this.scene)) media[path] = await this.media.blob(path);
     const frame = await this.frame((performance.now() - this.buildStartedAt) / 1000);
-    this.post({ type: "show", scene: this.scene, frame, media, number: this.position + 1, count: this.order.length });
+    this.post({ type: "show", scene: this.scene, frame, media, label: this.slideLabel(this.sceneID), number: this.position + 1, count: this.order.length });
     if (this.blanked) this.post({ type: "blank", on: true });
   }
 
@@ -722,7 +790,7 @@ export class Slideshow extends EventTarget {
         <button class="ds-button ds-button--primary ds-button--xs" type="button" data-action="end"></button>
       </div>
       <div class="presenter__main">
-        <section class="presenter__current"><div class="presenter__stage"></div></section>
+        <section class="presenter__current"><div class="presenter__stage"></div><div class="presenter__media-buttons"></div></section>
         <aside class="presenter__side">
           <h2 class="ds-heading-compact presenter__label"></h2>
           <div class="presenter__next"><div class="presenter__stage presenter__stage--next"></div></div>
@@ -757,8 +825,12 @@ export class Slideshow extends EventTarget {
     this.root.append(view);
     this.view = view;
     this.stage = view.querySelector(".presenter__stage");
-    this.transitions = new TransitionPlayer(this.stage, (slide) => this.fit(this.stage, slide));
+    this.transitions = new TransitionPlayer(this.stage, (slide) => {
+      this.fit(this.stage, slide);
+      this.drawMediaButtons();
+    });
     this.nextStage = view.querySelector(".presenter__stage--next");
+    this.mediaButtons = view.querySelector(".presenter__media-buttons");
     this.stage.addEventListener("click", (event) => {
       const link = event.target.closest?.("[data-link]");
       this.clicked({ link: link ? JSON.parse(link.dataset.link) : null });
@@ -767,6 +839,7 @@ export class Slideshow extends EventTarget {
     const resize = new ResizeObserver(() => {
       this.fit(this.stage, this.current);
       this.fit(this.nextStage, this.upcoming);
+      this.drawMediaButtons();
     });
     resize.observe(this.stage);
     resize.observe(this.nextStage);
@@ -785,6 +858,7 @@ export class Slideshow extends EventTarget {
     this.drawer.fit(slide);
     applyFrame(slide, frame);
     if (transition && previous) this.transitions?.play(transition, previous, slide);
+    this.drawMediaButtons();
   }
 
   async drawNext() {
@@ -866,6 +940,11 @@ function collectMedia(nodes, paths) {
   }
 }
 
+/** The pictures whose movie or sound is playing in `root`, by shape. */
+export function playingMedia(root) {
+  return [...(root?.querySelectorAll(".slideshow__media") ?? [])].filter((player) => !player.paused && !player.ended).map((player) => player.dataset.shape);
+}
+
 /** Each picture's player, wherever it is shown. */
 const players = new WeakMap();
 
@@ -900,6 +979,7 @@ export async function toggleMedia(slide, id, media, action = "toggle") {
   if (!url || !shape.isConnected) return;
   player = document.createElement(kind === "audio" ? "audio" : "video");
   player.className = "slideshow__media";
+  player.dataset.shape = id;
   player.src = url;
   player.playsInline = true;
   player.volume = Math.min(Math.max(volume, 0), 1);

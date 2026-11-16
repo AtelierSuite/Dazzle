@@ -3,6 +3,7 @@
 // a file picker and save as downloads.
 
 import { t } from "./i18n.js";
+import { zip } from "./export.js";
 
 const openTypes = () => [
   {
@@ -54,19 +55,24 @@ export async function pickFile({ pictures = false, movies = false } = {}) {
   });
 }
 
-/** Reads a file the user picked earlier, asking again for permission when the browser wants that. */
+/** Reads a file the user picked earlier, or a Keynote package (a folder), asking again for permission when the browser wants that. */
 export async function readHandle(handle) {
   if (handle.queryPermission && (await handle.queryPermission({ mode: "read" })) !== "granted") {
     if ((await handle.requestPermission({ mode: "read" })) !== "granted") return null;
   }
+  if (handle.kind === "directory") return readPackage(handle);
   const file = await handle.getFile();
   return { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), handle };
 }
 
-/** Writes bytes into a file the user picked, asking for permission to write when needed. */
+/** Writes bytes into a file the user picked, or a Keynote package back into its folder, asking for permission to write when needed. */
 export async function writeHandle(handle, bytes) {
   if (handle.queryPermission && (await handle.queryPermission({ mode: "readwrite" })) !== "granted") {
     if ((await handle.requestPermission({ mode: "readwrite" })) !== "granted") return false;
+  }
+  if (handle.kind === "directory") {
+    await writePackage(handle, bytes);
+    return true;
   }
   const writable = await handle.createWritable();
   await writable.write(bytes);
@@ -94,6 +100,160 @@ export async function saveFileAs(bytes, suggestedName, { mime, extension, descri
   }
   download(bytes, suggestedName, mime);
   return { name: suggestedName };
+}
+
+/**
+ * Asks where to save a file before it is made, while the click that asked
+ * still counts. Resolves with a handle, null if the user cancelled, or
+ * undefined where the browser can't ask (the file is then downloaded).
+ */
+export async function pickSaveHandle(suggestedName, { mime, extension, description }) {
+  if (!canSaveInPlace) return undefined;
+  try {
+    return await window.showSaveFilePicker({ suggestedName, types: [{ description, accept: { [mime]: [`.${extension}`] } }] });
+  } catch (error) {
+    if (error?.name === "AbortError") return null;
+    throw error;
+  }
+}
+
+export const canPickFolders = typeof window.showDirectoryPicker === "function";
+
+/** Asks for a folder to write files into. Resolves with its handle, or null if the user cancelled. */
+export async function pickFolder() {
+  try {
+    return await window.showDirectoryPicker({ mode: "readwrite", id: "export" });
+  } catch (error) {
+    if (error?.name === "AbortError") return null;
+    throw error;
+  }
+}
+
+/** Writes a file into a folder the user picked, replacing one of the same name. */
+export async function writeIntoFolder(folder, name, bytes) {
+  const handle = await folder.getFileHandle(name, { create: true });
+  await writeHandle(handle, bytes);
+}
+
+// MARK: - Keynote packages
+
+// A Keynote document saved as a package is a folder (Name.key/Index, Data,
+// Metadata) rather than one file. The same files zipped together are a
+// single-file Keynote document, which is what the engine reads and writes;
+// so a package opens as its files zipped up, and saves by writing the
+// engine's zip back into the folder, file by file.
+
+/** What each package held when it was read or last written, so saving writes only what changed. */
+const packageContents = new WeakMap();
+
+/** Whether this browser can open a package by asking for its folder. */
+export const canPickPackages = typeof window.showDirectoryPicker === "function";
+
+/** Asks for a Keynote package (a folder) and reads it. */
+export async function pickPackage() {
+  try {
+    const handle = await window.showDirectoryPicker({ mode: "readwrite", id: "keynote" });
+    return readPackage(handle);
+  } catch (error) {
+    if (error?.name === "AbortError") return null;
+    throw error;
+  }
+}
+
+/** A package's files, path by path, from a folder handle. */
+async function packageFiles(folder, prefix = "", files = []) {
+  for await (const [name, child] of folder.entries()) {
+    if (name === ".DS_Store") continue;
+    if (child.kind === "directory") await packageFiles(child, `${prefix}${name}/`, files);
+    else files.push({ name: `${prefix}${name}`, bytes: new Uint8Array(await (await child.getFile()).arrayBuffer()) });
+  }
+  return files;
+}
+
+/**
+ * Reads a package folder as a single-file Keynote document.
+ * @returns {Promise<{ name: string, bytes: Uint8Array, handle: FileSystemDirectoryHandle }>}
+ */
+export async function readPackage(handle) {
+  const files = (await packageFiles(handle)).sort((a, b) => a.name.localeCompare(b.name));
+  packageContents.set(handle, new Map(files.map((file) => [file.name, file.bytes])));
+  return { name: handle.name, bytes: zip(files), handle };
+}
+
+/** Reads a package dropped where the browser gives a folder entry rather than a handle (Safari, Firefox). */
+export async function readPackageEntry(entry) {
+  const files = [];
+  const read = (directory, prefix) => new Promise((resolve, reject) => {
+    const reader = directory.createReader();
+    const children = [];
+    const more = () => reader.readEntries(async (batch) => {
+      if (batch.length) {
+        children.push(...batch);
+        more();
+        return;
+      }
+      try {
+        for (const child of children) {
+          if (child.name === ".DS_Store") continue;
+          if (child.isDirectory) await read(child, `${prefix}${child.name}/`);
+          else files.push({ name: `${prefix}${child.name}`, bytes: new Uint8Array(await (await new Promise((done, fail) => child.file(done, fail))).arrayBuffer()) });
+        }
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    }, reject);
+    more();
+  });
+  await read(entry, "");
+  files.sort((a, b) => a.name.localeCompare(b.name));
+  return { name: entry.name, bytes: zip(files) };
+}
+
+/** The files in a zip archive, stored or deflated. */
+export async function unzip(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let end = bytes.length - 22;
+  while (end >= 0 && view.getUint32(end, true) !== 0x06054b50) end--;
+  if (end < 0) throw new Error("Not a zip archive.");
+  const count = view.getUint16(end + 10, true);
+  let at = view.getUint32(end + 16, true);
+  const decoder = new TextDecoder();
+  const files = [];
+  for (let index = 0; index < count; index++) {
+    const method = view.getUint16(at + 10, true);
+    const size = view.getUint32(at + 20, true);
+    const nameLength = view.getUint16(at + 28, true);
+    const extra = view.getUint16(at + 30, true);
+    const comment = view.getUint16(at + 32, true);
+    const offset = view.getUint32(at + 42, true);
+    const name = decoder.decode(bytes.subarray(at + 46, at + 46 + nameLength));
+    const start = offset + 30 + view.getUint16(offset + 26, true) + view.getUint16(offset + 28, true);
+    let data = bytes.subarray(start, start + size);
+    if (method === 8) data = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+    if (!name.endsWith("/")) files.push({ name, bytes: data });
+    at += 46 + nameLength + extra + comment;
+  }
+  return files;
+}
+
+const sameBytes = (a, b) => a?.length === b.length && a.every((value, index) => value === b[index]);
+
+/** Writes a single-file Keynote document's files into its package folder, only those that changed. */
+async function writePackage(folder, bytes) {
+  const known = packageContents.get(folder) ?? new Map();
+  for (const file of await unzip(bytes)) {
+    if (sameBytes(known.get(file.name), file.bytes)) continue;
+    const parts = file.name.split("/");
+    const name = parts.pop();
+    let directory = folder;
+    for (const part of parts) directory = await directory.getDirectoryHandle(part, { create: true });
+    const writable = await (await directory.getFileHandle(name, { create: true })).createWritable();
+    await writable.write(file.bytes);
+    await writable.close();
+    known.set(file.name, file.bytes.slice());
+  }
+  packageContents.set(folder, known);
 }
 
 export function download(bytes, name, mime) {
@@ -133,12 +293,20 @@ export function onDroppedFiles(element, callback, onHover) {
     const item = [...(event.dataTransfer?.items ?? [])].find((entry) => entry.kind === "file");
     if (!item) return;
     event.preventDefault();
+    // Where it was let go, and the file, read before the event is over.
+    const where = { clientX: event.clientX, clientY: event.clientY, target: event.target };
+    const file = item.getAsFile();
+    // A Keynote package is a folder.
+    const entry = item.webkitGetAsEntry?.();
     const handle = await item.getAsFileSystemHandle?.();
-    if (handle?.kind === "file") {
-      callback(await readHandle(handle));
+    if (handle?.kind === "file" || handle?.kind === "directory" && /\.key$/i.test(handle.name)) {
+      callback(await readHandle(handle), where);
       return;
     }
-    const file = item.getAsFile();
-    if (file) callback({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+    if (entry?.isDirectory) {
+      if (/\.key$/i.test(entry.name)) callback(await readPackageEntry(entry), where);
+      return;
+    }
+    if (file) callback({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }, where);
   });
 }

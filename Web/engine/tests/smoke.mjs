@@ -13,6 +13,7 @@ import { inflateRawSync } from "node:zlib";
 import { strict as assert } from "node:assert";
 import { Engine } from "../engine.js";
 import { bandForLine, letterTransform, placement, warpBands, warpPoint } from "../../app/warp.js";
+import { mp4, zip as zipFiles } from "../../app/export.js";
 import { COLUMN_LIMIT, INITIAL_GRID, LARGEST_GRID, ROW_LIMIT, TableSizeSelection, cellAt } from "../../app/table-size.js";
 
 const web = new URL("../../", import.meta.url);
@@ -2091,6 +2092,119 @@ test("follows slide and section zooms, drawing each from the slide it leads to",
 
   const saved = unzip(call("save", { format: "pptx", keep: true }).payload);
   assert.match(new TextDecoder().decode(saved.get(name)), /<pslz:sldZmObj sldId="257">/, "saved as it was");
+});
+
+test("changes how a movie plays, and saves it", () => {
+  call("new", { name: "Media.pptx" });
+  const movie = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+  call("insertVideo", { posterLength: PIXEL.length, w: 320, h: 180 }, new Uint8Array([...PIXEL, ...movie]));
+  const before = call("inspect").result.shape;
+  assert.equal(before.kind, "media");
+  assert.deepEqual([before.media.kind, before.media.volume, before.media.loops, before.media.trimStart], ["video", 1, false, 0]);
+  call("setMedia", { set: { trimStart: 1.5, fadeIn: 2, volume: 0.5, loops: true, fullScreen: true, hidesWhenStopped: true } });
+  call("setMedia", { set: { volume: 4, trimEnd: -3, acrossSlides: true } });
+  const media = call("inspect").result.shape.media;
+  assert.deepEqual([media.trimStart, media.fadeIn, media.volume, media.loops, media.fullScreen, media.hidesWhenStopped],
+    [1.5, 2, 1, true, true, true]);
+  assert.equal(media.trimEnd, 0, "no less than nothing");
+  assert.equal(media.acrossSlides, false, "only sounds play across slides");
+  call("undo");
+  assert.equal(call("inspect").result.shape.media.volume, 0.5, "each change undoes on its own");
+
+  const saved = unzip(call("save", { format: "pptx", keep: true }).payload);
+  const xml = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
+  assert.match(xml, /fullScrn="1"/);
+  const reopened = call("open", { name: "Media.pptx" }, call("save", { format: "pptx", keep: true }).payload);
+  const shape = call("scene", { slide: reopened.state.slides[0].id }).result.shapes.find((node) => node.media);
+  call("select", { slide: reopened.state.slides[0].id, shapes: [shape.id] });
+  const read = call("inspect").result.shape.media;
+  assert.deepEqual([read.trimStart, read.fadeIn, read.volume, read.loops, read.fullScreen, read.hidesWhenStopped], [1.5, 2, 0.5, true, true, true]);
+});
+
+test("pins open comments on the canvas and moves them", () => {
+  const { state } = call("new", { name: "Comments.pptx" });
+  call("addComment", { text: "Look here", author: "Ada Lovelace" });
+  const thread = call("inspect").result.comments[0].id;
+  let pins = call("scene", { slide: state.slides[0].id, editing: true }).result.pins;
+  assert.deepEqual(pins.map((pin) => [pin.id, pin.initials]), [[thread, "AL"]]);
+  assert.equal(call("scene", { slide: state.slides[0].id }).result.pins, undefined, "not in the slideshow");
+  call("moveComment", { thread, x: 200, y: 100 });
+  pins = call("scene", { slide: state.slides[0].id, editing: true }).result.pins;
+  assert.deepEqual([pins[0].x, pins[0].y], [200, 100]);
+  call("moveComment", { thread, x: -50, y: 1e6 });
+  pins = call("scene", { slide: state.slides[0].id, editing: true }).result.pins;
+  assert.deepEqual([pins[0].x, pins[0].y], [0, call("info").result.size.h], "kept on the slide");
+  call("undo");
+  assert.equal(call("inspect").result.comments[0].x, 200);
+  call("resolveComment", { thread, resolved: true });
+  assert.deepEqual(call("scene", { slide: state.slides[0].id, editing: true }).result.pins, [], "resolved threads have no pin");
+});
+
+test("puts dropped pictures and movies where they were let go", () => {
+  call("new", { name: "Dropped.pptx" });
+  const { w: width, h: height } = call("info").result.size;
+  call("insertPicture", { ext: "png", w: 100, h: 50, at: { x: 300, y: 200 } }, PIXEL);
+  let shape = call("inspect").result.shape;
+  assert.deepEqual([shape.x, shape.y, shape.w, shape.h], [250, 175, 100, 50], "centred on the point");
+  call("insertPicture", { ext: "png", w: 100, h: 50, at: { x: width, y: 0 } }, PIXEL);
+  shape = call("inspect").result.shape;
+  assert.deepEqual([shape.x, shape.y], [width - 100, 0], "kept on the slide");
+  call("insertPicture", { ext: "png", w: 4000, h: 1000, at: { x: 10, y: 10 } }, PIXEL);
+  shape = call("inspect").result.shape;
+  assert.ok(Math.abs(shape.w - width * 0.6) < 0.01 && shape.x === 0, "fitted as in the middle");
+  const movie = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+  call("insertVideo", { posterLength: PIXEL.length, w: 320, h: 180, at: { x: width / 2 + 20, y: height - 10 } }, new Uint8Array([...PIXEL, ...movie]));
+  shape = call("inspect").result.shape;
+  assert.equal(shape.kind, "media");
+  assert.ok(Math.abs(shape.x + shape.w / 2 - (width / 2 + 20)) < 0.01, "centred across on the point");
+  assert.ok(Math.abs(shape.y + shape.h - height) < 0.01, "kept on the slide");
+  call("undo");
+  assert.notEqual(call("inspect").result.shape?.kind, "media", "inserted and placed in one step");
+});
+
+test("writes exported pictures into a zip", () => {
+  const files = [{ name: "Deck 001.png", bytes: PIXEL }, { name: "Deck 002.png", bytes: new Uint8Array([1, 2, 3]) }];
+  const entries = unzip(zipFiles(files));
+  assert.deepEqual([...entries.keys()], ["Deck 001.png", "Deck 002.png"]);
+  assert.deepEqual([...entries.get("Deck 001.png")], [...PIXEL]);
+});
+
+test("writes a movie's H.264 samples into an MP4 file", () => {
+  const samples = [
+    { data: new Uint8Array([0, 0, 0, 2, 0x65, 1]), key: true, duration: 4_500_000 },
+    { data: new Uint8Array([0, 0, 0, 1, 0x41]), key: false, duration: 1e6 / 30 },
+    { data: new Uint8Array([0, 0, 0, 1, 0x41]), key: false, duration: 1e6 / 30 },
+  ];
+  const file = mp4({ width: 1920, height: 1080, avcC: new Uint8Array([1, 0x64, 0, 0x28, 0xff, 0xe0, 0]), samples });
+  const view = new DataView(file.buffer);
+  const boxes = (start, end) => {
+    const found = new Map();
+    for (let at = start; at < end; at += view.getUint32(at)) found.set(new TextDecoder().decode(file.subarray(at + 4, at + 8)), [at + 8, at + view.getUint32(at)]);
+    return found;
+  };
+  const top = boxes(0, file.length);
+  assert.deepEqual([...top.keys()], ["ftyp", "mdat", "moov"]);
+  let [start, end] = top.get("moov");
+  for (const name of ["trak", "mdia", "minf", "stbl"]) [start, end] = boxes(start, end).get(name);
+  const table = boxes(start, end);
+  const [stco] = table.get("stco");
+  const offsets = [0, 1, 2].map((index) => view.getUint32(stco + 8 + index * 4));
+  assert.deepEqual(offsets.map((offset, index) => [...file.subarray(offset, offset + samples[index].data.length)]), samples.map((sample) => [...sample.data]), "each sample where the table says");
+  const [stss] = table.get("stss");
+  assert.deepEqual([view.getUint32(stss + 4), view.getUint32(stss + 8)], [1, 1], "the first frame is the key frame");
+  const [stts] = table.get("stts");
+  assert.deepEqual([view.getUint32(stts + 4), view.getUint32(stts + 8), view.getUint32(stts + 12), view.getUint32(stts + 16), view.getUint32(stts + 20)], [2, 1, 405_000, 2, 3_000], "the still held, then the dissolve's frames");
+});
+
+test("opens a Keynote package as its files zipped up, and saves them back", () => {
+  // The page reads a package folder's files and zips them, as a single-file document holds them.
+  const files = [...unzip(keynoteWithMovies())].map(([name, bytes]) => ({ name, bytes }));
+  const opened = call("open", { name: "Movies.key" }, zipFiles(files));
+  assert.ok(opened.state.slides.length > 0);
+  assert.equal(opened.result.saveFormats[0].key, "key", "saves back as Keynote");
+  const saved = unzip(call("save", { format: "key", keep: true }).payload);
+  assert.deepEqual([...saved.keys()].sort(), files.map((file) => file.name).sort(), "the same files, to write back into the folder");
+  assert.deepEqual([...saved.get("Data/poster.png")], [...PIXEL]);
 });
 
 for (const path of process.argv.slice(2)) {

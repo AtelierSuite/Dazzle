@@ -13,7 +13,8 @@ import { installedFamilies, isInstalled } from "./fonts.js";
 import { SlideCanvas } from "./canvas.js";
 import { SlideNavigator } from "./navigator.js";
 import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js";
-import { Slideshow, hasSecondDisplay } from "./slideshow.js";
+import { Slideshow, hasSecondDisplay, sceneMedia } from "./slideshow.js";
+import { PAGE_LAYOUTS, RESOLUTIONS, SlideRasteriser, canMakeMovies, encodeImage, layoutPages, makeMovie, zip } from "./export.js";
 import { closeTablePicker, openTablePicker } from "./table-picker.js";
 
 const isApple = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -57,9 +58,13 @@ const ICONS = {
 
 const icon = (name, extra = "") => `<svg class="ds-icon ${extra}" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
 
-/** A shortcut as the platform writes it: ⇧⌘S on Apple devices, Ctrl+Shift+S elsewhere. */
-function shortcut(key, { shift = false, alt = false } = {}) {
-  if (isApple) return `${alt ? "⌥" : ""}${shift ? "⇧" : ""}⌘${key}`;
+/**
+ * A shortcut as the platform writes it: ⇧⌘S on Apple devices, Ctrl+Shift+S elsewhere.
+ * `control` ones (⌃⌘) are only the Mac's: elsewhere Ctrl is already the command key.
+ */
+function shortcut(key, { shift = false, alt = false, control = false } = {}) {
+  if (isApple) return `${control ? "⌃" : ""}${alt ? "⌥" : ""}${shift ? "⇧" : ""}⌘${key}`;
+  if (control) return undefined;
   return `Ctrl+${shift ? "Shift+" : ""}${alt ? "Alt+" : ""}${key}`;
 }
 
@@ -156,7 +161,7 @@ export class PresentationWindow {
     this.setPanelVisible("notes", readSetting("notes", "1") === "1", { remember: false });
 
     files.onLaunchFiles((file) => file && this.openFile(file));
-    files.onDroppedFiles(document.body, (file) => file && this.dropped(file), (hovering) => {
+    files.onDroppedFiles(document.body, (file, where) => file && this.dropped(file, where), (hovering) => {
       this.root.classList.toggle("is-dropping", hovering);
     });
     window.addEventListener("beforeunload", (event) => {
@@ -403,13 +408,21 @@ export class PresentationWindow {
     return {
       new: { label: t("Menu.File.New"), shortcut: shortcut("N"), run: () => this.newDocument() },
       open: { label: t("Menu.File.Open"), shortcut: shortcut("O"), run: () => this.openPicked() },
+      revert: {
+        label: t("Menu.File.RevertToSaved"), enabled: Boolean(this.document?.handle) && (Boolean(state?.edited) || Boolean(this.document?.draftAt)),
+        run: () => this.revertToSaved(),
+      },
+      duplicate: { label: t("Menu.File.Duplicate"), enabled: has, run: () => this.duplicateDocument() },
+      openPackage: { label: t("Web.Menu.OpenPackage"), run: () => this.openPicked({ package: true }) },
       close: { label: t("Menu.File.Close"), shortcut: shortcut("W"), enabled: has, run: () => this.closeDocument() },
       save: { label: t("Menu.File.Save"), shortcut: shortcut("S"), enabled: has, run: () => this.save() },
       saveAs: { label: t("Web.Menu.SaveAs"), shortcut: shortcut("S", { shift: true }), enabled: has, run: () => this.saveAs() },
       rename: { label: t("Menu.File.Rename"), enabled: has, run: () => this.renameDocument() },
       properties: { label: t("Mac.Menu.File.Properties"), enabled: has, run: () => this.showProperties() },
       exportPowerPoint: { label: t("Menu.File.Export.PowerPoint"), enabled: has, run: () => this.exportAs({ key: "pptx", extension: "pptx", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }) },
-      exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.print() },
+      exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.showExport("pdf") },
+      exportImages: { label: t("Menu.File.Export.Images"), enabled: has && !master, run: () => this.showExport("images") },
+      exportMovie: { label: t("Menu.File.Export.Movie"), enabled: has && !master && canMakeMovies, run: () => this.showExport("video") },
       print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has && !master, run: () => this.print() },
       undo: { label: t("Toolbar.Undo"), shortcut: shortcut("Z"), enabled: has && (state?.canUndo || editingText), run: () => this.undo() },
       redo: { label: t("Toolbar.Redo"), shortcut: shortcut("Z", { shift: true }), enabled: has && (state?.canRedo || editingText), run: () => this.redo() },
@@ -443,8 +456,13 @@ export class PresentationWindow {
         run: () => this.toggleMasterView(),
       },
       toggleHidden: { label: this.currentSlide()?.hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), enabled: has && !master, run: () => this.engine.call("toggleHidden", { ids: this.pickedSlides() }) },
-      previousSlide: { label: t("Menu.Slide.Previous"), enabled: has, run: () => this.stepSlide(-1) },
-      nextSlide: { label: t("Menu.Slide.Next"), enabled: has, run: () => this.stepSlide(1) },
+      moveSlideUp: { label: t("Slide.Menu.MoveUp"), enabled: has && !master && this.slideIndex() > 0, run: () => this.moveSlide(-1) },
+      moveSlideDown: {
+        label: t("Slide.Menu.MoveDown"), enabled: has && !master && this.slideIndex() >= 0 && this.slideIndex() < (state?.slides.length ?? 0) - 1,
+        run: () => this.moveSlide(1),
+      },
+      previousSlide: { label: t("Menu.Slide.Previous"), shortcut: shortcut("↑", { alt: true }), enabled: has, run: () => this.stepSlide(-1) },
+      nextSlide: { label: t("Menu.Slide.Next"), shortcut: shortcut("↓", { alt: true }), enabled: has, run: () => this.stepSlide(1) },
       headerFooter: { label: t("Mac.Menu.Slide.HeaderFooter"), enabled: has && !master, run: () => this.showHeaderFooter() },
       theme: { label: t("Mac.Menu.Format.Theme"), enabled: has && !master && this.engine.info?.canEditTheme !== false, run: () => this.showTheme() },
       insertTextBox: { label: t("Menu.Insert.TextBox"), enabled: has, run: () => this.insert("insertTextBox") },
@@ -455,12 +473,12 @@ export class PresentationWindow {
       italic: { label: t("Format.Italic"), shortcut: shortcut("I"), enabled: textual, checked: look.italic, run: () => this.format({ italic: true }) },
       underline: { label: t("Format.Underline"), shortcut: shortcut("U"), enabled: textual, checked: look.underline, run: () => this.format({ underline: true }) },
       strike: { label: t("Format.Strikethrough"), enabled: textual, checked: look.strike, run: () => this.format({ strike: true }) },
-      superscript: { label: t("Format.Superscript"), enabled: textual, checked: look.baseline > 0, run: () => this.format({ superscript: true }) },
-      subscript: { label: t("Format.Subscript"), enabled: textual, checked: look.baseline < 0, run: () => this.format({ subscript: true }) },
+      superscript: { label: t("Format.Superscript"), shortcut: shortcut("=", { control: true }), enabled: textual, checked: look.baseline > 0, run: () => this.format({ superscript: true }) },
+      subscript: { label: t("Format.Subscript"), shortcut: shortcut("−", { control: true }), enabled: textual, checked: look.baseline < 0, run: () => this.format({ subscript: true }) },
       bigger: { label: t("Menu.Format.Bigger"), shortcut: shortcut("+"), enabled: textual, run: () => this.format({ sizeStep: 1 }) },
       smaller: { label: t("Menu.Format.Smaller"), shortcut: shortcut("-"), enabled: textual, run: () => this.format({ sizeStep: -1 }) },
       alignLeft: { label: t("Menu.Format.AlignLeft"), enabled: textual, checked: look.align === "l", run: () => this.format({ align: "l" }) },
-      alignCenter: { label: t("Menu.Format.Centre"), enabled: textual, checked: look.align === "ctr", run: () => this.format({ align: "ctr" }) },
+      alignCenter: { label: t("Menu.Format.Centre"), shortcut: shortcut("|"), enabled: textual, checked: look.align === "ctr", run: () => this.format({ align: "ctr" }) },
       alignRight: { label: t("Menu.Format.AlignRight"), enabled: textual, checked: look.align === "r", run: () => this.format({ align: "r" }) },
       alignJustify: { label: t("Menu.Format.Justify"), enabled: textual, checked: look.align === "just", run: () => this.format({ align: "just" }) },
       bullets: { label: t("Format.List.Bullets"), enabled: textual, checked: look.list === "bullets", run: () => this.format({ list: look.list === "bullets" ? "none" : "bullets" }) },
@@ -468,8 +486,8 @@ export class PresentationWindow {
       indent: { label: t("Format.Indent"), shortcut: shortcut("]"), enabled: textual, run: () => this.format({ indent: 1 }) },
       outdent: { label: t("Format.Outdent"), shortcut: shortcut("["), enabled: textual, run: () => this.format({ indent: -1 }) },
       front: { label: t("Arrange.Front"), shortcut: shortcut("F", { shift: true, alt: false }), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "front" }) },
-      forward: { label: t("Arrange.Forward"), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "forward" }) },
-      backward: { label: t("Arrange.Backward"), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "backward" }) },
+      forward: { label: t("Arrange.Forward"), shortcut: shortcut("F", { alt: true, shift: true }), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "forward" }) },
+      backward: { label: t("Arrange.Backward"), shortcut: shortcut("B", { alt: true, shift: true }), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "backward" }) },
       back: { label: t("Arrange.Back"), shortcut: shortcut("B", { shift: true }), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "back" }) },
       group: { label: t("Arrange.Group"), shortcut: shortcut("G", { alt: true }), enabled: shapes > 1, run: () => this.engine.call("group") },
       ungroup: { label: t("Arrange.Ungroup"), shortcut: shortcut("G", { shift: true, alt: true }), enabled: selected?.kind === "group", run: () => this.engine.call("ungroup") },
@@ -488,8 +506,8 @@ export class PresentationWindow {
       zoomOut: { label: t("Menu.View.ZoomOut"), shortcut: shortcut("-", { alt: true }), enabled: has, run: () => this.stepZoom(-1) },
       zoomToFit: { label: t("Menu.View.ZoomToFit"), shortcut: shortcut("9"), enabled: has, run: () => this.setZoom("fit") },
       actualSize: { label: t("Menu.View.ActualSize"), shortcut: shortcut("0"), enabled: has, run: () => this.setZoom(1) },
-      toggleNavigator: { label: t("Menu.View.Navigator"), checked: !this.root.classList.contains("hides-navigator"), run: () => this.setPanelVisible("navigator", this.root.classList.contains("hides-navigator")) },
-      toggleNotes: { label: t("Menu.View.Notes"), checked: !this.root.classList.contains("hides-notes"), run: () => this.setPanelVisible("notes", this.root.classList.contains("hides-notes")) },
+      toggleNavigator: { label: t("Menu.View.Navigator"), shortcut: shortcut("S", { control: true }), checked: !this.root.classList.contains("hides-navigator"), run: () => this.setPanelVisible("navigator", this.root.classList.contains("hides-navigator")) },
+      toggleNotes: { label: t("Menu.View.Notes"), shortcut: shortcut("N", { alt: true }), checked: !this.root.classList.contains("hides-notes"), run: () => this.setPanelVisible("notes", this.root.classList.contains("hides-notes")) },
       toggleInspector: { label: t("Menu.View.Inspector"), shortcut: shortcut("I", { alt: true }), checked: !this.root.querySelector(".app__inspector").hidden, run: () => this.setPanelVisible("inspector", this.root.querySelector(".app__inspector").hidden) },
       fullScreen: {
         label: t("Web.Menu.FullScreen"),
@@ -503,6 +521,7 @@ export class PresentationWindow {
       fillPicture: { label: t("Fill.Picture.Choose"), enabled: shapes > 0, run: () => this.pickPicture((picture) => this.engine.call("setFillPicture", picture.args, picture.bytes)) },
       backgroundPicture: { label: t("Fill.Picture.Choose"), enabled: has, run: () => this.pickPicture((picture) => this.engine.call("setBackgroundPicture", picture.args, picture.bytes)) },
       about: { label: t("Menu.App.About", "Dazzle"), run: () => this.showAbout() },
+      sourceCode: { label: t("Toolbar.SourceCode"), run: () => window.open(SOURCE_CODE_URL, "_blank", "noopener") },
       downloadApp: {
         label: t(appStorePlatform === "mac" ? "Web.Help.DownloadMacApp" : "Web.Help.DownloadiOSApp"),
         run: () => window.open(`${APP_STORE_URL}?platform=${appStorePlatform === "mac" ? "mac" : "iphone"}`, "_blank", "noopener"),
@@ -561,7 +580,7 @@ export class PresentationWindow {
         return [
           ...self.items("newSlide"),
           { label: t("Menu.Slide.NewWithLayout"), disabled: !self.hasDocument, submenu: self.layoutItems() },
-          ...self.items("duplicateSlides", "deleteSlides", "renameLayout", "toggleHidden", "-", "previousSlide", "nextSlide", "-", "headerFooter"),
+          ...self.items("duplicateSlides", "deleteSlides", "renameLayout", "toggleHidden", "-", "headerFooter", "-", "moveSlideUp", "moveSlideDown", "-", "previousSlide", "nextSlide"),
         ];
       } },
       { label: t("Menu.Format"), get items() {
@@ -610,7 +629,7 @@ export class PresentationWindow {
       { label: t("Menu.Window"), get items() {
         return self.document ? [{ label: self.document.name, checked: true, action: () => self.canvas.element.focus() }] : [{ label: "Dazzle", disabled: true }];
       } },
-      { label: t("Menu.Help"), get items() { return self.items(...(appStorePlatform ? ["downloadApp", "-"] : []), "about"); } },
+      { label: t("Menu.Help"), get items() { return self.items(...(appStorePlatform ? ["downloadApp", "-"] : []), "sourceCode", "-", "about"); } },
     ];
     const bar = this.root.querySelector("#menu-bar");
     this.menuBarOverflow = attachMenuBar(bar, menus, { label: t("Web.Menu.Label"), overflowLabel: t("Toolbar.More") });
@@ -629,13 +648,13 @@ export class PresentationWindow {
     const info = this.engine.info;
     const keynote = info?.saveFormats?.find((format) => format.key === "key");
     return [
-      ...this.items("new", "open"),
+      ...this.items("new", "open", ...(files.canPickPackages ? ["openPackage"] : [])),
       { label: t("Menu.File.OpenRecent"), submenu: this.recentItems() },
       { separator: true },
-      ...this.items("close", "save", "saveAs", "rename"),
+      ...this.items("close", "save", "saveAs", "duplicate", "rename", "revert"),
       { separator: true },
       { label: t("Menu.File.ExportTo"), disabled: !this.document, submenu: [
-        this.item("exportPDF"), this.item("exportPowerPoint"),
+        this.item("exportPDF"), this.item("exportImages"), this.item("exportMovie"), this.item("exportPowerPoint"),
         ...(keynote ? [{ label: t("Web.Export.Keynote"), action: () => this.exportAs(keynote) }] : []),
       ] },
       { separator: true },
@@ -733,6 +752,7 @@ export class PresentationWindow {
       { label: hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), action: () => this.engine.call("toggleHidden", { ids }) },
       { label: t("Slide.Menu.Delete"), disabled: this.engine.state.slides.length <= ids.length, action: () => this.engine.call("deleteSlides", { ids }) },
       { separator: true },
+      ...(ids.length === 1 && ids[0] === this.selection.slide ? [this.item("moveSlideUp"), this.item("moveSlideDown"), { separator: true }] : []),
       { label: t("Section.Add"), disabled: ids.length !== 1, action: () => this.addSection(ids[0]) },
       ...(sections.length > 1 ? [{
         label: t("Section.MoveSlideTo"),
@@ -776,6 +796,19 @@ export class PresentationWindow {
   pickedSlides() {
     const picked = [...(this.navigator?.selected ?? [])];
     return picked.length ? picked : [this.selection.slide].filter(Boolean);
+  }
+
+  /** Where the slide being edited is in the list, or -1. */
+  slideIndex() {
+    return (this.engine.state?.slides ?? []).findIndex((slide) => slide.id === this.selection.slide);
+  }
+
+  /** Slide › Move Slide Up and Down: the slide being edited, one place earlier or later, as on the Mac. */
+  async moveSlide(step) {
+    const index = this.slideIndex();
+    const count = this.engine.state?.slides.length ?? 0;
+    if (index < 0 || index + step < 0 || index + step >= count) return;
+    await this.engine.call("moveSlides", { ids: [this.selection.slide], to: index + step });
   }
 
   async stepSlide(step) {
@@ -904,13 +937,13 @@ export class PresentationWindow {
     if (file) await this.insertPictureBytes(file.bytes, file.name);
   }
 
-  async insertPictureBytes(bytes, name = "", frame = null) {
+  async insertPictureBytes(bytes, name = "", frame = null, at = null) {
     const picture = await preparePicture(bytes, name);
     if (!picture) {
       this.showMessage(t("Error.UnreadablePicture"), "error");
       return;
     }
-    await this.insert("insertPicture", { ext: picture.ext, w: picture.w, h: picture.h, ...(frame ? { frame } : {}) }, picture.bytes);
+    await this.insert("insertPicture", { ext: picture.ext, w: picture.w, h: picture.h, ...(frame ? { frame } : {}), ...(at ? { at } : {}) }, picture.bytes);
   }
 
   async insertMovie() {
@@ -918,7 +951,7 @@ export class PresentationWindow {
     if (file) await this.insertMovieBytes(file.bytes, file.name);
   }
 
-  async insertMovieBytes(bytes, name) {
+  async insertMovieBytes(bytes, name, at = null) {
     const ext = (name.split(".").pop() ?? "mp4").toLowerCase();
     const type = { mov: "video/quicktime", webm: "video/webm", m4v: "video/x-m4v" }[ext] ?? "video/mp4";
     const movie = await prepareMovie(bytes, type);
@@ -930,17 +963,26 @@ export class PresentationWindow {
     const payload = new Uint8Array(movie.poster.length + bytes.length);
     payload.set(movie.poster, 0);
     payload.set(bytes, movie.poster.length);
-    await this.insert("insertVideo", { posterLength: movie.poster.length, w: movie.w * 0.75, h: movie.h * 0.75, ext: ext === "m4v" ? "mp4" : ext }, payload);
+    await this.insert("insertVideo", { posterLength: movie.poster.length, w: movie.w * 0.75, h: movie.h * 0.75, ext: ext === "m4v" ? "mp4" : ext, ...(at ? { at } : {}) }, payload);
   }
 
-  /** A file dropped on the window: a presentation opens, a picture or movie goes on the slide. */
-  async dropped(file) {
+  /**
+   * A file dropped on the window: a presentation opens, a picture or movie goes on the slide,
+   * centred where it was let go when that was on the slide.
+   */
+  async dropped(file, where = null) {
+    let at = null;
+    const scene = this.canvas.scene;
+    if (where && scene && this.canvas.element.contains(where.target)) {
+      const point = this.canvas.point(where);
+      if (point.x >= 0 && point.y >= 0 && point.x <= scene.w && point.y <= scene.h) at = point;
+    }
     if (/\.(pptx|pptm|ppsx|key)$/i.test(file.name) || !this.hasDocument) {
       await this.openFile(file);
     } else if (/\.(mp4|m4v|mov|webm)$/i.test(file.name)) {
-      await this.insertMovieBytes(file.bytes, file.name);
+      await this.insertMovieBytes(file.bytes, file.name, at);
     } else {
-      await this.insertPictureBytes(file.bytes, file.name);
+      await this.insertPictureBytes(file.bytes, file.name, null, at);
     }
   }
 
@@ -949,34 +991,235 @@ export class PresentationWindow {
     this.preparePrint().then(() => window.print());
   }
 
-  async preparePrint() {
-    let holder = document.querySelector(".app__print");
-    holder?.remove();
-    holder = document.createElement("div");
+  /**
+   * Lays the slides out for printing: a page each at the slide's size, or as
+   * notes pages or handouts on paper (`layout`), as the Mac's PDF export does.
+   */
+  async preparePrint({ layout = "slides", slides = null } = {}) {
+    document.querySelector(".app__print")?.remove();
+    const holder = document.createElement("div");
     holder.className = "app__print";
     const drawer = new SlideDrawer(this.media);
     const size = this.engine.info.size;
-    const style = document.createElement("style");
-    style.textContent = `@page { size: ${size.w}pt ${size.h}pt; margin: 0; }`;
-    holder.append(style);
-    for (const slide of this.engine.state.slides) {
-      if (slide.hidden) continue;
-      const scene = await this.engine.call("scene", { slide: slide.id });
-      const page = document.createElement("div");
-      page.className = "app__print-page";
-      page.style.width = `${size.w}pt`;
-      page.style.height = `${size.h}pt`;
-      const drawn = drawer.draw(scene);
-      drawn.style.transform = `scale(${4 / 3})`;
-      page.append(drawn);
-      holder.append(page);
+    const chosen = slides ?? (this.engine.state.slides.filter((slide) => !slide.hidden).map((slide) => slide.id));
+    const entries = [];
+    for (const id of chosen) {
+      const scene = await this.engine.call("scene", { slide: id });
+      for (const path of sceneMedia(scene)) await this.media.url(path);
+      const notes = layout === "notes" ? (await this.engine.call("timeline", { slide: id })).notes : "";
+      entries.push({ scene, notes });
     }
+    const { size: pageSize, pages } = layoutPages({
+      slides: entries, size, layout,
+      place: (page, index, rect) => {
+        const drawn = drawer.draw(entries[index].scene);
+        // Slides are drawn a pixel to a point; pages are measured in points, 4/3 of a pixel.
+        Object.assign(drawn.style, { position: "absolute", left: `${rect.x}pt`, top: `${rect.y}pt`, transform: `scale(${(rect.w / size.w) * (4 / 3)})` });
+        page.append(drawn);
+      },
+    });
+    const style = document.createElement("style");
+    style.textContent = `@page { size: ${pageSize.w}pt ${pageSize.h}pt; margin: 0; }`;
+    holder.append(style, ...pages);
+    // Laid out off screen, so text can be measured and fitted before the browser prints it.
     document.body.append(holder);
-    // Pictures have a moment to arrive before the browser lays out the pages.
-    await Promise.all([...holder.querySelectorAll("image")].map(() => Promise.resolve()));
-    for (const slide of holder.querySelectorAll(".slide")) drawer.fit(slide);
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await this.settleDrawing(holder);
     window.addEventListener("afterprint", () => holder.remove(), { once: true });
+  }
+
+  /** Waits for the pictures and fonts slides under `holder` use, then fits their text. */
+  async settleDrawing(holder) {
+    await Promise.all([...this.media.pending.values()]);
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const drawer = new SlideDrawer(this.media);
+    for (const slide of holder.querySelectorAll(".slide")) drawer.fit(slide);
+  }
+
+  // MARK: - Exporting
+
+  /** The slides an export takes: the current one, or all, with or without hidden ones. */
+  exportedSlides(options) {
+    const slides = this.engine.state.slides;
+    if (options.scope === "current") return slides.filter((slide) => slide.id === this.selection.slide).map((slide) => slide.id);
+    const shown = slides.filter((slide) => options.hidden || !slide.hidden);
+    return (shown.length ? shown : slides).map((slide) => slide.id);
+  }
+
+  /** The presentation's name without its extension, for the files an export makes. */
+  exportName() {
+    return (this.document?.name ?? "Presentation").replace(/\.[^.]+$/, "").replace(/[/:\\?%*|"<>]/g, "-").trim() || "Presentation";
+  }
+
+  /** Export as PDF, Images or Movie: what to export and how, as the options under the Mac's save panel. */
+  showExport(format) {
+    if (!this.hasDocument) return;
+    const options = { scope: "all", hidden: false, layout: "slides", image: "png", width: 1920, seconds: 5, ...this.exportOptions };
+    const size = this.engine.info.size;
+    const resolution = (width) => `${width} × ${Math.round(width / (size.w / size.h))}`;
+    const row = (label, control) => `<span class="ds-form__label">${escapeHTML(label)}</span><span class="ds-form__control">${control}</span>`;
+    const popup = (name, label, entries, value) => `<span class="ds-popup ds-popup--xs"><select class="ds-popup__select" name="${name}" aria-label="${escapeHTML(label)}">${
+      entries.map(([key, text]) => `<option value="${escapeHTML(String(key))}"${String(key) === String(value) ? " selected" : ""}>${escapeHTML(text)}</option>`).join("")
+    }</select>${icon("chevronDown", "ds-popup__chevron")}</span>`;
+    const title = { pdf: "Menu.File.Export.PDF", images: "Menu.File.Export.Images", video: "Menu.File.Export.Movie" }[format];
+    const backdrop = this.sheet(`
+      <form class="ds-sheet" role="dialog" aria-labelledby="export-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="export-title">${escapeHTML(t(title).replace("…", ""))}</h2>
+          <div class="ds-form">
+            ${row(t("Export.Scope"), popup("scope", t("Export.Scope"), [["all", t("Export.Scope.All")], ["current", t("Export.Scope.Current")]], options.scope))}
+            ${row("", `<label class="ds-check"><input type="checkbox" name="hidden"${options.hidden ? " checked" : ""}${options.scope === "current" ? " disabled" : ""}>${escapeHTML(t("Export.IncludeHidden"))}</label>`)}
+            ${format === "pdf" ? row(t("Export.Layout"), popup("layout", t("Export.Layout"), PAGE_LAYOUTS.map(([key, label]) => [key, t(label)]), options.layout)) : ""}
+            ${format === "images" ? row(t("Export.ImageFormat"), popup("image", t("Export.ImageFormat"), [["png", "PNG"], ["jpeg", "JPEG"]], options.image)) : ""}
+            ${format !== "pdf" ? row(t("Export.Resolution"), popup("width", t("Export.Resolution"), RESOLUTIONS.map((width) => [width, resolution(width)]), options.width)) : ""}
+            ${format === "video" ? row(t("Export.SecondsPerSlide"), `<span class="ds-stepper ds-stepper--xs"><input class="ds-stepper__input ds-numeric" type="number" name="seconds" min="1" max="60" step="1" value="${options.seconds}" aria-label="${escapeHTML(t("Export.SecondsPerSlide"))}"></span><span class="ds-caption">${escapeHTML(t("Export.Seconds", "").trim())}</span>`) : ""}
+          </div>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Export.Share"))}</button>
+        </div>
+      </form>`);
+    const form = backdrop.querySelector("form");
+    form.elements.scope.addEventListener("change", () => { form.elements.hidden.disabled = form.elements.scope.value === "current"; });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      Object.assign(options, {
+        scope: data.get("scope"), hidden: data.get("hidden") === "on",
+        ...(format === "pdf" ? { layout: data.get("layout") } : {}),
+        ...(format === "images" ? { image: data.get("image") } : {}),
+        ...(format !== "pdf" ? { width: Number(data.get("width")) } : {}),
+        ...(format === "video" ? { seconds: Math.min(Math.max(Number(data.get("seconds")) || 5, 1), 60) } : {}),
+      });
+      this.exportOptions = options;
+      dismissSheet(backdrop);
+      // Asking where to save comes first, while this click still lets the page ask.
+      if (format === "pdf") this.exportPDF(options);
+      else if (format === "images") this.exportImages(options);
+      else this.exportMovie(options);
+    });
+  }
+
+  async exportPDF(options) {
+    await this.flushEdits();
+    await this.preparePrint({ layout: options.layout, slides: this.exportedSlides(options) });
+    window.print();
+  }
+
+  /** Draws a slide off screen, laid out and fitted, ready to be drawn as a picture. */
+  async drawOffscreen(id) {
+    const scene = await this.engine.call("scene", { slide: id });
+    for (const path of sceneMedia(scene)) await this.media.url(path);
+    const holder = document.createElement("div");
+    holder.className = "app__export-stage";
+    holder.append(new SlideDrawer(this.media).draw(scene));
+    document.body.append(holder);
+    await this.settleDrawing(holder);
+    return holder;
+  }
+
+  /** A slide as a canvas `width` pixels wide. */
+  async slidePicture(rasteriser, id, width, opaque = true) {
+    const holder = await this.drawOffscreen(id);
+    try {
+      return await rasteriser.draw(holder.querySelector(".slide"), width, { opaque });
+    } finally {
+      holder.remove();
+    }
+  }
+
+  /** One picture per slide, numbered after the presentation, into a folder the user picks or a zip. */
+  async exportImages(options) {
+    const folder = files.canPickFolders ? await files.pickFolder().catch((error) => {
+      this.showMessage(error.message, "error");
+      return null;
+    }) : undefined;
+    if (folder === null) return;
+    await this.flushEdits();
+    const ids = this.exportedSlides(options);
+    const all = this.engine.state.slides.map((slide) => slide.id);
+    const extension = options.image === "jpeg" ? "jpg" : "png";
+    const base = this.exportName();
+    const rasteriser = new SlideRasteriser(this.media, this.fontFiles ?? []);
+    const made = [];
+    let failed = false;
+    for (const id of ids) {
+      const name = `${base} ${String(all.indexOf(id) + 1).padStart(3, "0")}.${extension}`;
+      try {
+        const bytes = await encodeImage(await this.slidePicture(rasteriser, id, options.width), options.image);
+        if (folder) await files.writeIntoFolder(folder, name, bytes);
+        else made.push({ name, bytes });
+      } catch {
+        failed = true;
+      }
+    }
+    if (!folder && made.length) {
+      if (made.length === 1) files.download(made[0].bytes, made[0].name, options.image === "jpeg" ? "image/jpeg" : "image/png");
+      else files.download(zip(made), `${base}.zip`, "application/zip");
+    }
+    if (failed) this.showMessage(t("Mac.Export.Images.Failed"), "error");
+  }
+
+  /** A movie of the slides, each held for its own time or the seconds asked for, with a sheet showing how far it has got. */
+  async exportMovie(options) {
+    const name = `${this.exportName()}.mp4`;
+    const kind = { mime: "video/mp4", extension: "mp4", description: t("Export.Format.Video") };
+    let handle;
+    try {
+      handle = await files.pickSaveHandle(name, kind);
+    } catch (error) {
+      this.showMessage(error.message, "error");
+      return;
+    }
+    if (handle === null) return;
+    await this.flushEdits();
+    const ids = this.exportedSlides(options);
+    // Slides that move on by themselves keep their own time.
+    const durations = [];
+    for (const id of ids) durations.push((await this.engine.call("timeline", { slide: id })).after ?? options.seconds);
+    const size = this.engine.info.size;
+    const width = options.width;
+    const height = Math.round(width / (size.w / size.h));
+    let cancelled = false;
+    const backdrop = this.sheet(`
+      <div class="ds-sheet" role="dialog" aria-labelledby="movie-title">
+        <div class="ds-sheet__body app__update-body">
+          <h2 class="ds-sheet__title" id="movie-title">${escapeHTML(t("Mac.Export.Movie.Progress"))}</h2>
+          <div class="ds-progress" role="progressbar" aria-labelledby="movie-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="ds-progress__bar"></div></div>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+        </div>
+      </div>`);
+    // Cancel and Escape both close the sheet, and both stop the movie.
+    backdrop.querySelector("[data-cancel]").addEventListener("click", () => { cancelled = true; });
+    backdrop.addEventListener("keydown", (event) => { if (event.key === "Escape") cancelled = true; });
+    const bar = backdrop.querySelector(".ds-progress");
+    const rasteriser = new SlideRasteriser(this.media, this.fontFiles ?? []);
+    try {
+      const movie = await makeMovie({
+        count: ids.length, durations, width, height,
+        picture: (index) => this.slidePicture(rasteriser, ids[index], width),
+        progress: (fraction) => {
+          bar.setAttribute("aria-valuenow", String(Math.round(fraction * 100)));
+          bar.style.setProperty("--ds-progress", `${fraction * 100}%`);
+        },
+        cancelled: () => cancelled,
+      });
+      if (movie) {
+        if (handle) await files.writeHandle(handle, movie);
+        else files.download(movie, name, kind.mime);
+        return;
+      }
+      // Cancelled: the empty file the save panel made goes too.
+      await handle?.remove?.().catch(() => {});
+    } catch {
+      await handle?.remove?.().catch(() => {});
+      if (!cancelled) this.showMessage(t("Error.VideoExport"), "error");
+    } finally {
+      dismissSheet(backdrop);
+    }
   }
 
   /** Plays the slide's animations through on the canvas, one step after another. */
@@ -1294,6 +1537,10 @@ export class PresentationWindow {
     this.navigator.addEventListener("command", (event) => this.run(event.detail));
     this.canvas.addEventListener("command", (event) => this.run(event.detail));
     this.canvas.addEventListener("selection", () => this.refreshInspector());
+    this.canvas.addEventListener("comments", () => {
+      this.setPanelVisible("inspector", true);
+      this.inspector.showPane("comments");
+    });
     this.canvas.addEventListener("look", (event) => {
       this.look = event.detail;
       this.updateLook();
@@ -1397,15 +1644,19 @@ export class PresentationWindow {
   async loadFonts() {
     for (const face of this.fontFaces ?? []) document.fonts.delete(face);
     this.fontFaces = [];
+    // Their bytes too, for drawing slides as pictures, which can't use the page's fonts.
+    this.fontFiles = [];
     if (!this.engine.info?.hasEmbeddedFonts) return;
     const { result, payload } = await this.engine.call("fonts").catch(() => ({ result: [] }));
     for (const font of result ?? []) {
-      const face = new FontFace(font.family, payload.slice(font.offset, font.offset + font.length), {
+      const bytes = payload.slice(font.offset, font.offset + font.length);
+      const face = new FontFace(font.family, bytes, {
         weight: font.bold ? "700" : "400", style: font.italic ? "italic" : "normal",
       });
       try {
         document.fonts.add(await face.load());
         this.fontFaces.push(face);
+        this.fontFiles.push({ family: font.family, bold: font.bold, italic: font.italic, bytes });
       } catch {
         // A font the browser can't read is drawn in another.
       }
@@ -1873,22 +2124,36 @@ export class PresentationWindow {
       if (this.slideshow.active) return;
       const mod = isApple ? event.metaKey : event.ctrlKey;
       if (!mod) return;
-      const key = event.key.toLowerCase();
+      // Option changes the character a letter types on a Mac, so letters are read by their key.
+      // AltGr (Ctrl+Alt elsewhere) types letters, which are not shortcuts.
+      if (event.getModifierState?.("AltGraph")) return;
+      const key = isApple && event.altKey && /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();
       const inField = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
-      const map = {
-        n: event.shiftKey ? "newSlide" : "new", o: "open", s: event.shiftKey ? "saveAs" : "save", w: "close", p: "print",
-        z: event.shiftKey ? "redo" : "undo", y: "redo", b: event.shiftKey ? "back" : "bold", i: event.altKey ? "toggleInspector" : event.shiftKey ? "insertPicture" : "italic",
-        u: "underline", f: event.altKey ? "findReplace" : event.shiftKey ? "front" : "find", g: event.altKey ? (event.shiftKey ? "ungroup" : "group") : event.shiftKey ? "findPrevious" : "findNext",
-        "=": "zoomIn", "+": event.shiftKey ? "bigger" : "zoomIn", "-": event.altKey ? "zoomOut" : "smaller", "0": "actualSize", "9": "zoomToFit",
-        "]": "indent", "[": "outdent", d: "duplicate", a: event.shiftKey ? "deselectAll" : "selectAll",
-        c: "copy", x: "cut", v: "paste", enter: event.altKey ? (event.shiftKey ? "playFromStart" : "play") : null,
-      };
+      let map;
+      if (isApple && event.ctrlKey) {
+        // ⌃⌘ shortcuts, as on the Mac; the rest (⌃⌘F, full screen) are the browser's.
+        map = { "=": "superscript", "+": "superscript", "-": "subscript", s: "toggleNavigator" };
+      } else {
+        map = {
+          n: event.altKey ? "toggleNotes" : event.shiftKey ? "newSlide" : "new", o: "open", s: event.shiftKey ? "saveAs" : "save", w: "close", p: "print",
+          z: event.shiftKey ? "redo" : "undo", y: "redo", i: event.altKey ? "toggleInspector" : event.shiftKey ? "insertPicture" : "italic",
+          b: event.altKey && event.shiftKey ? "backward" : event.shiftKey ? "back" : "bold",
+          u: "underline", f: event.altKey ? (event.shiftKey ? "forward" : "findReplace") : event.shiftKey ? "front" : "find",
+          g: event.altKey ? (event.shiftKey ? "ungroup" : "group") : event.shiftKey ? "findPrevious" : "findNext",
+          "=": "zoomIn", "+": event.shiftKey ? "bigger" : "zoomIn", "-": event.altKey ? "zoomOut" : "smaller", "0": "actualSize", "9": "zoomToFit",
+          "]": "indent", "[": "outdent", d: "duplicate", a: event.shiftKey ? "deselectAll" : "selectAll",
+          c: "copy", x: "cut", v: "paste", enter: event.altKey ? (event.shiftKey ? "playFromStart" : "play") : null,
+          // ⌘| centres text; ⌘{ and ⌘}, which align left and right on the Mac, switch the browser's tabs.
+          "|": "alignCenter", "\\": event.shiftKey ? "alignCenter" : null,
+          arrowup: event.altKey ? "previousSlide" : null, arrowdown: event.altKey ? "nextSlide" : null,
+        };
+      }
       const command = map[key];
       if (!command) return;
-      // Fields keep their own undo, clipboard, select all and text styling.
-      if (inField && ["undo", "redo", "bold", "italic", "underline", "copy", "cut", "paste", "selectAll"].includes(command)) return;
-      // Typing on the slide keeps the browser's own clipboard and undo while it lasts.
-      if (this.canvas.editing && ["copy", "cut", "paste", "undo", "redo"].includes(command)) return;
+      // Fields keep their own undo, clipboard, select all, text styling and moving the caret.
+      if (inField && ["undo", "redo", "bold", "italic", "underline", "superscript", "subscript", "alignCenter", "copy", "cut", "paste", "selectAll", "previousSlide", "nextSlide"].includes(command)) return;
+      // Typing on the slide keeps the browser's own clipboard, undo and caret movement while it lasts.
+      if (this.canvas.editing && ["copy", "cut", "paste", "undo", "redo", "previousSlide", "nextSlide"].includes(command)) return;
       if (["copy", "cut", "paste"].includes(command) && !this.hasDocument) return;
       event.preventDefault();
       this.run(command);
@@ -2011,9 +2276,10 @@ export class PresentationWindow {
     this.showDocument({ id: crypto.randomUUID(), name, openedAt: Date.now() });
   }
 
-  async openPicked() {
+  /** Open…, or Open Keynote Package…, which asks for the package's folder. */
+  async openPicked({ package: isPackage = false } = {}) {
     try {
-      const file = await files.pickFile();
+      const file = isPackage ? await files.pickPackage() : await files.pickFile();
       if (file) await this.openFile(file);
     } catch (error) {
       this.showMessage(error.message, "error");
@@ -2066,6 +2332,69 @@ export class PresentationWindow {
       if (file) await this.openFile(file, { draftOf: record });
     } catch (error) {
       this.showMessage(t("Web.Error.Open", record.name, error.message), "error");
+    }
+  }
+
+  /** File › Revert to Saved: the file as it was last saved, its changes and autosaved copy let go. */
+  async revertToSaved() {
+    const record = this.document;
+    if (!record?.handle) return;
+    const confirmed = await new Promise((resolve) => {
+      const backdrop = this.sheet(`
+        <div class="ds-sheet ds-alert" role="alertdialog" aria-labelledby="revert-title" aria-describedby="revert-message">
+          <div class="ds-sheet__body"><div>
+            <h2 class="ds-sheet__title" id="revert-title">${escapeHTML(t("Menu.File.RevertToSaved"))}</h2>
+            <p class="ds-sheet__message" id="revert-message">${escapeHTML(t("Web.Revert.Message"))}</p>
+          </div></div>
+          <div class="ds-sheet__buttons">
+            <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+            <button class="ds-button ds-button--primary" type="button" data-revert>${escapeHTML(t("Menu.File.RevertToSaved"))}</button>
+          </div>
+        </div>`);
+      backdrop.querySelector("[data-cancel]").addEventListener("click", () => resolve(false));
+      backdrop.addEventListener("keydown", (event) => event.key === "Escape" && resolve(false));
+      backdrop.querySelector("[data-revert]").addEventListener("click", () => {
+        dismissSheet(backdrop);
+        resolve(true);
+      });
+    });
+    if (!confirmed || this.document !== record) return;
+    let file;
+    try {
+      file = await files.readHandle(record.handle);
+    } catch (error) {
+      this.showMessage(t("Web.Error.Open", record.name, error.message), "error");
+      return;
+    }
+    if (!file) return;
+    // What would be autosaved is let go, not kept.
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = null;
+    await this.canvas.endEditing({ commit: false });
+    await storage.removeDraft(record.id);
+    const saved = { ...record };
+    delete saved.draftAt;
+    delete saved.draftName;
+    await this.openFile(file, { draftOf: saved });
+  }
+
+  /** File › Duplicate: a copy of the presentation as it is now, opened as a new, unsaved document. */
+  async duplicateDocument() {
+    if (!this.document) return;
+    await this.flushEdits();
+    await this.flushAutosave();
+    try {
+      const { result, payload } = await this.engine.call("save", { keep: true, draft: true });
+      const dot = result.fileName.lastIndexOf(".");
+      const name = dot > 0 ? `${t("Web.Document.CopyName", result.fileName.slice(0, dot))}${result.fileName.slice(dot)}` : t("Web.Document.CopyName", result.fileName);
+      const record = { id: crypto.randomUUID(), name, openedAt: Date.now() };
+      if (await storage.writeDraft(record.id, payload)) Object.assign(record, { draftAt: Date.now(), draftName: name });
+      await this.openFile({ name, bytes: payload }, { draftOf: record });
+      // Not saved anywhere yet: Save asks where.
+      this.engine.state.edited = true;
+      this.updateTitle();
+    } catch (error) {
+      this.showMessage(error.message, "error");
     }
   }
 

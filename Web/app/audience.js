@@ -5,11 +5,12 @@
 import "../design/base.js";
 import { loadStrings, t } from "./i18n.js";
 import { SlideDrawer, MediaStore, applyFrame } from "./slide.js";
-import { toggleMedia, showLinkTips } from "./slideshow.js";
+import { toggleMedia, showLinkTips, playingMedia } from "./slideshow.js";
 import { TransitionPlayer } from "./transition.js";
 
 const stage = document.querySelector(".audience__stage");
 const fill = document.querySelector(".audience__fill");
+const announcer = document.querySelector(".audience__announcer");
 /** Pictures and movies the presenter's window hands over with each slide. */
 const media = new MediaStore(null);
 const drawer = new SlideDrawer(media);
@@ -69,6 +70,12 @@ window.addEventListener("message", async (event) => {
       // The slide arrives with the transition the presenter's window worked out.
       if (message.transition && previous) transitions.play(message.transition, previous, slide);
       document.title = t("Slideshow.Position", message.number, message.count);
+      // The slide's title names it to assistive technology, as on the Mac.
+      if (message.label) {
+        stage.setAttribute("role", "group");
+        stage.setAttribute("aria-label", message.label);
+        announcer.textContent = message.label;
+      }
       break;
     }
     case "frame":
@@ -81,8 +88,12 @@ window.addEventListener("message", async (event) => {
       document.body.classList.toggle("is-blanked", Boolean(message.on));
       break;
     case "media":
-      if (message.action === "stop") for (const player of stage.querySelectorAll(".slideshow__media")) player.remove();
-      else toggleMedia(current, message.id, media, message.action);
+      if (message.action === "stop") {
+        for (const player of stage.querySelectorAll(".slideshow__media")) player.remove();
+        reported = "";
+      } else {
+        toggleMedia(current, message.id, media, message.action);
+      }
       break;
     case "fonts": {
       const bytes = new Uint8Array(message.data);
@@ -111,12 +122,25 @@ window.addEventListener("message", async (event) => {
   }
 });
 
+// What is playing, so the presenter's window can offer to play the rest.
+let reported = "";
+function reportMedia() {
+  const playing = playingMedia(stage);
+  const key = playing.join(",");
+  if (key === reported) return;
+  reported = key;
+  tell({ type: "mediaState", playing });
+}
+for (const name of ["play", "pause", "ended", "emptied"]) stage.addEventListener(name, () => queueMicrotask(reportMedia), true);
+
 window.addEventListener("keydown", (event) => {
   // Keys a clicker or keyboard sends here run the show from the presenter's window.
   if (event.key === "f" || event.key === "F") {
     goFullScreen();
     return;
   }
+  // Q on its own ends the show; with a modifier it is the browser's.
+  if ((event.key === "q" || event.key === "Q") && (event.metaKey || event.ctrlKey || event.altKey)) return;
   event.preventDefault();
   tell({ type: "key", key: event.key, shift: event.shiftKey });
 });
