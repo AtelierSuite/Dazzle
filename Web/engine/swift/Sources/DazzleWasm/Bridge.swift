@@ -520,6 +520,24 @@ final class Bridge {
             edit { state, presentation in
                 state.setCrop(frame: rect(frame), left: crop[0], top: crop[1], right: crop[2], bottom: crop[3], of: id, in: &presentation)
             }
+        case "setMedia":
+            // How the selected video or sound plays: only the settings given change.
+            guard let set = r["set"] as? [String: Any] else { throw Failure(message: "No settings were given.") }
+            edit { state, presentation in
+                state.setMedia(in: &presentation) { media in
+                    if let value = set["trimStart"] as? Double { media.trimStart = value }
+                    if let value = set["trimEnd"] as? Double { media.trimEnd = value }
+                    if let value = set["fadeIn"] as? Double { media.fadeIn = value }
+                    if let value = set["fadeOut"] as? Double { media.fadeOut = value }
+                    if let value = set["volume"] as? Double { media.volume = value }
+                    if let value = set["muted"] as? Bool { media.isMuted = value }
+                    if let value = set["loops"] as? Bool { media.loops = value }
+                    if let value = set["rewinds"] as? Bool { media.rewinds = value }
+                    if let value = set["fullScreen"] as? Bool { media.playsFullScreen = value }
+                    if let value = set["acrossSlides"] as? Bool { media.playsAcrossSlides = value }
+                    if let value = set["hidesWhenStopped"] as? Bool { media.hidesWhenNotPlaying = value }
+                }
+            }
         case "resetCrop":
             edit { state, presentation in state.resetCrop(in: &presentation) }
         case "replacePicture":
@@ -1430,7 +1448,14 @@ final class Bridge {
             shapeJSON["crop"] = [picture.cropLeft, picture.cropTop, picture.cropRight, picture.cropBottom]
             let image = SlideShape.Picture.imageRect(frame: frame, picture: picture)
             shapeJSON["image"] = ["x": Double(image.minX), "y": Double(image.minY), "w": Double(image.width), "h": Double(image.height)]
-            if let media = picture.media { shapeJSON["media"] = ["kind": media.kind == .video ? "video" : "audio", "path": media.path as Any] }
+            if let media = picture.media {
+                shapeJSON["media"] = [
+                    "kind": media.kind == .video ? "video" : "audio", "path": media.path as Any,
+                    "trimStart": media.trimStart, "trimEnd": media.trimEnd, "fadeIn": media.fadeIn, "fadeOut": media.fadeOut,
+                    "volume": media.volume, "muted": media.isMuted, "loops": media.loops, "rewinds": media.rewinds,
+                    "fullScreen": media.playsFullScreen, "acrossSlides": media.playsAcrossSlides, "hidesWhenStopped": media.hidesWhenNotPlaying,
+                ]
+            }
         }
         if case .table(let table) = shape.kind {
             var tableJSON: [String: Any] = [

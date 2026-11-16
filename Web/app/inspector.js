@@ -285,6 +285,7 @@ export class Inspector extends EventTarget {
         ["replacePicture", t("Picture.Replace")], ["crop", t("Picture.Crop")], ["resetCrop", t("Picture.ResetCrop")],
       ])));
     }
+    if (shape.media && shape.count === 1) html += this.playbackSection(shape.media);
     html += this.arrangeSection(shape);
     if (shape.count === 1) html += this.linkSection(shape);
     if (shape.count === 1) {
@@ -293,6 +294,22 @@ export class Inspector extends EventTarget {
         + this.note(t("Format.AltText.Footer")), { open: Boolean(shape.altText) });
     }
     return html;
+  }
+
+  /** How a video or sound plays in the slideshow, as the Mac's Playback section offers. */
+  playbackSection(media) {
+    const t = this.t;
+    const seconds = t("Media.Seconds", "").trim();
+    let body = "";
+    for (const [key, label] of [["trimStart", "Media.TrimStart"], ["trimEnd", "Media.TrimEnd"], ["fadeIn", "Media.FadeIn"], ["fadeOut", "Media.FadeOut"]]) {
+      body += this.row(t(label), this.stepper(`media:${key}`, t(label), media[key] ?? 0, { step: 0.5, min: 0, max: 3600, unit: seconds }));
+    }
+    body += this.row(t("Media.Volume"), this.stepper("media:volume", t("Media.Volume"), Math.round((media.volume ?? 1) * 100), { step: 10, min: 0, max: 100, unit: "%" }));
+    const toggles = [["muted", "Media.Mute"], ["loops", "Media.Loop"], ["rewinds", "Media.Rewind"],
+      media.kind === "video" ? ["fullScreen", "Media.FullScreen"] : ["acrossSlides", "Media.AcrossSlides"], ["hidesWhenStopped", "Media.HideWhenStopped"]];
+    for (const [key, label] of toggles) body += this.row("", this.check(`media:${key}`, t(label), media[key]));
+    body += this.note(t("Format.Playback.Footer"));
+    return this.section(t("Format.Section.Playback"), body);
   }
 
   textSection(text) {
@@ -643,6 +660,13 @@ export class Inspector extends EventTarget {
       }
       return value;
     };
+    if (name.startsWith("media:")) {
+      const key = name.slice("media:".length);
+      if (field.type === "checkbox") return engine.call("setMedia", { set: { [key]: value } });
+      const number = Number(value);
+      if (!Number.isFinite(number)) return null;
+      return engine.call("setMedia", { set: { [key]: key === "volume" ? number / 100 : number } });
+    }
     if (name.startsWith("tableOption:")) return engine.call("table", { [name.slice("tableOption:".length)]: value });
     switch (name) {
       // Text

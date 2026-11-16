@@ -2093,6 +2093,33 @@ test("follows slide and section zooms, drawing each from the slide it leads to",
   assert.match(new TextDecoder().decode(saved.get(name)), /<pslz:sldZmObj sldId="257">/, "saved as it was");
 });
 
+test("changes how a movie plays, and saves it", () => {
+  call("new", { name: "Media.pptx" });
+  const movie = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+  call("insertVideo", { posterLength: PIXEL.length, w: 320, h: 180 }, new Uint8Array([...PIXEL, ...movie]));
+  const before = call("inspect").result.shape;
+  assert.equal(before.kind, "media");
+  assert.deepEqual([before.media.kind, before.media.volume, before.media.loops, before.media.trimStart], ["video", 1, false, 0]);
+  call("setMedia", { set: { trimStart: 1.5, fadeIn: 2, volume: 0.5, loops: true, fullScreen: true, hidesWhenStopped: true } });
+  call("setMedia", { set: { volume: 4, trimEnd: -3, acrossSlides: true } });
+  const media = call("inspect").result.shape.media;
+  assert.deepEqual([media.trimStart, media.fadeIn, media.volume, media.loops, media.fullScreen, media.hidesWhenStopped],
+    [1.5, 2, 1, true, true, true]);
+  assert.equal(media.trimEnd, 0, "no less than nothing");
+  assert.equal(media.acrossSlides, false, "only sounds play across slides");
+  call("undo");
+  assert.equal(call("inspect").result.shape.media.volume, 0.5, "each change undoes on its own");
+
+  const saved = unzip(call("save", { format: "pptx", keep: true }).payload);
+  const xml = new TextDecoder().decode(saved.get("ppt/slides/slide1.xml"));
+  assert.match(xml, /fullScrn="1"/);
+  const reopened = call("open", { name: "Media.pptx" }, call("save", { format: "pptx", keep: true }).payload);
+  const shape = call("scene", { slide: reopened.state.slides[0].id }).result.shapes.find((node) => node.media);
+  call("select", { slide: reopened.state.slides[0].id, shapes: [shape.id] });
+  const read = call("inspect").result.shape.media;
+  assert.deepEqual([read.trimStart, read.fadeIn, read.volume, read.loops, read.fullScreen, read.hidesWhenStopped], [1.5, 2, 0.5, true, true, true]);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
