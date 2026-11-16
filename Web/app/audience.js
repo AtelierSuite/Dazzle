@@ -117,6 +117,8 @@ window.addEventListener("keydown", (event) => {
     goFullScreen();
     return;
   }
+  // Q on its own ends the show; with a modifier it is the browser's.
+  if ((event.key === "q" || event.key === "Q") && (event.metaKey || event.ctrlKey || event.altKey)) return;
   event.preventDefault();
   tell({ type: "key", key: event.key, shift: event.shiftKey });
 });

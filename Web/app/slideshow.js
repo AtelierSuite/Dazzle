@@ -531,17 +531,20 @@ export class Slideshow extends EventTarget {
   key(event) {
     if (!this.active) return;
     if (event.target.closest?.(".presenter__notes textarea")) return;
+    // Q on its own ends the show; with a modifier it is the browser's.
+    if ((event.key === "q" || event.key === "Q") && (event.metaKey || event.ctrlKey || event.altKey)) return;
     this.handleKey(event.key, event.shiftKey);
     if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter", "n", "N", "ArrowLeft", "ArrowUp", "PageUp", "Backspace", "p", "P",
-      "Escape", "b", "B", ".", "w", "W", ",", "Home", "End"].includes(event.key)) {
+      "Escape", "q", "Q", "b", "B", ".", "w", "W", ",", "Home", "End"].includes(event.key)) {
       event.preventDefault();
       event.stopPropagation();
     }
   }
 
   handleKey(key, shift = false) {
-    // At a kiosk only Escape does anything: the show moves on by itself.
-    if (key !== "Escape" && !this.isManual) return;
+    // At a kiosk only Escape and Q do anything: the show moves on by itself.
+    const ends = key === "Escape" || key === "q" || key === "Q";
+    if (!ends && !this.isManual) return;
     switch (key) {
       case "ArrowRight": case "ArrowDown": case "PageDown": case " ": case "Enter": case "n": case "N":
         if (shift && key === " ") this.previous();
@@ -559,7 +562,7 @@ export class Slideshow extends EventTarget {
       case "b": case "B": case ".": case "w": case "W": case ",":
         this.setBlank(!this.blanked);
         break;
-      case "Escape":
+      case "Escape": case "q": case "Q":
         this.end();
         break;
       default:
