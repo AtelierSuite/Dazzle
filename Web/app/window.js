@@ -443,6 +443,11 @@ export class PresentationWindow {
         run: () => this.toggleMasterView(),
       },
       toggleHidden: { label: this.currentSlide()?.hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), enabled: has && !master, run: () => this.engine.call("toggleHidden", { ids: this.pickedSlides() }) },
+      moveSlideUp: { label: t("Slide.Menu.MoveUp"), enabled: has && !master && this.slideIndex() > 0, run: () => this.moveSlide(-1) },
+      moveSlideDown: {
+        label: t("Slide.Menu.MoveDown"), enabled: has && !master && this.slideIndex() >= 0 && this.slideIndex() < (state?.slides.length ?? 0) - 1,
+        run: () => this.moveSlide(1),
+      },
       previousSlide: { label: t("Menu.Slide.Previous"), enabled: has, run: () => this.stepSlide(-1) },
       nextSlide: { label: t("Menu.Slide.Next"), enabled: has, run: () => this.stepSlide(1) },
       headerFooter: { label: t("Mac.Menu.Slide.HeaderFooter"), enabled: has && !master, run: () => this.showHeaderFooter() },
@@ -561,7 +566,7 @@ export class PresentationWindow {
         return [
           ...self.items("newSlide"),
           { label: t("Menu.Slide.NewWithLayout"), disabled: !self.hasDocument, submenu: self.layoutItems() },
-          ...self.items("duplicateSlides", "deleteSlides", "renameLayout", "toggleHidden", "-", "previousSlide", "nextSlide", "-", "headerFooter"),
+          ...self.items("duplicateSlides", "deleteSlides", "renameLayout", "toggleHidden", "-", "headerFooter", "-", "moveSlideUp", "moveSlideDown", "-", "previousSlide", "nextSlide"),
         ];
       } },
       { label: t("Menu.Format"), get items() {
@@ -733,6 +738,7 @@ export class PresentationWindow {
       { label: hidden ? t("Slide.Menu.Show") : t("Slide.Menu.Hide"), action: () => this.engine.call("toggleHidden", { ids }) },
       { label: t("Slide.Menu.Delete"), disabled: this.engine.state.slides.length <= ids.length, action: () => this.engine.call("deleteSlides", { ids }) },
       { separator: true },
+      ...(ids.length === 1 && ids[0] === this.selection.slide ? [this.item("moveSlideUp"), this.item("moveSlideDown"), { separator: true }] : []),
       { label: t("Section.Add"), disabled: ids.length !== 1, action: () => this.addSection(ids[0]) },
       ...(sections.length > 1 ? [{
         label: t("Section.MoveSlideTo"),
@@ -776,6 +782,19 @@ export class PresentationWindow {
   pickedSlides() {
     const picked = [...(this.navigator?.selected ?? [])];
     return picked.length ? picked : [this.selection.slide].filter(Boolean);
+  }
+
+  /** Where the slide being edited is in the list, or -1. */
+  slideIndex() {
+    return (this.engine.state?.slides ?? []).findIndex((slide) => slide.id === this.selection.slide);
+  }
+
+  /** Slide › Move Slide Up and Down: the slide being edited, one place earlier or later, as on the Mac. */
+  async moveSlide(step) {
+    const index = this.slideIndex();
+    const count = this.engine.state?.slides.length ?? 0;
+    if (index < 0 || index + step < 0 || index + step >= count) return;
+    await this.engine.call("moveSlides", { ids: [this.selection.slide], to: index + step });
   }
 
   async stepSlide(step) {
