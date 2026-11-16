@@ -13,7 +13,8 @@ import { installedFamilies, isInstalled } from "./fonts.js";
 import { SlideCanvas } from "./canvas.js";
 import { SlideNavigator } from "./navigator.js";
 import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js";
-import { Slideshow, hasSecondDisplay } from "./slideshow.js";
+import { Slideshow, hasSecondDisplay, sceneMedia } from "./slideshow.js";
+import { PAGE_LAYOUTS, layoutPages } from "./export.js";
 import { closeTablePicker, openTablePicker } from "./table-picker.js";
 
 const isApple = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -413,7 +414,7 @@ export class PresentationWindow {
       rename: { label: t("Menu.File.Rename"), enabled: has, run: () => this.renameDocument() },
       properties: { label: t("Mac.Menu.File.Properties"), enabled: has, run: () => this.showProperties() },
       exportPowerPoint: { label: t("Menu.File.Export.PowerPoint"), enabled: has, run: () => this.exportAs({ key: "pptx", extension: "pptx", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }) },
-      exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.print() },
+      exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.showExport("pdf") },
       print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has && !master, run: () => this.print() },
       undo: { label: t("Toolbar.Undo"), shortcut: shortcut("Z"), enabled: has && (state?.canUndo || editingText), run: () => this.undo() },
       redo: { label: t("Toolbar.Redo"), shortcut: shortcut("Z", { shift: true }), enabled: has && (state?.canRedo || editingText), run: () => this.redo() },
@@ -982,34 +983,104 @@ export class PresentationWindow {
     this.preparePrint().then(() => window.print());
   }
 
-  async preparePrint() {
-    let holder = document.querySelector(".app__print");
-    holder?.remove();
-    holder = document.createElement("div");
+  /**
+   * Lays the slides out for printing: a page each at the slide's size, or as
+   * notes pages or handouts on paper (`layout`), as the Mac's PDF export does.
+   */
+  async preparePrint({ layout = "slides", slides = null } = {}) {
+    document.querySelector(".app__print")?.remove();
+    const holder = document.createElement("div");
     holder.className = "app__print";
     const drawer = new SlideDrawer(this.media);
     const size = this.engine.info.size;
-    const style = document.createElement("style");
-    style.textContent = `@page { size: ${size.w}pt ${size.h}pt; margin: 0; }`;
-    holder.append(style);
-    for (const slide of this.engine.state.slides) {
-      if (slide.hidden) continue;
-      const scene = await this.engine.call("scene", { slide: slide.id });
-      const page = document.createElement("div");
-      page.className = "app__print-page";
-      page.style.width = `${size.w}pt`;
-      page.style.height = `${size.h}pt`;
-      const drawn = drawer.draw(scene);
-      drawn.style.transform = `scale(${4 / 3})`;
-      page.append(drawn);
-      holder.append(page);
+    const chosen = slides ?? (this.engine.state.slides.filter((slide) => !slide.hidden).map((slide) => slide.id));
+    const entries = [];
+    for (const id of chosen) {
+      const scene = await this.engine.call("scene", { slide: id });
+      for (const path of sceneMedia(scene)) await this.media.url(path);
+      const notes = layout === "notes" ? (await this.engine.call("timeline", { slide: id })).notes : "";
+      entries.push({ scene, notes });
     }
+    const { size: pageSize, pages } = layoutPages({
+      slides: entries, size, layout,
+      place: (page, index, rect) => {
+        const drawn = drawer.draw(entries[index].scene);
+        // Slides are drawn a pixel to a point; pages are measured in points, 4/3 of a pixel.
+        Object.assign(drawn.style, { position: "absolute", left: `${rect.x}pt`, top: `${rect.y}pt`, transform: `scale(${(rect.w / size.w) * (4 / 3)})` });
+        page.append(drawn);
+      },
+    });
+    const style = document.createElement("style");
+    style.textContent = `@page { size: ${pageSize.w}pt ${pageSize.h}pt; margin: 0; }`;
+    holder.append(style, ...pages);
+    // Laid out off screen, so text can be measured and fitted before the browser prints it.
     document.body.append(holder);
-    // Pictures have a moment to arrive before the browser lays out the pages.
-    await Promise.all([...holder.querySelectorAll("image")].map(() => Promise.resolve()));
-    for (const slide of holder.querySelectorAll(".slide")) drawer.fit(slide);
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await this.settleDrawing(holder);
     window.addEventListener("afterprint", () => holder.remove(), { once: true });
+  }
+
+  /** Waits for the pictures and fonts slides under `holder` use, then fits their text. */
+  async settleDrawing(holder) {
+    await Promise.all([...this.media.pending.values()]);
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const drawer = new SlideDrawer(this.media);
+    for (const slide of holder.querySelectorAll(".slide")) drawer.fit(slide);
+  }
+
+  // MARK: - Exporting
+
+  /** The slides an export takes: the current one, or all, with or without hidden ones. */
+  exportedSlides(options) {
+    const slides = this.engine.state.slides;
+    if (options.scope === "current") return slides.filter((slide) => slide.id === this.selection.slide).map((slide) => slide.id);
+    const shown = slides.filter((slide) => options.hidden || !slide.hidden);
+    return (shown.length ? shown : slides).map((slide) => slide.id);
+  }
+
+  /** Export as PDF: what to export and how, as the options under the Mac's save panel. */
+  showExport(format) {
+    if (!this.hasDocument) return;
+    const options = { scope: "all", hidden: false, layout: "slides", ...this.exportOptions };
+    const row = (label, control) => `<span class="ds-form__label">${escapeHTML(label)}</span><span class="ds-form__control">${control}</span>`;
+    const popup = (name, label, entries, value) => `<span class="ds-popup ds-popup--xs"><select class="ds-popup__select" name="${name}" aria-label="${escapeHTML(label)}">${
+      entries.map(([key, text]) => `<option value="${escapeHTML(String(key))}"${String(key) === String(value) ? " selected" : ""}>${escapeHTML(text)}</option>`).join("")
+    }</select>${icon("chevronDown", "ds-popup__chevron")}</span>`;
+    const title = "Menu.File.Export.PDF";
+    const backdrop = this.sheet(`
+      <form class="ds-sheet" role="dialog" aria-labelledby="export-title">
+        <div class="ds-sheet__body">
+          <h2 class="ds-sheet__title" id="export-title">${escapeHTML(t(title).replace("…", ""))}</h2>
+          <div class="ds-form">
+            ${row(t("Export.Scope"), popup("scope", t("Export.Scope"), [["all", t("Export.Scope.All")], ["current", t("Export.Scope.Current")]], options.scope))}
+            ${row("", `<label class="ds-check"><input type="checkbox" name="hidden"${options.hidden ? " checked" : ""}${options.scope === "current" ? " disabled" : ""}>${escapeHTML(t("Export.IncludeHidden"))}</label>`)}
+            ${format === "pdf" ? row(t("Export.Layout"), popup("layout", t("Export.Layout"), PAGE_LAYOUTS.map(([key, label]) => [key, t(label)]), options.layout)) : ""}
+          </div>
+        </div>
+        <div class="ds-sheet__buttons">
+          <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+          <button class="ds-button ds-button--primary" type="submit">${escapeHTML(t("Export.Share"))}</button>
+        </div>
+      </form>`);
+    const form = backdrop.querySelector("form");
+    form.elements.scope.addEventListener("change", () => { form.elements.hidden.disabled = form.elements.scope.value === "current"; });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      Object.assign(options, {
+        scope: data.get("scope"), hidden: data.get("hidden") === "on",
+        ...(format === "pdf" ? { layout: data.get("layout") } : {}),
+      });
+      this.exportOptions = options;
+      dismissSheet(backdrop);
+      this.exportPDF(options);
+    });
+  }
+
+  async exportPDF(options) {
+    await this.flushEdits();
+    await this.preparePrint({ layout: options.layout, slides: this.exportedSlides(options) });
+    window.print();
   }
 
   /** Plays the slide's animations through on the canvas, one step after another. */
