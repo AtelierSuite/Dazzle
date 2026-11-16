@@ -1,5 +1,13 @@
-// Exporting slides as printed pages, as the Mac's ExportController does with
-// SlideExporter: a page per slide, notes pages, or handouts.
+// Exporting slides as pictures and as printed pages, as the Mac's
+// ExportController does with SlideExporter.
+//
+// The browser draws slides as HTML and SVG (slide.js), so a slide becomes a
+// picture by drawing that markup into a canvas: it is copied into an SVG
+// <foreignObject> with the page's styles, the presentation's own fonts and its
+// pictures written in, and the SVG is drawn as an image.
+
+/** Widths offered for pictures, in pixels, as on the Mac. */
+export const RESOLUTIONS = [1280, 1920, 3840];
 
 /** The page layouts offered for PDF, as on the Mac: slides, notes pages, and handouts of 2, 3, 4 or 6. */
 export const PAGE_LAYOUTS = [
@@ -7,6 +15,201 @@ export const PAGE_LAYOUTS = [
   ["handouts2", "Mac.Export.Layout.Handouts2"], ["handouts3", "Mac.Export.Layout.Handouts3"],
   ["handouts4", "Mac.Export.Layout.Handouts4"], ["handouts6", "Mac.Export.Layout.Handouts6"],
 ];
+
+// MARK: - Drawing slides as pictures
+
+/** The page's styles, as text, for a slide drawn on its own. */
+function pageStyles() {
+  let css = "";
+  for (const sheet of document.styleSheets) {
+    try {
+      for (const rule of sheet.cssRules) css += `${rule.cssText}\n`;
+    } catch {
+      // A sheet from elsewhere can't be read; the slide doesn't use one.
+    }
+  }
+  return css;
+}
+
+function dataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function base64(bytes) {
+  let text = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) text += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  return btoa(text);
+}
+
+const escapeXML = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+/**
+ * Draws slides laid out on the page into canvases. Made once for an export:
+ * it gathers the styles and fonts once, and each picture once.
+ */
+export class SlideRasteriser {
+  /**
+   * @param {import("./slide.js").MediaStore} media where the slide's pictures come from
+   * @param {{ family: string, bold: boolean, italic: boolean, bytes: Uint8Array }[]} fonts the presentation's own typefaces
+   */
+  constructor(media, fonts = []) {
+    this.media = media;
+    this.inlined = new Map();
+    const faces = fonts.map((font) => `@font-face { font-family: "${font.family.replace(/["\\]/g, "\\$&")}"; font-weight: ${font.bold ? 700 : 400}; font-style: ${font.italic ? "italic" : "normal"}; src: url(data:font/ttf;base64,${base64(font.bytes)}); }`);
+    this.styles = `${faces.join("\n")}\n${pageStyles()}`;
+  }
+
+  /** A data URL for a picture the slide shows by its object URL. */
+  async inline(url) {
+    if (!url.startsWith("blob:")) return url;
+    if (!this.inlined.has(url)) {
+      let blob = null;
+      for (const [path, known] of this.media.urls) if (known === url) blob = this.media.blobs.get(path);
+      this.inlined.set(url, blob ? dataURL(blob) : Promise.resolve(url));
+    }
+    return this.inlined.get(url);
+  }
+
+  /**
+   * The slide element `slide`, already laid out on the page, as a canvas
+   * `width` pixels wide. `opaque` fills what the slide leaves clear with white, as JPEG needs.
+   */
+  async draw(slide, width, { opaque = true } = {}) {
+    const scene = slide.slideScene;
+    const scale = width / scene.w;
+    const height = Math.max(Math.round(scene.h * scale), 1);
+    const copy = slide.cloneNode(true);
+    copy.style.transform = "none";
+    copy.style.position = "relative";
+    copy.style.left = "0";
+    copy.style.top = "0";
+    // Pictures go in as data: an SVG drawn as an image loads nothing from outside.
+    for (const element of copy.querySelectorAll("image, img")) {
+      for (const attribute of ["href", "xlink:href", "src"]) {
+        const value = element.getAttribute(attribute);
+        if (value?.startsWith("blob:")) element.setAttribute(attribute, await this.inline(value));
+      }
+    }
+    for (const element of copy.querySelectorAll("[style*='blob:']")) {
+      let style = element.getAttribute("style");
+      for (const [, url] of style.matchAll(/url\(["']?(blob:[^"')]+)["']?\)/g)) style = style.replaceAll(url, await this.inline(url));
+      element.setAttribute("style", style);
+    }
+    const markup = new XMLSerializer().serializeToString(copy);
+    const picture = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`
+      + `<foreignObject x="0" y="0" width="${width}" height="${height}">`
+      + `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;overflow:hidden">`
+      + `<style>${escapeXML(this.styles)}</style>`
+      + `<div style="width:${scene.w}px;height:${scene.h}px;transform:scale(${scale});transform-origin:0 0">${markup}</div>`
+      + "</div></foreignObject></svg>";
+    const image = new Image();
+    image.width = width;
+    image.height = height;
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error("The slide couldn't be drawn."));
+      image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(picture)}`;
+    });
+    // WebKit paints the pictures inside an SVG a moment after the SVG itself has loaded.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (opaque) {
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, width, height);
+    }
+    context.drawImage(image, 0, 0, width, height);
+    return canvas;
+  }
+}
+
+/** A canvas as PNG or JPEG bytes. */
+export async function encodeImage(canvas, format) {
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, format === "jpeg" ? "image/jpeg" : "image/png", 0.9));
+  if (!blob) throw new Error("The picture couldn't be made.");
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+// MARK: - Zip
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (let index = 0; index < bytes.length; index++) crc = CRC_TABLE[(crc ^ bytes[index]) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * Files in a zip archive, stored as they are: pictures are already compressed.
+ * @param {{ name: string, bytes: Uint8Array }[]} files
+ */
+export function zip(files) {
+  const encoder = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = encoder.encode(file.name);
+    const crc = crc32(file.bytes);
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(6, 0x0800, true); // Names in UTF-8.
+    local.setUint16(12, 0x21, true); // 1 January 1980, the first day a zip can say.
+    local.setUint32(14, crc, true);
+    local.setUint32(18, file.bytes.length, true);
+    local.setUint32(22, file.bytes.length, true);
+    local.setUint16(26, name.length, true);
+    parts.push(new Uint8Array(local.buffer), name, file.bytes);
+    const entry = new DataView(new ArrayBuffer(46));
+    entry.setUint32(0, 0x02014b50, true);
+    entry.setUint16(4, 20, true);
+    entry.setUint16(6, 20, true);
+    entry.setUint16(8, 0x0800, true);
+    entry.setUint16(14, 0x21, true);
+    entry.setUint32(16, crc, true);
+    entry.setUint32(20, file.bytes.length, true);
+    entry.setUint32(24, file.bytes.length, true);
+    entry.setUint16(28, name.length, true);
+    entry.setUint32(42, offset, true);
+    central.push(new Uint8Array(entry.buffer), name);
+    offset += 30 + name.length + file.bytes.length;
+  }
+  const size = central.reduce((total, part) => total + part.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, files.length, true);
+  end.setUint16(10, files.length, true);
+  end.setUint32(12, size, true);
+  end.setUint32(16, offset, true);
+  return concat([...parts, ...central, new Uint8Array(end.buffer)]);
+}
+
+function concat(parts) {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+}
 
 // MARK: - Pages for printing
 

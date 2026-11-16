@@ -13,6 +13,7 @@ import { inflateRawSync } from "node:zlib";
 import { strict as assert } from "node:assert";
 import { Engine } from "../engine.js";
 import { bandForLine, letterTransform, placement, warpBands, warpPoint } from "../../app/warp.js";
+import { zip as zipFiles } from "../../app/export.js";
 import { COLUMN_LIMIT, INITIAL_GRID, LARGEST_GRID, ROW_LIMIT, TableSizeSelection, cellAt } from "../../app/table-size.js";
 
 const web = new URL("../../", import.meta.url);
@@ -2159,6 +2160,13 @@ test("puts dropped pictures and movies where they were let go", () => {
   assert.ok(Math.abs(shape.y + shape.h - height) < 0.01, "kept on the slide");
   call("undo");
   assert.notEqual(call("inspect").result.shape?.kind, "media", "inserted and placed in one step");
+});
+
+test("writes exported pictures into a zip", () => {
+  const files = [{ name: "Deck 001.png", bytes: PIXEL }, { name: "Deck 002.png", bytes: new Uint8Array([1, 2, 3]) }];
+  const entries = unzip(zipFiles(files));
+  assert.deepEqual([...entries.keys()], ["Deck 001.png", "Deck 002.png"]);
+  assert.deepEqual([...entries.get("Deck 001.png")], [...PIXEL]);
 });
 
 for (const path of process.argv.slice(2)) {

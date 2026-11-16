@@ -14,7 +14,7 @@ import { SlideCanvas } from "./canvas.js";
 import { SlideNavigator } from "./navigator.js";
 import { Inspector, escapeHTML, readSetting, writeSetting } from "./inspector.js";
 import { Slideshow, hasSecondDisplay, sceneMedia } from "./slideshow.js";
-import { PAGE_LAYOUTS, layoutPages } from "./export.js";
+import { PAGE_LAYOUTS, RESOLUTIONS, SlideRasteriser, encodeImage, layoutPages, zip } from "./export.js";
 import { closeTablePicker, openTablePicker } from "./table-picker.js";
 
 const isApple = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -415,6 +415,7 @@ export class PresentationWindow {
       properties: { label: t("Mac.Menu.File.Properties"), enabled: has, run: () => this.showProperties() },
       exportPowerPoint: { label: t("Menu.File.Export.PowerPoint"), enabled: has, run: () => this.exportAs({ key: "pptx", extension: "pptx", mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }) },
       exportPDF: { label: t("Menu.File.Export.PDF"), enabled: has && !master, run: () => this.showExport("pdf") },
+      exportImages: { label: t("Menu.File.Export.Images"), enabled: has && !master, run: () => this.showExport("images") },
       print: { label: t("Menu.File.Print"), shortcut: shortcut("P"), enabled: has && !master, run: () => this.print() },
       undo: { label: t("Toolbar.Undo"), shortcut: shortcut("Z"), enabled: has && (state?.canUndo || editingText), run: () => this.undo() },
       redo: { label: t("Toolbar.Redo"), shortcut: shortcut("Z", { shift: true }), enabled: has && (state?.canRedo || editingText), run: () => this.redo() },
@@ -646,7 +647,7 @@ export class PresentationWindow {
       ...this.items("close", "save", "saveAs", "rename"),
       { separator: true },
       { label: t("Menu.File.ExportTo"), disabled: !this.document, submenu: [
-        this.item("exportPDF"), this.item("exportPowerPoint"),
+        this.item("exportPDF"), this.item("exportImages"), this.item("exportPowerPoint"),
         ...(keynote ? [{ label: t("Web.Export.Keynote"), action: () => this.exportAs(keynote) }] : []),
       ] },
       { separator: true },
@@ -1038,15 +1039,22 @@ export class PresentationWindow {
     return (shown.length ? shown : slides).map((slide) => slide.id);
   }
 
-  /** Export as PDF: what to export and how, as the options under the Mac's save panel. */
+  /** The presentation's name without its extension, for the files an export makes. */
+  exportName() {
+    return (this.document?.name ?? "Presentation").replace(/\.[^.]+$/, "").replace(/[/:\\?%*|"<>]/g, "-").trim() || "Presentation";
+  }
+
+  /** Export as PDF or Images: what to export and how, as the options under the Mac's save panel. */
   showExport(format) {
     if (!this.hasDocument) return;
-    const options = { scope: "all", hidden: false, layout: "slides", ...this.exportOptions };
+    const options = { scope: "all", hidden: false, layout: "slides", image: "png", width: 1920, ...this.exportOptions };
+    const size = this.engine.info.size;
+    const resolution = (width) => `${width} × ${Math.round(width / (size.w / size.h))}`;
     const row = (label, control) => `<span class="ds-form__label">${escapeHTML(label)}</span><span class="ds-form__control">${control}</span>`;
     const popup = (name, label, entries, value) => `<span class="ds-popup ds-popup--xs"><select class="ds-popup__select" name="${name}" aria-label="${escapeHTML(label)}">${
       entries.map(([key, text]) => `<option value="${escapeHTML(String(key))}"${String(key) === String(value) ? " selected" : ""}>${escapeHTML(text)}</option>`).join("")
     }</select>${icon("chevronDown", "ds-popup__chevron")}</span>`;
-    const title = "Menu.File.Export.PDF";
+    const title = format === "pdf" ? "Menu.File.Export.PDF" : "Menu.File.Export.Images";
     const backdrop = this.sheet(`
       <form class="ds-sheet" role="dialog" aria-labelledby="export-title">
         <div class="ds-sheet__body">
@@ -1055,6 +1063,8 @@ export class PresentationWindow {
             ${row(t("Export.Scope"), popup("scope", t("Export.Scope"), [["all", t("Export.Scope.All")], ["current", t("Export.Scope.Current")]], options.scope))}
             ${row("", `<label class="ds-check"><input type="checkbox" name="hidden"${options.hidden ? " checked" : ""}${options.scope === "current" ? " disabled" : ""}>${escapeHTML(t("Export.IncludeHidden"))}</label>`)}
             ${format === "pdf" ? row(t("Export.Layout"), popup("layout", t("Export.Layout"), PAGE_LAYOUTS.map(([key, label]) => [key, t(label)]), options.layout)) : ""}
+            ${format === "images" ? row(t("Export.ImageFormat"), popup("image", t("Export.ImageFormat"), [["png", "PNG"], ["jpeg", "JPEG"]], options.image)) : ""}
+            ${format !== "pdf" ? row(t("Export.Resolution"), popup("width", t("Export.Resolution"), RESOLUTIONS.map((width) => [width, resolution(width)]), options.width)) : ""}
           </div>
         </div>
         <div class="ds-sheet__buttons">
@@ -1070,10 +1080,14 @@ export class PresentationWindow {
       Object.assign(options, {
         scope: data.get("scope"), hidden: data.get("hidden") === "on",
         ...(format === "pdf" ? { layout: data.get("layout") } : {}),
+        ...(format === "images" ? { image: data.get("image") } : {}),
+        ...(format !== "pdf" ? { width: Number(data.get("width")) } : {}),
       });
       this.exportOptions = options;
       dismissSheet(backdrop);
-      this.exportPDF(options);
+      // Asking where to save comes first, while this click still lets the page ask.
+      if (format === "pdf") this.exportPDF(options);
+      else this.exportImages(options);
     });
   }
 
@@ -1081,6 +1095,60 @@ export class PresentationWindow {
     await this.flushEdits();
     await this.preparePrint({ layout: options.layout, slides: this.exportedSlides(options) });
     window.print();
+  }
+
+  /** Draws a slide off screen, laid out and fitted, ready to be drawn as a picture. */
+  async drawOffscreen(id) {
+    const scene = await this.engine.call("scene", { slide: id });
+    for (const path of sceneMedia(scene)) await this.media.url(path);
+    const holder = document.createElement("div");
+    holder.className = "app__export-stage";
+    holder.append(new SlideDrawer(this.media).draw(scene));
+    document.body.append(holder);
+    await this.settleDrawing(holder);
+    return holder;
+  }
+
+  /** A slide as a canvas `width` pixels wide. */
+  async slidePicture(rasteriser, id, width, opaque = true) {
+    const holder = await this.drawOffscreen(id);
+    try {
+      return await rasteriser.draw(holder.querySelector(".slide"), width, { opaque });
+    } finally {
+      holder.remove();
+    }
+  }
+
+  /** One picture per slide, numbered after the presentation, into a folder the user picks or a zip. */
+  async exportImages(options) {
+    const folder = files.canPickFolders ? await files.pickFolder().catch((error) => {
+      this.showMessage(error.message, "error");
+      return null;
+    }) : undefined;
+    if (folder === null) return;
+    await this.flushEdits();
+    const ids = this.exportedSlides(options);
+    const all = this.engine.state.slides.map((slide) => slide.id);
+    const extension = options.image === "jpeg" ? "jpg" : "png";
+    const base = this.exportName();
+    const rasteriser = new SlideRasteriser(this.media, this.fontFiles ?? []);
+    const made = [];
+    let failed = false;
+    for (const id of ids) {
+      const name = `${base} ${String(all.indexOf(id) + 1).padStart(3, "0")}.${extension}`;
+      try {
+        const bytes = await encodeImage(await this.slidePicture(rasteriser, id, options.width), options.image);
+        if (folder) await files.writeIntoFolder(folder, name, bytes);
+        else made.push({ name, bytes });
+      } catch {
+        failed = true;
+      }
+    }
+    if (!folder && made.length) {
+      if (made.length === 1) files.download(made[0].bytes, made[0].name, options.image === "jpeg" ? "image/jpeg" : "image/png");
+      else files.download(zip(made), `${base}.zip`, "application/zip");
+    }
+    if (failed) this.showMessage(t("Mac.Export.Images.Failed"), "error");
   }
 
   /** Plays the slide's animations through on the canvas, one step after another. */
@@ -1505,15 +1573,19 @@ export class PresentationWindow {
   async loadFonts() {
     for (const face of this.fontFaces ?? []) document.fonts.delete(face);
     this.fontFaces = [];
+    // Their bytes too, for drawing slides as pictures, which can't use the page's fonts.
+    this.fontFiles = [];
     if (!this.engine.info?.hasEmbeddedFonts) return;
     const { result, payload } = await this.engine.call("fonts").catch(() => ({ result: [] }));
     for (const font of result ?? []) {
-      const face = new FontFace(font.family, payload.slice(font.offset, font.offset + font.length), {
+      const bytes = payload.slice(font.offset, font.offset + font.length);
+      const face = new FontFace(font.family, bytes, {
         weight: font.bold ? "700" : "400", style: font.italic ? "italic" : "normal",
       });
       try {
         document.fonts.add(await face.load());
         this.fontFaces.push(face);
+        this.fontFiles.push({ family: font.family, bold: font.bold, italic: font.italic, bytes });
       } catch {
         // A font the browser can't read is drawn in another.
       }

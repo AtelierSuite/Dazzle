@@ -96,6 +96,24 @@ export async function saveFileAs(bytes, suggestedName, { mime, extension, descri
   return { name: suggestedName };
 }
 
+export const canPickFolders = typeof window.showDirectoryPicker === "function";
+
+/** Asks for a folder to write files into. Resolves with its handle, or null if the user cancelled. */
+export async function pickFolder() {
+  try {
+    return await window.showDirectoryPicker({ mode: "readwrite", id: "export" });
+  } catch (error) {
+    if (error?.name === "AbortError") return null;
+    throw error;
+  }
+}
+
+/** Writes a file into a folder the user picked, replacing one of the same name. */
+export async function writeIntoFolder(folder, name, bytes) {
+  const handle = await folder.getFileHandle(name, { create: true });
+  await writeHandle(handle, bytes);
+}
+
 export function download(bytes, name, mime) {
   const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
   const link = document.createElement("a");

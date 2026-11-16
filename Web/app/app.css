@@ -1439,8 +1439,9 @@ body {
 
 /* MARK: - Printing */
 
-/* Pages for printing are laid out off screen so their text can be measured. */
-.app__print {
+/* Pages for printing, and slides being drawn as pictures, are laid out off screen so their text can be measured. */
+.app__print,
+.app__export-stage {
   position: fixed;
   top: 0;
   left: -100000px;
