@@ -343,7 +343,13 @@ final class Bridge {
         case "insertPicture":
             guard let payload else { throw Failure(message: "No picture was given.") }
             let media = try prepared(payload, r)
-            let frame = (r["frame"] as? [String: Any]).map(rect)
+            var frame = (r["frame"] as? [String: Any]).map(rect)
+            if frame == nil, let point = self.point(r["at"]) {
+                // Dropped on the slide: fitted as it would be in the middle, but centred where it was let go, as on the Mac.
+                let bounds = presentation.slideSize.points
+                let scale = min(bounds.width * 0.6 / max(media.size.width, 1), bounds.height * 0.6 / max(media.size.height, 1), 1)
+                frame = Self.placed(CGSize(width: media.size.width * scale, height: media.size.height * scale), at: point, in: bounds)
+            }
             edit { state, presentation in state.insertPicture(media, frame: frame, name: r["name"] as? String, in: &presentation) }
         case "insertVideo":
             guard let payload, let posterLength = r["posterLength"] as? Int, posterLength < payload.count else {
@@ -352,7 +358,15 @@ final class Bridge {
             // The poster's PNG first, then the movie.
             let poster = PreparedMedia(png: payload.prefix(posterLength), size: CGSize(width: r["w"] as? Double ?? 640, height: r["h"] as? Double ?? 360))
             let video = PreparedVideo(data: payload.dropFirst(posterLength), poster: poster, size: poster.size)
-            edit { state, presentation in state.insertVideo(video, in: &presentation) }
+            let dropped = self.point(r["at"])
+            edit { state, presentation in
+                state.insertVideo(video, in: &presentation)
+                // Dropped on the slide: centred where it was let go.
+                if let dropped, let shape = state.selectedShapes(in: presentation).last {
+                    let frame = Self.placed(shape.frame.points.size, at: dropped, in: presentation.slideSize.points)
+                    state.setTransform(frame: frame, rotation: 0, of: shape.id, in: &presentation)
+                }
+            }
             if let ext = r["ext"] as? String, ext != "mp4" { renameLastMedia(to: ext) }
         case "insertTable":
             let rows = min(max(r["rows"] as? Int ?? 3, 1), 50)
@@ -806,6 +820,19 @@ final class Bridge {
     private func slide(_ value: Any?) -> Slide? {
         guard let id = uuid(value) else { return editor.selectedSlide(in: presentation) }
         return presentation.slides.first { $0.id == id }
+    }
+
+    /// A point on the slide, `{ x, y }` in points.
+    private func point(_ value: Any?) -> CGPoint? {
+        guard let json = value as? [String: Any], let x = json["x"] as? Double, let y = json["y"] as? Double else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    /// A rectangle of `size` centred on `point`, kept on the slide where it fits.
+    private static func placed(_ size: CGSize, at point: CGPoint, in bounds: CGSize) -> CGRect {
+        let x = min(max(point.x - size.width / 2, 0), max(bounds.width - size.width, 0))
+        let y = min(max(point.y - size.height / 2, 0), max(bounds.height - size.height, 0))
+        return CGRect(x: x, y: y, width: size.width, height: size.height)
     }
 
     private func rect(_ json: [String: Any]) -> CGRect {

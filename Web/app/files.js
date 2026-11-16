@@ -133,12 +133,14 @@ export function onDroppedFiles(element, callback, onHover) {
     const item = [...(event.dataTransfer?.items ?? [])].find((entry) => entry.kind === "file");
     if (!item) return;
     event.preventDefault();
+    // Where it was let go, and the file, read before the event is over.
+    const where = { clientX: event.clientX, clientY: event.clientY, target: event.target };
+    const file = item.getAsFile();
     const handle = await item.getAsFileSystemHandle?.();
     if (handle?.kind === "file") {
-      callback(await readHandle(handle));
+      callback(await readHandle(handle), where);
       return;
     }
-    const file = item.getAsFile();
-    if (file) callback({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+    if (file) callback({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }, where);
   });
 }

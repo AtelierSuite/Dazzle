@@ -156,7 +156,7 @@ export class PresentationWindow {
     this.setPanelVisible("notes", readSetting("notes", "1") === "1", { remember: false });
 
     files.onLaunchFiles((file) => file && this.openFile(file));
-    files.onDroppedFiles(document.body, (file) => file && this.dropped(file), (hovering) => {
+    files.onDroppedFiles(document.body, (file, where) => file && this.dropped(file, where), (hovering) => {
       this.root.classList.toggle("is-dropping", hovering);
     });
     window.addEventListener("beforeunload", (event) => {
@@ -904,13 +904,13 @@ export class PresentationWindow {
     if (file) await this.insertPictureBytes(file.bytes, file.name);
   }
 
-  async insertPictureBytes(bytes, name = "", frame = null) {
+  async insertPictureBytes(bytes, name = "", frame = null, at = null) {
     const picture = await preparePicture(bytes, name);
     if (!picture) {
       this.showMessage(t("Error.UnreadablePicture"), "error");
       return;
     }
-    await this.insert("insertPicture", { ext: picture.ext, w: picture.w, h: picture.h, ...(frame ? { frame } : {}) }, picture.bytes);
+    await this.insert("insertPicture", { ext: picture.ext, w: picture.w, h: picture.h, ...(frame ? { frame } : {}), ...(at ? { at } : {}) }, picture.bytes);
   }
 
   async insertMovie() {
@@ -918,7 +918,7 @@ export class PresentationWindow {
     if (file) await this.insertMovieBytes(file.bytes, file.name);
   }
 
-  async insertMovieBytes(bytes, name) {
+  async insertMovieBytes(bytes, name, at = null) {
     const ext = (name.split(".").pop() ?? "mp4").toLowerCase();
     const type = { mov: "video/quicktime", webm: "video/webm", m4v: "video/x-m4v" }[ext] ?? "video/mp4";
     const movie = await prepareMovie(bytes, type);
@@ -930,17 +930,26 @@ export class PresentationWindow {
     const payload = new Uint8Array(movie.poster.length + bytes.length);
     payload.set(movie.poster, 0);
     payload.set(bytes, movie.poster.length);
-    await this.insert("insertVideo", { posterLength: movie.poster.length, w: movie.w * 0.75, h: movie.h * 0.75, ext: ext === "m4v" ? "mp4" : ext }, payload);
+    await this.insert("insertVideo", { posterLength: movie.poster.length, w: movie.w * 0.75, h: movie.h * 0.75, ext: ext === "m4v" ? "mp4" : ext, ...(at ? { at } : {}) }, payload);
   }
 
-  /** A file dropped on the window: a presentation opens, a picture or movie goes on the slide. */
-  async dropped(file) {
+  /**
+   * A file dropped on the window: a presentation opens, a picture or movie goes on the slide,
+   * centred where it was let go when that was on the slide.
+   */
+  async dropped(file, where = null) {
+    let at = null;
+    const scene = this.canvas.scene;
+    if (where && scene && this.canvas.element.contains(where.target)) {
+      const point = this.canvas.point(where);
+      if (point.x >= 0 && point.y >= 0 && point.x <= scene.w && point.y <= scene.h) at = point;
+    }
     if (/\.(pptx|pptm|ppsx|key)$/i.test(file.name) || !this.hasDocument) {
       await this.openFile(file);
     } else if (/\.(mp4|m4v|mov|webm)$/i.test(file.name)) {
-      await this.insertMovieBytes(file.bytes, file.name);
+      await this.insertMovieBytes(file.bytes, file.name, at);
     } else {
-      await this.insertPictureBytes(file.bytes, file.name);
+      await this.insertPictureBytes(file.bytes, file.name, null, at);
     }
   }
 

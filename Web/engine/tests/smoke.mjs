@@ -2139,6 +2139,28 @@ test("pins open comments on the canvas and moves them", () => {
   assert.deepEqual(call("scene", { slide: state.slides[0].id, editing: true }).result.pins, [], "resolved threads have no pin");
 });
 
+test("puts dropped pictures and movies where they were let go", () => {
+  call("new", { name: "Dropped.pptx" });
+  const { w: width, h: height } = call("info").result.size;
+  call("insertPicture", { ext: "png", w: 100, h: 50, at: { x: 300, y: 200 } }, PIXEL);
+  let shape = call("inspect").result.shape;
+  assert.deepEqual([shape.x, shape.y, shape.w, shape.h], [250, 175, 100, 50], "centred on the point");
+  call("insertPicture", { ext: "png", w: 100, h: 50, at: { x: width, y: 0 } }, PIXEL);
+  shape = call("inspect").result.shape;
+  assert.deepEqual([shape.x, shape.y], [width - 100, 0], "kept on the slide");
+  call("insertPicture", { ext: "png", w: 4000, h: 1000, at: { x: 10, y: 10 } }, PIXEL);
+  shape = call("inspect").result.shape;
+  assert.ok(Math.abs(shape.w - width * 0.6) < 0.01 && shape.x === 0, "fitted as in the middle");
+  const movie = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+  call("insertVideo", { posterLength: PIXEL.length, w: 320, h: 180, at: { x: width / 2 + 20, y: height - 10 } }, new Uint8Array([...PIXEL, ...movie]));
+  shape = call("inspect").result.shape;
+  assert.equal(shape.kind, "media");
+  assert.ok(Math.abs(shape.x + shape.w / 2 - (width / 2 + 20)) < 0.01, "centred across on the point");
+  assert.ok(Math.abs(shape.y + shape.h - height) < 0.01, "kept on the slide");
+  call("undo");
+  assert.notEqual(call("inspect").result.shape?.kind, "media", "inserted and placed in one step");
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
