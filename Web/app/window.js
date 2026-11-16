@@ -1294,6 +1294,10 @@ export class PresentationWindow {
     this.navigator.addEventListener("command", (event) => this.run(event.detail));
     this.canvas.addEventListener("command", (event) => this.run(event.detail));
     this.canvas.addEventListener("selection", () => this.refreshInspector());
+    this.canvas.addEventListener("comments", () => {
+      this.setPanelVisible("inspector", true);
+      this.inspector.showPane("comments");
+    });
     this.canvas.addEventListener("look", (event) => {
       this.look = event.detail;
       this.updateLook();

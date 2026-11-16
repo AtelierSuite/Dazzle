@@ -72,6 +72,13 @@ export class Inspector extends EventTarget {
     this.render();
   }
 
+  /** Shows a pane, as a click on a comment pin opens the comments. */
+  async showPane(pane) {
+    this.pane = pane;
+    writeSetting("inspectorPane", pane);
+    await this.refresh({ force: true });
+  }
+
   render() {
     const t = this.t;
     const panes = [["format", t("ActionBar.Format")], ["animate", t("ActionBar.Animations")], ["comments", t("ActionBar.Comments")]];

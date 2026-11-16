@@ -90,7 +90,15 @@ final class Bridge {
             guard let slide = slide(r["slide"]) else { throw Failure(message: "No such slide.") }
             var renderer = WebRenderer(presentation: presentation, slide: slide)
             renderer.options.editing = r["editing"] as? Bool ?? false
-            return renderer.scene()
+            var scene = renderer.scene()
+            if renderer.options.editing {
+                // Open comment threads left at a place on the slide, as pins over it.
+                scene["pins"] = slide.comments.filter { $0.position != nil && !$0.isResolved }.map { comment -> [String: Any] in
+                    let position = comment.position ?? .zero
+                    return ["id": comment.id, "x": Double(position.x), "y": Double(position.y), "initials": comment.initials, "author": comment.author]
+                }
+            }
+            return scene
         case "media":
             guard let path = r["path"] as? String, let data = presentation.data(at: path) else { throw Failure(message: "No such part.") }
             output = data
@@ -709,6 +717,12 @@ final class Bridge {
             }
         case "deleteComment":
             edit { state, presentation in state.deleteComment(r["thread"] as? String ?? "", replyID: r["reply"] as? String, in: &presentation) }
+        case "moveComment":
+            // Moves a thread's pin, in slide points, kept on the slide.
+            guard let thread = r["thread"] as? String else { throw Failure(message: "No comment.") }
+            let size = presentation.slideSize.points
+            let point = CGPoint(x: min(max(r["x"] as? Double ?? 0, 0), Double(size.width)), y: min(max(r["y"] as? Double ?? 0, 0), Double(size.height)))
+            edit { state, presentation in state.moveComment(thread, to: point, in: &presentation) }
         case "resolveComment":
             edit { state, presentation in state.setCommentResolved(r["thread"] as? String ?? "", r["resolved"] as? Bool ?? true, in: &presentation) }
 

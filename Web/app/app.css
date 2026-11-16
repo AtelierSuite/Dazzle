@@ -616,6 +616,21 @@ body {
   outline: 1px dashed var(--ds-interactive);
 }
 
+.canvas__pin {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: #fff;
+  font: var(--ds-type-caption);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 30%);
+  cursor: grab;
+  pointer-events: auto;
+  user-select: none;
+}
+
 .canvas__handle {
   position: absolute;
   width: 8px;

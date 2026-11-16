@@ -43,6 +43,15 @@ function contains(frame, rotation, x, y) {
   return lx >= frame.x - slack && lx <= frame.x + frame.w + slack && ly >= frame.y - slack && ly <= frame.y + frame.h + slack;
 }
 
+/** The colours the Mac gives comment authors (its system colours), one per author. */
+const PIN_COLORS = ["#007aff", "#ff9500", "#34c759", "#af52de", "#ff2d55", "#30b0c7", "#5856d6", "#a2845e"];
+
+function pinColor(author = "") {
+  let hash = 0;
+  for (const character of author) hash = (hash * 31 + character.codePointAt(0)) & 0xffff;
+  return PIN_COLORS[hash % PIN_COLORS.length];
+}
+
 const intersects = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
 export class SlideCanvas extends EventTarget {
@@ -226,6 +235,14 @@ export class SlideCanvas extends EventTarget {
         box.append(rotate);
       }
     }
+    // Open comment threads, as pins with their author's initials in a colour of the author's own.
+    for (const pin of this.scene.pins ?? []) {
+      const at = this.pinDrag?.id === pin.id ? this.pinDrag : pin;
+      const element = make("canvas__pin", { left: `${at.x * scale}px`, top: `${at.y * scale}px`, background: pinColor(pin.author) });
+      element.textContent = pin.initials || "?";
+      element.dataset.comment = pin.id;
+      element.title = pin.author;
+    }
     if (this.marquee) {
       const { x, y, w, h } = this.marquee;
       make("canvas__marquee", { left: `${x * scale}px`, top: `${y * scale}px`, width: `${w * scale}px`, height: `${h * scale}px` });
@@ -252,6 +269,12 @@ export class SlideCanvas extends EventTarget {
         this.endEditing();
       }
       this.element.focus({ preventScroll: true });
+      const pin = event.target.closest?.("[data-comment]")?.dataset.comment;
+      if (pin) {
+        event.preventDefault();
+        this.dragPin(event, pin);
+        return;
+      }
       if (handle?.startsWith("end:")) {
         event.preventDefault();
         this.dragConnectorEnd(handle.slice(4));
@@ -329,6 +352,44 @@ export class SlideCanvas extends EventTarget {
       this.connectorDrag = null;
       if (!drag) return;
       await this.engine.call("setConnectorEnd", { id: node.id, end, x: drag.x, y: drag.y, shape: drag.site?.shape, site: drag.site?.site });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  }
+
+  /** Opens the comments on a click on a pin, or moves the pin on a drag, as on the Mac. */
+  dragPin(start, id) {
+    const pin = this.scene?.pins?.find((candidate) => candidate.id === id);
+    if (!pin) return;
+    const origin = this.point(start);
+    let moved = false;
+    const move = (event) => {
+      const point = this.point(event);
+      const dx = point.x - origin.x;
+      const dy = point.y - origin.y;
+      if (!moved && Math.hypot(dx * this.scale, dy * this.scale) < 3) return;
+      moved = true;
+      this.pinDrag = {
+        id, x: Math.min(Math.max(pin.x + dx, 0), this.scene.w), y: Math.min(Math.max(pin.y + dy, 0), this.scene.h),
+      };
+      this.drawOverlay();
+    };
+    const up = async () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      const drag = this.pinDrag;
+      this.pinDrag = null;
+      if (moved && drag) {
+        // Kept where it was let go until the slide draws again.
+        Object.assign(pin, { x: drag.x, y: drag.y });
+        this.drawOverlay();
+        await this.engine.call("moveComment", { thread: id, x: drag.x, y: drag.y });
+      } else {
+        this.drawOverlay();
+        this.dispatchEvent(new CustomEvent("comments", { detail: id }));
+      }
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);

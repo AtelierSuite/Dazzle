@@ -2120,6 +2120,25 @@ test("changes how a movie plays, and saves it", () => {
   assert.deepEqual([read.trimStart, read.fadeIn, read.volume, read.loops, read.fullScreen, read.hidesWhenStopped], [1.5, 2, 0.5, true, true, true]);
 });
 
+test("pins open comments on the canvas and moves them", () => {
+  const { state } = call("new", { name: "Comments.pptx" });
+  call("addComment", { text: "Look here", author: "Ada Lovelace" });
+  const thread = call("inspect").result.comments[0].id;
+  let pins = call("scene", { slide: state.slides[0].id, editing: true }).result.pins;
+  assert.deepEqual(pins.map((pin) => [pin.id, pin.initials]), [[thread, "AL"]]);
+  assert.equal(call("scene", { slide: state.slides[0].id }).result.pins, undefined, "not in the slideshow");
+  call("moveComment", { thread, x: 200, y: 100 });
+  pins = call("scene", { slide: state.slides[0].id, editing: true }).result.pins;
+  assert.deepEqual([pins[0].x, pins[0].y], [200, 100]);
+  call("moveComment", { thread, x: -50, y: 1e6 });
+  pins = call("scene", { slide: state.slides[0].id, editing: true }).result.pins;
+  assert.deepEqual([pins[0].x, pins[0].y], [0, call("info").result.size.h], "kept on the slide");
+  call("undo");
+  assert.equal(call("inspect").result.comments[0].x, 200);
+  call("resolveComment", { thread, resolved: true });
+  assert.deepEqual(call("scene", { slide: state.slides[0].id, editing: true }).result.pins, [], "resolved threads have no pin");
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));
