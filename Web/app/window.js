@@ -2118,7 +2118,9 @@ export class PresentationWindow {
       const mod = isApple ? event.metaKey : event.ctrlKey;
       if (!mod) return;
       // Option changes the character a letter types on a Mac, so letters are read by their key.
-      const key = event.altKey && /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();
+      // AltGr (Ctrl+Alt elsewhere) types letters, which are not shortcuts.
+      if (event.getModifierState?.("AltGraph")) return;
+      const key = isApple && event.altKey && /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();
       const inField = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
       let map;
       if (isApple && event.ctrlKey) {
