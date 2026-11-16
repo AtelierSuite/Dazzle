@@ -408,6 +408,10 @@ export class PresentationWindow {
     return {
       new: { label: t("Menu.File.New"), shortcut: shortcut("N"), run: () => this.newDocument() },
       open: { label: t("Menu.File.Open"), shortcut: shortcut("O"), run: () => this.openPicked() },
+      revert: {
+        label: t("Menu.File.RevertToSaved"), enabled: Boolean(this.document?.handle) && (Boolean(state?.edited) || Boolean(this.document?.draftAt)),
+        run: () => this.revertToSaved(),
+      },
       openPackage: { label: t("Web.Menu.OpenPackage"), run: () => this.openPicked({ package: true }) },
       close: { label: t("Menu.File.Close"), shortcut: shortcut("W"), enabled: has, run: () => this.closeDocument() },
       save: { label: t("Menu.File.Save"), shortcut: shortcut("S"), enabled: has, run: () => this.save() },
@@ -646,7 +650,7 @@ export class PresentationWindow {
       ...this.items("new", "open", ...(files.canPickPackages ? ["openPackage"] : [])),
       { label: t("Menu.File.OpenRecent"), submenu: this.recentItems() },
       { separator: true },
-      ...this.items("close", "save", "saveAs", "rename"),
+      ...this.items("close", "save", "saveAs", "rename", "revert"),
       { separator: true },
       { label: t("Menu.File.ExportTo"), disabled: !this.document, submenu: [
         this.item("exportPDF"), this.item("exportImages"), this.item("exportMovie"), this.item("exportPowerPoint"),
@@ -2319,6 +2323,49 @@ export class PresentationWindow {
     } catch (error) {
       this.showMessage(t("Web.Error.Open", record.name, error.message), "error");
     }
+  }
+
+  /** File › Revert to Saved: the file as it was last saved, its changes and autosaved copy let go. */
+  async revertToSaved() {
+    const record = this.document;
+    if (!record?.handle) return;
+    const confirmed = await new Promise((resolve) => {
+      const backdrop = this.sheet(`
+        <div class="ds-sheet ds-alert" role="alertdialog" aria-labelledby="revert-title" aria-describedby="revert-message">
+          <div class="ds-sheet__body"><div>
+            <h2 class="ds-sheet__title" id="revert-title">${escapeHTML(t("Menu.File.RevertToSaved"))}</h2>
+            <p class="ds-sheet__message" id="revert-message">${escapeHTML(t("Web.Revert.Message"))}</p>
+          </div></div>
+          <div class="ds-sheet__buttons">
+            <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
+            <button class="ds-button ds-button--primary" type="button" data-revert>${escapeHTML(t("Menu.File.RevertToSaved"))}</button>
+          </div>
+        </div>`);
+      backdrop.querySelector("[data-cancel]").addEventListener("click", () => resolve(false));
+      backdrop.addEventListener("keydown", (event) => event.key === "Escape" && resolve(false));
+      backdrop.querySelector("[data-revert]").addEventListener("click", () => {
+        dismissSheet(backdrop);
+        resolve(true);
+      });
+    });
+    if (!confirmed || this.document !== record) return;
+    let file;
+    try {
+      file = await files.readHandle(record.handle);
+    } catch (error) {
+      this.showMessage(t("Web.Error.Open", record.name, error.message), "error");
+      return;
+    }
+    if (!file) return;
+    // What would be autosaved is let go, not kept.
+    clearTimeout(this.autosaveTimer);
+    this.autosaveTimer = null;
+    await this.canvas.endEditing({ commit: false });
+    await storage.removeDraft(record.id);
+    const saved = { ...record };
+    delete saved.draftAt;
+    delete saved.draftName;
+    await this.openFile(file, { draftOf: saved });
   }
 
   async closeDocument() {
