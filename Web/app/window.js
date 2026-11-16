@@ -57,9 +57,13 @@ const ICONS = {
 
 const icon = (name, extra = "") => `<svg class="ds-icon ${extra}" viewBox="0 0 16 16" aria-hidden="true">${ICONS[name]}</svg>`;
 
-/** A shortcut as the platform writes it: ⇧⌘S on Apple devices, Ctrl+Shift+S elsewhere. */
-function shortcut(key, { shift = false, alt = false } = {}) {
-  if (isApple) return `${alt ? "⌥" : ""}${shift ? "⇧" : ""}⌘${key}`;
+/**
+ * A shortcut as the platform writes it: ⇧⌘S on Apple devices, Ctrl+Shift+S elsewhere.
+ * `control` ones (⌃⌘) are only the Mac's: elsewhere Ctrl is already the command key.
+ */
+function shortcut(key, { shift = false, alt = false, control = false } = {}) {
+  if (isApple) return `${control ? "⌃" : ""}${alt ? "⌥" : ""}${shift ? "⇧" : ""}⌘${key}`;
+  if (control) return undefined;
   return `Ctrl+${shift ? "Shift+" : ""}${alt ? "Alt+" : ""}${key}`;
 }
 
@@ -448,8 +452,8 @@ export class PresentationWindow {
         label: t("Slide.Menu.MoveDown"), enabled: has && !master && this.slideIndex() >= 0 && this.slideIndex() < (state?.slides.length ?? 0) - 1,
         run: () => this.moveSlide(1),
       },
-      previousSlide: { label: t("Menu.Slide.Previous"), enabled: has, run: () => this.stepSlide(-1) },
-      nextSlide: { label: t("Menu.Slide.Next"), enabled: has, run: () => this.stepSlide(1) },
+      previousSlide: { label: t("Menu.Slide.Previous"), shortcut: shortcut("↑", { alt: true }), enabled: has, run: () => this.stepSlide(-1) },
+      nextSlide: { label: t("Menu.Slide.Next"), shortcut: shortcut("↓", { alt: true }), enabled: has, run: () => this.stepSlide(1) },
       headerFooter: { label: t("Mac.Menu.Slide.HeaderFooter"), enabled: has && !master, run: () => this.showHeaderFooter() },
       theme: { label: t("Mac.Menu.Format.Theme"), enabled: has && !master && this.engine.info?.canEditTheme !== false, run: () => this.showTheme() },
       insertTextBox: { label: t("Menu.Insert.TextBox"), enabled: has, run: () => this.insert("insertTextBox") },
@@ -460,12 +464,12 @@ export class PresentationWindow {
       italic: { label: t("Format.Italic"), shortcut: shortcut("I"), enabled: textual, checked: look.italic, run: () => this.format({ italic: true }) },
       underline: { label: t("Format.Underline"), shortcut: shortcut("U"), enabled: textual, checked: look.underline, run: () => this.format({ underline: true }) },
       strike: { label: t("Format.Strikethrough"), enabled: textual, checked: look.strike, run: () => this.format({ strike: true }) },
-      superscript: { label: t("Format.Superscript"), enabled: textual, checked: look.baseline > 0, run: () => this.format({ superscript: true }) },
-      subscript: { label: t("Format.Subscript"), enabled: textual, checked: look.baseline < 0, run: () => this.format({ subscript: true }) },
+      superscript: { label: t("Format.Superscript"), shortcut: shortcut("=", { control: true }), enabled: textual, checked: look.baseline > 0, run: () => this.format({ superscript: true }) },
+      subscript: { label: t("Format.Subscript"), shortcut: shortcut("−", { control: true }), enabled: textual, checked: look.baseline < 0, run: () => this.format({ subscript: true }) },
       bigger: { label: t("Menu.Format.Bigger"), shortcut: shortcut("+"), enabled: textual, run: () => this.format({ sizeStep: 1 }) },
       smaller: { label: t("Menu.Format.Smaller"), shortcut: shortcut("-"), enabled: textual, run: () => this.format({ sizeStep: -1 }) },
       alignLeft: { label: t("Menu.Format.AlignLeft"), enabled: textual, checked: look.align === "l", run: () => this.format({ align: "l" }) },
-      alignCenter: { label: t("Menu.Format.Centre"), enabled: textual, checked: look.align === "ctr", run: () => this.format({ align: "ctr" }) },
+      alignCenter: { label: t("Menu.Format.Centre"), shortcut: shortcut("|"), enabled: textual, checked: look.align === "ctr", run: () => this.format({ align: "ctr" }) },
       alignRight: { label: t("Menu.Format.AlignRight"), enabled: textual, checked: look.align === "r", run: () => this.format({ align: "r" }) },
       alignJustify: { label: t("Menu.Format.Justify"), enabled: textual, checked: look.align === "just", run: () => this.format({ align: "just" }) },
       bullets: { label: t("Format.List.Bullets"), enabled: textual, checked: look.list === "bullets", run: () => this.format({ list: look.list === "bullets" ? "none" : "bullets" }) },
@@ -473,8 +477,8 @@ export class PresentationWindow {
       indent: { label: t("Format.Indent"), shortcut: shortcut("]"), enabled: textual, run: () => this.format({ indent: 1 }) },
       outdent: { label: t("Format.Outdent"), shortcut: shortcut("["), enabled: textual, run: () => this.format({ indent: -1 }) },
       front: { label: t("Arrange.Front"), shortcut: shortcut("F", { shift: true, alt: false }), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "front" }) },
-      forward: { label: t("Arrange.Forward"), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "forward" }) },
-      backward: { label: t("Arrange.Backward"), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "backward" }) },
+      forward: { label: t("Arrange.Forward"), shortcut: shortcut("F", { alt: true, shift: true }), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "forward" }) },
+      backward: { label: t("Arrange.Backward"), shortcut: shortcut("B", { alt: true, shift: true }), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "backward" }) },
       back: { label: t("Arrange.Back"), shortcut: shortcut("B", { shift: true }), enabled: shapes > 0, run: () => this.engine.call("arrange", { how: "back" }) },
       group: { label: t("Arrange.Group"), shortcut: shortcut("G", { alt: true }), enabled: shapes > 1, run: () => this.engine.call("group") },
       ungroup: { label: t("Arrange.Ungroup"), shortcut: shortcut("G", { shift: true, alt: true }), enabled: selected?.kind === "group", run: () => this.engine.call("ungroup") },
@@ -493,8 +497,8 @@ export class PresentationWindow {
       zoomOut: { label: t("Menu.View.ZoomOut"), shortcut: shortcut("-", { alt: true }), enabled: has, run: () => this.stepZoom(-1) },
       zoomToFit: { label: t("Menu.View.ZoomToFit"), shortcut: shortcut("9"), enabled: has, run: () => this.setZoom("fit") },
       actualSize: { label: t("Menu.View.ActualSize"), shortcut: shortcut("0"), enabled: has, run: () => this.setZoom(1) },
-      toggleNavigator: { label: t("Menu.View.Navigator"), checked: !this.root.classList.contains("hides-navigator"), run: () => this.setPanelVisible("navigator", this.root.classList.contains("hides-navigator")) },
-      toggleNotes: { label: t("Menu.View.Notes"), checked: !this.root.classList.contains("hides-notes"), run: () => this.setPanelVisible("notes", this.root.classList.contains("hides-notes")) },
+      toggleNavigator: { label: t("Menu.View.Navigator"), shortcut: shortcut("S", { control: true }), checked: !this.root.classList.contains("hides-navigator"), run: () => this.setPanelVisible("navigator", this.root.classList.contains("hides-navigator")) },
+      toggleNotes: { label: t("Menu.View.Notes"), shortcut: shortcut("N", { alt: true }), checked: !this.root.classList.contains("hides-notes"), run: () => this.setPanelVisible("notes", this.root.classList.contains("hides-notes")) },
       toggleInspector: { label: t("Menu.View.Inspector"), shortcut: shortcut("I", { alt: true }), checked: !this.root.querySelector(".app__inspector").hidden, run: () => this.setPanelVisible("inspector", this.root.querySelector(".app__inspector").hidden) },
       fullScreen: {
         label: t("Web.Menu.FullScreen"),
@@ -1905,22 +1909,34 @@ export class PresentationWindow {
       if (this.slideshow.active) return;
       const mod = isApple ? event.metaKey : event.ctrlKey;
       if (!mod) return;
-      const key = event.key.toLowerCase();
+      // Option changes the character a letter types on a Mac, so letters are read by their key.
+      const key = event.altKey && /^Key[A-Z]$/.test(event.code) ? event.code.slice(3).toLowerCase() : event.key.toLowerCase();
       const inField = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
-      const map = {
-        n: event.shiftKey ? "newSlide" : "new", o: "open", s: event.shiftKey ? "saveAs" : "save", w: "close", p: "print",
-        z: event.shiftKey ? "redo" : "undo", y: "redo", b: event.shiftKey ? "back" : "bold", i: event.altKey ? "toggleInspector" : event.shiftKey ? "insertPicture" : "italic",
-        u: "underline", f: event.altKey ? "findReplace" : event.shiftKey ? "front" : "find", g: event.altKey ? (event.shiftKey ? "ungroup" : "group") : event.shiftKey ? "findPrevious" : "findNext",
-        "=": "zoomIn", "+": event.shiftKey ? "bigger" : "zoomIn", "-": event.altKey ? "zoomOut" : "smaller", "0": "actualSize", "9": "zoomToFit",
-        "]": "indent", "[": "outdent", d: "duplicate", a: event.shiftKey ? "deselectAll" : "selectAll",
-        c: "copy", x: "cut", v: "paste", enter: event.altKey ? (event.shiftKey ? "playFromStart" : "play") : null,
-      };
+      let map;
+      if (isApple && event.ctrlKey) {
+        // ⌃⌘ shortcuts, as on the Mac; the rest (⌃⌘F, full screen) are the browser's.
+        map = { "=": "superscript", "+": "superscript", "-": "subscript", s: "toggleNavigator" };
+      } else {
+        map = {
+          n: event.altKey ? "toggleNotes" : event.shiftKey ? "newSlide" : "new", o: "open", s: event.shiftKey ? "saveAs" : "save", w: "close", p: "print",
+          z: event.shiftKey ? "redo" : "undo", y: "redo", i: event.altKey ? "toggleInspector" : event.shiftKey ? "insertPicture" : "italic",
+          b: event.altKey && event.shiftKey ? "backward" : event.shiftKey ? "back" : "bold",
+          u: "underline", f: event.altKey ? (event.shiftKey ? "forward" : "findReplace") : event.shiftKey ? "front" : "find",
+          g: event.altKey ? (event.shiftKey ? "ungroup" : "group") : event.shiftKey ? "findPrevious" : "findNext",
+          "=": "zoomIn", "+": event.shiftKey ? "bigger" : "zoomIn", "-": event.altKey ? "zoomOut" : "smaller", "0": "actualSize", "9": "zoomToFit",
+          "]": "indent", "[": "outdent", d: "duplicate", a: event.shiftKey ? "deselectAll" : "selectAll",
+          c: "copy", x: "cut", v: "paste", enter: event.altKey ? (event.shiftKey ? "playFromStart" : "play") : null,
+          // ⌘| centres text; ⌘{ and ⌘}, which align left and right on the Mac, switch the browser's tabs.
+          "|": "alignCenter", "\\": event.shiftKey ? "alignCenter" : null,
+          arrowup: event.altKey ? "previousSlide" : null, arrowdown: event.altKey ? "nextSlide" : null,
+        };
+      }
       const command = map[key];
       if (!command) return;
-      // Fields keep their own undo, clipboard, select all and text styling.
-      if (inField && ["undo", "redo", "bold", "italic", "underline", "copy", "cut", "paste", "selectAll"].includes(command)) return;
-      // Typing on the slide keeps the browser's own clipboard and undo while it lasts.
-      if (this.canvas.editing && ["copy", "cut", "paste", "undo", "redo"].includes(command)) return;
+      // Fields keep their own undo, clipboard, select all, text styling and moving the caret.
+      if (inField && ["undo", "redo", "bold", "italic", "underline", "superscript", "subscript", "alignCenter", "copy", "cut", "paste", "selectAll", "previousSlide", "nextSlide"].includes(command)) return;
+      // Typing on the slide keeps the browser's own clipboard, undo and caret movement while it lasts.
+      if (this.canvas.editing && ["copy", "cut", "paste", "undo", "redo", "previousSlide", "nextSlide"].includes(command)) return;
       if (["copy", "cut", "paste"].includes(command) && !this.hasDocument) return;
       event.preventDefault();
       this.run(command);
