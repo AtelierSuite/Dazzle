@@ -1192,7 +1192,9 @@ export class PresentationWindow {
           <button class="ds-button" type="button" data-cancel>${escapeHTML(t("Web.Common.Cancel"))}</button>
         </div>
       </div>`);
+    // Cancel and Escape both close the sheet, and both stop the movie.
     backdrop.querySelector("[data-cancel]").addEventListener("click", () => { cancelled = true; });
+    backdrop.addEventListener("keydown", (event) => { if (event.key === "Escape") cancelled = true; });
     const bar = backdrop.querySelector(".ds-progress");
     const rasteriser = new SlideRasteriser(this.media, this.fontFiles ?? []);
     try {
@@ -1205,10 +1207,15 @@ export class PresentationWindow {
         },
         cancelled: () => cancelled,
       });
-      if (!movie) return;
-      if (handle) await files.writeHandle(handle, movie);
-      else files.download(movie, name, kind.mime);
+      if (movie) {
+        if (handle) await files.writeHandle(handle, movie);
+        else files.download(movie, name, kind.mime);
+        return;
+      }
+      // Cancelled: the empty file the save panel made goes too.
+      await handle?.remove?.().catch(() => {});
     } catch {
+      await handle?.remove?.().catch(() => {});
       if (!cancelled) this.showMessage(t("Error.VideoExport"), "error");
     } finally {
       dismissSheet(backdrop);
