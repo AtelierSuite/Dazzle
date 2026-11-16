@@ -2196,6 +2196,17 @@ test("writes a movie's H.264 samples into an MP4 file", () => {
   assert.deepEqual([view.getUint32(stts + 4), view.getUint32(stts + 8), view.getUint32(stts + 12), view.getUint32(stts + 16), view.getUint32(stts + 20)], [2, 1, 405_000, 2, 3_000], "the still held, then the dissolve's frames");
 });
 
+test("opens a Keynote package as its files zipped up, and saves them back", () => {
+  // The page reads a package folder's files and zips them, as a single-file document holds them.
+  const files = [...unzip(keynoteWithMovies())].map(([name, bytes]) => ({ name, bytes }));
+  const opened = call("open", { name: "Movies.key" }, zipFiles(files));
+  assert.ok(opened.state.slides.length > 0);
+  assert.equal(opened.result.saveFormats[0].key, "key", "saves back as Keynote");
+  const saved = unzip(call("save", { format: "key", keep: true }).payload);
+  assert.deepEqual([...saved.keys()].sort(), files.map((file) => file.name).sort(), "the same files, to write back into the folder");
+  assert.deepEqual([...saved.get("Data/poster.png")], [...PIXEL]);
+});
+
 for (const path of process.argv.slice(2)) {
   try {
     const bytes = new Uint8Array(await readFile(path));

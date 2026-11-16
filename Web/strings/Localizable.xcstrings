@@ -1366,6 +1366,41 @@
         }
       }
     },
+    "Web.Menu.OpenPackage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Keynote Package…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keynoteパッケージを開く…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keynote 패키지 열기…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开 Keynote 包…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打開 Keynote 套件⋯"
+          }
+        }
+      }
+    },
     "Web.Menu.SaveAs": {
       "extractionState": "manual",
       "localizations": {

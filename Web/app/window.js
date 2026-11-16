@@ -408,6 +408,7 @@ export class PresentationWindow {
     return {
       new: { label: t("Menu.File.New"), shortcut: shortcut("N"), run: () => this.newDocument() },
       open: { label: t("Menu.File.Open"), shortcut: shortcut("O"), run: () => this.openPicked() },
+      openPackage: { label: t("Web.Menu.OpenPackage"), run: () => this.openPicked({ package: true }) },
       close: { label: t("Menu.File.Close"), shortcut: shortcut("W"), enabled: has, run: () => this.closeDocument() },
       save: { label: t("Menu.File.Save"), shortcut: shortcut("S"), enabled: has, run: () => this.save() },
       saveAs: { label: t("Web.Menu.SaveAs"), shortcut: shortcut("S", { shift: true }), enabled: has, run: () => this.saveAs() },
@@ -642,7 +643,7 @@ export class PresentationWindow {
     const info = this.engine.info;
     const keynote = info?.saveFormats?.find((format) => format.key === "key");
     return [
-      ...this.items("new", "open"),
+      ...this.items("new", "open", ...(files.canPickPackages ? ["openPackage"] : [])),
       { label: t("Menu.File.OpenRecent"), submenu: this.recentItems() },
       { separator: true },
       ...this.items("close", "save", "saveAs", "rename"),
@@ -2261,9 +2262,10 @@ export class PresentationWindow {
     this.showDocument({ id: crypto.randomUUID(), name, openedAt: Date.now() });
   }
 
-  async openPicked() {
+  /** Open…, or Open Keynote Package…, which asks for the package's folder. */
+  async openPicked({ package: isPackage = false } = {}) {
     try {
-      const file = await files.pickFile();
+      const file = isPackage ? await files.pickPackage() : await files.pickFile();
       if (file) await this.openFile(file);
     } catch (error) {
       this.showMessage(error.message, "error");
