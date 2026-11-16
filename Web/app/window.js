@@ -412,6 +412,7 @@ export class PresentationWindow {
         label: t("Menu.File.RevertToSaved"), enabled: Boolean(this.document?.handle) && (Boolean(state?.edited) || Boolean(this.document?.draftAt)),
         run: () => this.revertToSaved(),
       },
+      duplicate: { label: t("Menu.File.Duplicate"), enabled: has, run: () => this.duplicateDocument() },
       openPackage: { label: t("Web.Menu.OpenPackage"), run: () => this.openPicked({ package: true }) },
       close: { label: t("Menu.File.Close"), shortcut: shortcut("W"), enabled: has, run: () => this.closeDocument() },
       save: { label: t("Menu.File.Save"), shortcut: shortcut("S"), enabled: has, run: () => this.save() },
@@ -650,7 +651,7 @@ export class PresentationWindow {
       ...this.items("new", "open", ...(files.canPickPackages ? ["openPackage"] : [])),
       { label: t("Menu.File.OpenRecent"), submenu: this.recentItems() },
       { separator: true },
-      ...this.items("close", "save", "saveAs", "rename", "revert"),
+      ...this.items("close", "save", "saveAs", "duplicate", "rename", "revert"),
       { separator: true },
       { label: t("Menu.File.ExportTo"), disabled: !this.document, submenu: [
         this.item("exportPDF"), this.item("exportImages"), this.item("exportMovie"), this.item("exportPowerPoint"),
@@ -2366,6 +2367,26 @@ export class PresentationWindow {
     delete saved.draftAt;
     delete saved.draftName;
     await this.openFile(file, { draftOf: saved });
+  }
+
+  /** File › Duplicate: a copy of the presentation as it is now, opened as a new, unsaved document. */
+  async duplicateDocument() {
+    if (!this.document) return;
+    await this.flushEdits();
+    await this.flushAutosave();
+    try {
+      const { result, payload } = await this.engine.call("save", { keep: true, draft: true });
+      const dot = result.fileName.lastIndexOf(".");
+      const name = dot > 0 ? `${t("Web.Document.CopyName", result.fileName.slice(0, dot))}${result.fileName.slice(dot)}` : t("Web.Document.CopyName", result.fileName);
+      const record = { id: crypto.randomUUID(), name, openedAt: Date.now() };
+      if (await storage.writeDraft(record.id, payload)) Object.assign(record, { draftAt: Date.now(), draftName: name });
+      await this.openFile({ name, bytes: payload }, { draftOf: record });
+      // Not saved anywhere yet: Save asks where.
+      this.engine.state.edited = true;
+      this.updateTitle();
+    } catch (error) {
+      this.showMessage(error.message, "error");
+    }
   }
 
   async closeDocument() {
