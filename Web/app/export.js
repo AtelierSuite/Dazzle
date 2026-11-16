@@ -334,7 +334,9 @@ export const canMakeMovies = typeof globalThis.VideoEncoder === "function" && ty
 /** An H.264 configuration this browser can encode at `width` by `height`, or null. */
 async function movieConfig(width, height) {
   // High, Main and Baseline profiles, at a level that holds the size at 30 frames a second.
-  const level = width * height > 2_228_224 ? "33" : width * height > 921_600 ? "28" : "1F";
+  // Levels limit the frame's size in 16-pixel macroblocks: 3.1 to 3,600, 4.0 to 8,192, 5.1 to 36,864, 6.0 to 139,264.
+  const blocks = Math.ceil(width / 16) * Math.ceil(height / 16);
+  const level = blocks > 36_864 ? "3C" : blocks > 8_192 ? "33" : blocks > 3_600 ? "28" : "1F";
   for (const profile of ["6400", "4D00", "4200"]) {
     const config = {
       codec: `avc1.${profile}${level}`, width, height, framerate: FRAMES_PER_SECOND, avc: { format: "avc" },
