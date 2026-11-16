@@ -512,6 +512,7 @@ export class PresentationWindow {
       fillPicture: { label: t("Fill.Picture.Choose"), enabled: shapes > 0, run: () => this.pickPicture((picture) => this.engine.call("setFillPicture", picture.args, picture.bytes)) },
       backgroundPicture: { label: t("Fill.Picture.Choose"), enabled: has, run: () => this.pickPicture((picture) => this.engine.call("setBackgroundPicture", picture.args, picture.bytes)) },
       about: { label: t("Menu.App.About", "Dazzle"), run: () => this.showAbout() },
+      sourceCode: { label: t("Toolbar.SourceCode"), run: () => window.open(SOURCE_CODE_URL, "_blank", "noopener") },
       downloadApp: {
         label: t(appStorePlatform === "mac" ? "Web.Help.DownloadMacApp" : "Web.Help.DownloadiOSApp"),
         run: () => window.open(`${APP_STORE_URL}?platform=${appStorePlatform === "mac" ? "mac" : "iphone"}`, "_blank", "noopener"),
@@ -619,7 +620,7 @@ export class PresentationWindow {
       { label: t("Menu.Window"), get items() {
         return self.document ? [{ label: self.document.name, checked: true, action: () => self.canvas.element.focus() }] : [{ label: "Dazzle", disabled: true }];
       } },
-      { label: t("Menu.Help"), get items() { return self.items(...(appStorePlatform ? ["downloadApp", "-"] : []), "about"); } },
+      { label: t("Menu.Help"), get items() { return self.items(...(appStorePlatform ? ["downloadApp", "-"] : []), "sourceCode", "-", "about"); } },
     ];
     const bar = this.root.querySelector("#menu-bar");
     this.menuBarOverflow = attachMenuBar(bar, menus, { label: t("Web.Menu.Label"), overflowLabel: t("Toolbar.More") });
