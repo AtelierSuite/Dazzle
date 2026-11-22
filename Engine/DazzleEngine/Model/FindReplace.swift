@@ -101,6 +101,54 @@ extension TextBody {
     }
 }
 
+extension SlideShape {
+    /// Runs `body` on the text of the shape with `id`, searching inside groups
+    /// as well as at the top level. Returns true when a shape was found and
+    /// edited.
+    @discardableResult
+    public mutating func editText(of id: ID, _ body: (inout TextBody) -> Void) -> Bool {
+        if self.id == id, var text {
+            body(&text)
+            self.text = text
+            edits.insert(.text)
+            return true
+        }
+        if case .group(var group) = kind {
+            var found = false
+            for index in group.children.indices where group.children[index].editText(of: id, body) {
+                found = true
+            }
+            if found { kind = .group(group) }
+            return found
+        }
+        return false
+    }
+
+    /// Runs `body` on the text of the table cell at `position` in the table
+    /// shape with `id`, searching inside groups as well as at the top level.
+    @discardableResult
+    public mutating func editCell(of id: ID, _ position: TableCellPosition, _ body: (inout TextBody) -> Void) -> Bool {
+        if self.id == id, case .table(var table) = kind, table.cell(at: position) != nil {
+            if var text = table.rows[position.row].cells[position.column].text {
+                body(&text)
+                table.rows[position.row].cells[position.column].text = text
+            }
+            kind = .table(table)
+            edits.insert(.table)
+            return true
+        }
+        if case .group(var group) = kind {
+            var found = false
+            for index in group.children.indices where group.children[index].editCell(of: id, position, body) {
+                found = true
+            }
+            if found { kind = .group(group) }
+            return found
+        }
+        return false
+    }
+}
+
 extension Presentation {
     /// Every match, slide by slide: shapes in stacking order, then table
     /// cells, then the speaker notes.
@@ -113,18 +161,23 @@ extension Presentation {
                     matches.append(FindMatch(slideID: slide.id, place: place, range: range, excerpt: excerpt, excerptRange: excerptRange))
                 }
             }
-            for shape in slide.shapes where shape.isEditable {
-                if let text = shape.text { add(text.searchableText, place: .shape(shape.id)) }
-                if case .table(let table) = shape.kind {
-                    for (row, cells) in table.rows.enumerated() {
-                        for (column, cell) in cells.cells.enumerated() where !cell.isMerged {
-                            if let text = cell.text {
-                                add(text.searchableText, place: .cell(shape.id, TableCellPosition(row: row, column: column)))
+            // Groups hold their members' text too: walk into them, depth first.
+            func walk(_ shapes: [SlideShape]) {
+                for shape in shapes where shape.isEditable {
+                    if let text = shape.text { add(text.searchableText, place: .shape(shape.id)) }
+                    if case .table(let table) = shape.kind {
+                        for (row, cells) in table.rows.enumerated() {
+                            for (column, cell) in cells.cells.enumerated() where !cell.isMerged {
+                                if let text = cell.text {
+                                    add(text.searchableText, place: .cell(shape.id, TableCellPosition(row: row, column: column)))
+                                }
                             }
                         }
                     }
+                    if case .group(let group) = shape.kind { walk(group.children) }
                 }
             }
+            walk(slide.shapes)
             add(slide.notes, place: .notes)
         }
         return matches
@@ -142,20 +195,24 @@ extension Presentation {
                 slides[slideIndex].notes = notes.replacingCharacters(in: match.range, with: replacement)
                 slides[slideIndex].areNotesModified = true
             case .shape(let id):
-                guard slides[slideIndex].canEditShapes,
-                      let shapeIndex = slides[slideIndex].shapes.firstIndex(where: { $0.id == id }) else { continue }
-                slides[slideIndex].shapes[shapeIndex].text?.replace(match.range, with: replacement)
-                slides[slideIndex].shapes[shapeIndex].edits.insert(.text)
-                slides[slideIndex].isModified = true
+                guard slides[slideIndex].canEditShapes else { continue }
+                // The shape may sit inside a group, so resolve its ID recursively.
+                var found = false
+                for shapeIndex in slides[slideIndex].shapes.indices {
+                    if slides[slideIndex].shapes[shapeIndex].editText(of: id, { $0.replace(match.range, with: replacement) }) {
+                        found = true
+                    }
+                }
+                if found { slides[slideIndex].isModified = true }
             case .cell(let id, let position):
-                guard slides[slideIndex].canEditShapes,
-                      let shapeIndex = slides[slideIndex].shapes.firstIndex(where: { $0.id == id }),
-                      case .table(var table) = slides[slideIndex].shapes[shapeIndex].kind,
-                      table.cell(at: position) != nil else { continue }
-                table.rows[position.row].cells[position.column].text?.replace(match.range, with: replacement)
-                slides[slideIndex].shapes[shapeIndex].kind = .table(table)
-                slides[slideIndex].shapes[shapeIndex].edits.insert(.table)
-                slides[slideIndex].isModified = true
+                guard slides[slideIndex].canEditShapes else { continue }
+                var found = false
+                for shapeIndex in slides[slideIndex].shapes.indices {
+                    if slides[slideIndex].shapes[shapeIndex].editCell(of: id, position, { $0.replace(match.range, with: replacement) }) {
+                        found = true
+                    }
+                }
+                if found { slides[slideIndex].isModified = true }
             }
         }
     }

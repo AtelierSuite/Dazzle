@@ -937,6 +937,128 @@ struct FindReplaceTests {
         #expect(runs[1].properties.isBold == true)
         #expect(copy.slides[0].notes == "Mention 2026 targets.")
     }
+
+    private func textShape(shapeID: Int, _ text: String, bold: Bool = false) -> SlideShape {
+        var properties = RunProperties()
+        properties.isBold = bold
+        var shape = SlideShape(shapeID: shapeID, name: "Text \(shapeID)", kind: .shape,
+                               frame: EMURect(x: 0, y: 0, width: 2_540_000, height: 635_000))
+        shape.text = TextBody(paragraphs: [Paragraph(runs: [TextRun(text: text, properties: properties)])])
+        return shape
+    }
+
+    private func groupShape(shapeID: Int, children: [SlideShape]) -> SlideShape {
+        let frame = EMURect(x: 0, y: 0, width: 5_080_000, height: 2_540_000)
+        return SlideShape(shapeID: shapeID, name: "Group \(shapeID)",
+                          kind: .group(SlideShape.ShapeGroup(childFrame: frame, children: children)), frame: frame)
+    }
+
+    @Test("Find reaches text inside a group")
+    func findInGroup() {
+        var presentation = Presentation.blank
+        let child = textShape(shapeID: 10, "Revenue 2025")
+        let group = groupShape(shapeID: 11, children: [child])
+        presentation.slides[0].shapes = [group]
+
+        let matches = presentation.matches(for: FindQuery(text: "2025"))
+        #expect(matches.count == 1)
+        guard case .shape(let id) = matches.first?.place else {
+            Issue.record("Expected a shape match")
+            return
+        }
+        #expect(id == child.id)
+    }
+
+    @Test("Replace All edits text inside a group, keeps the group and the formatting")
+    func replaceInGroup() throws {
+        var presentation = Presentation.blank
+        let child = textShape(shapeID: 10, "Sales in 2025 grew", bold: true)
+        let group = groupShape(shapeID: 11, children: [child])
+        presentation.slides[0].shapes = [group]
+
+        let matches = presentation.matches(for: FindQuery(text: "2025"))
+        #expect(matches.count == 1)
+        presentation.replace(matches, with: "2026")
+
+        guard case .group(let editedGroup) = presentation.slides[0].shapes[0].kind else {
+            Issue.record("Expected the shape to stay a group")
+            return
+        }
+        #expect(editedGroup.children.count == 1)
+        let runs = try #require(editedGroup.children[0].text?.paragraphs.first?.runs)
+        #expect(runs.map(\.text) == ["Sales in ", "2026", " grew"])
+        #expect(runs[1].properties.isBold == true)
+        #expect(editedGroup.children[0].edits.contains(.text))
+        #expect(presentation.slides[0].isModified)
+
+        // The edit survives a save and reload.
+        let copy = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        guard case .group(let rereadGroup) = copy.slides[0].shapes[0].kind else {
+            Issue.record("Expected the group to round-trip")
+            return
+        }
+        #expect(rereadGroup.children[0].text?.searchableText == "Sales in 2026 grew")
+    }
+
+    @Test("Find and replace reach text in nested groups")
+    func replaceInNestedGroup() {
+        var presentation = Presentation.blank
+        let inner = groupShape(shapeID: 12, children: [textShape(shapeID: 10, "Deep 2025")])
+        let outer = groupShape(shapeID: 11, children: [inner])
+        presentation.slides[0].shapes = [outer]
+
+        let matches = presentation.matches(for: FindQuery(text: "2025"))
+        #expect(matches.count == 1)
+        presentation.replace(matches, with: "2026")
+
+        guard case .group(let outerGroup) = presentation.slides[0].shapes[0].kind,
+              case .group(let innerGroup) = outerGroup.children[0].kind else {
+            Issue.record("Expected nested groups to survive")
+            return
+        }
+        #expect(innerGroup.children[0].text?.searchableText == "Deep 2026")
+    }
+
+    @Test("Find and replace reach a table cell inside a group")
+    func replaceCellInGroup() {
+        var presentation = Presentation.blank
+        let table = SlideTable(columnWidths: [2_540_000], rows: [SlideTable.Row(height: 635_000, cells: [
+            SlideTable.Cell(text: TextBody(paragraphs: [Paragraph(runs: [TextRun(text: "Q1 2025")])])),
+        ])], hasHeaderRow: false, hasBandedRows: false)
+        let tableShape = SlideShape(shapeID: 10, name: "Table", kind: .table(table),
+                                    frame: EMURect(x: 0, y: 0, width: 2_540_000, height: 635_000))
+        presentation.slides[0].shapes = [groupShape(shapeID: 11, children: [tableShape])]
+
+        let matches = presentation.matches(for: FindQuery(text: "2025"))
+        #expect(matches.count == 1)
+        guard case .cell(let id, let position) = matches.first?.place else {
+            Issue.record("Expected a cell match")
+            return
+        }
+        #expect(position == TableCellPosition(row: 0, column: 0))
+        presentation.replace(matches, with: "2026")
+
+        guard case .group(let group) = presentation.slides[0].shapes[0].kind,
+              case .table(let editedTable) = group.children[0].kind else {
+            Issue.record("Expected the group to keep its table")
+            return
+        }
+        #expect(editedTable.rows[0].cells[0].text?.searchableText == "Q1 2026")
+        #expect(id == tableShape.id)
+    }
+
+    @Test("A locked shape inside a group is neither found nor replaced")
+    func lockedGroupChildIsSkipped() {
+        var presentation = Presentation.blank
+        var locked = textShape(shapeID: 10, "Secret 2025")
+        locked.isLocked = true
+        presentation.slides[0].shapes = [groupShape(shapeID: 11, children: [locked])]
+
+        #expect(presentation.matches(for: FindQuery(text: "2025")).isEmpty)
+        presentation.replace(presentation.matches(for: FindQuery(text: "2025")), with: "2026")
+        guard case .group(let group) = presentation.slides[0].shapes[0].kind else { return }
+        #expect(group.children[0].text?.searchableText == "Secret 2025")
+    }
 }
 
 @Suite("Slide size")
