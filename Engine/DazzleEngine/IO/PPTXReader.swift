@@ -11,12 +11,15 @@ public enum PresentationReadError: LocalizedError {
 /// Reads a `.pptx`, `.pptm` or `.ppsx` package.
 public enum PPTXReader {
     public static func presentation(from data: Data) throws -> Presentation {
-        try presentation(fromParts: ZipArchive.entries(in: data))
+        try presentation(fromParts: ZipArchive.entries(in: data), originalArchive: data)
     }
 
     /// `omissions` is what a file converted into these parts lost on the way.
+    /// `originalArchive` is the file the parts came from, kept so saving can
+    /// reuse the compressed bytes of parts that did not change.
     public static func presentation(
-        fromParts parts: [String: Data], omissions: Set<UnsupportedFeatureReport.Omission> = []
+        fromParts parts: [String: Data], omissions: Set<UnsupportedFeatureReport.Omission> = [],
+        originalArchive: Data? = nil
     ) throws -> Presentation {
         let rootRelationships = Relationship.parse(parts["_rels/.rels"])
         let mainPart = rootRelationships.first { $0.type == OOXML.RelationshipType.officeDocument }
@@ -88,7 +91,8 @@ public enum PPTXReader {
             resources: resources,
             package: Package(
                 parts: parts, mainPart: mainPart,
-                unsupportedFeatures: UnsupportedFeatureReport(features: features, omissions: omissions)
+                unsupportedFeatures: UnsupportedFeatureReport(features: features, omissions: omissions),
+                originalArchive: originalArchive
             )
         )
         presentation.commentAuthors = authors
