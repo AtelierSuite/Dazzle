@@ -85,9 +85,15 @@ private struct PackageBuilder {
         // Content types first: some readers insist on it.
         let order = ["[Content_Types].xml", "_rels/.rels"]
         let rest = parts.keys.filter { !order.contains($0) }.sorted()
-        return try ZipArchive.archive(entries: (order + rest).compactMap { path in
-            parts[path].map { (path: path, data: $0) }
-        })
+        // Parts read from the original file and left alone keep their
+        // compressed bytes, so saving a big deck does not deflate every
+        // picture and movie again.
+        return try ZipArchive.archive(
+            entries: (order + rest).compactMap { path in
+                parts[path].map { (path: path, data: $0) }
+            },
+            reusing: presentation.package.originalArchive
+        )
     }
 
     // MARK: - Slide list
