@@ -385,15 +385,19 @@ final class SlideCanvasView: NSView {
     private func drawCrop(of shape: SlideShape, picture: SlideShape.Picture, in context: CGContext) {
         let frame = shape.frame.points
         let image = SlideShape.Picture.imageRect(frame: frame, picture: picture)
-        if let path = picture.imagePath, let data = deck.presentation.data(at: path),
-           let cgImage = ImageCache.shared.image(for: data, path: path) {
-            context.saveGState()
-            context.setAlpha(0.35)
-            // The context is flipped; draw the image upright.
-            context.translateBy(x: image.minX, y: image.maxY)
-            context.scaleBy(x: 1, y: -1)
-            context.draw(cgImage, in: CGRect(origin: .zero, size: image.size))
-            context.restoreGState()
+        if let path = picture.imagePath, let data = deck.presentation.data(at: path) {
+            let ctm = context.ctm
+            let resolution = sqrt(abs(ctm.a * ctm.d - ctm.b * ctm.c))
+            let maxPixelSize = Int((max(image.width, image.height) * resolution).rounded(.up))
+            if let cgImage = ImageCache.shared.image(for: data, path: path, maxPixelSize: maxPixelSize) {
+                context.saveGState()
+                context.setAlpha(0.35)
+                // The context is flipped; draw the image upright.
+                context.translateBy(x: image.minX, y: image.maxY)
+                context.scaleBy(x: 1, y: -1)
+                context.draw(cgImage, in: CGRect(origin: .zero, size: image.size))
+                context.restoreGState()
+            }
         }
         context.setStrokeColor(NSColor.controlAccentColor.cgColor)
         context.setLineWidth(onScreen(2))
