@@ -739,7 +739,8 @@ public struct SlideRenderer {
             )
             context.restoreGState()
         case .picture(let imagePath, let effects):
-            guard let image = image(at: imagePath, effects: effects, placeholderColor: placeholderColor, style: style) else {
+            guard let image = image(at: imagePath, effects: effects, maxPixelSize: pixelSize(of: bounds, in: context),
+                                    placeholderColor: placeholderColor, style: style) else {
                 return
             }
             context.saveGState()
@@ -749,7 +750,9 @@ public struct SlideRenderer {
             drawImage(image, in: bounds, context: context)
             context.restoreGState()
         case .tiledPicture(let imagePath, let effects, let layout):
-            guard let image = image(at: imagePath, effects: effects, placeholderColor: placeholderColor, style: style) else {
+            // Tiles repeat over the whole fill, so the bounds are the size to decode for.
+            guard let image = image(at: imagePath, effects: effects, maxPixelSize: pixelSize(of: bounds, in: context),
+                                    placeholderColor: placeholderColor, style: style) else {
                 return
             }
             // At 100% a tile is the picture's own size: pixels at 96 to the inch.
@@ -992,11 +995,6 @@ public struct SlideRenderer {
     private func drawPicture(
         _ picture: SlideShape.Picture, shape: SlideShape, frame: CGRect, style: SlideStyleContext, context: CGContext
     ) {
-        guard let path = picture.imagePath,
-              let image = image(at: path, effects: picture.effects, placeholderColor: nil, style: style) else {
-            drawStandIn(picture.standInLabel, frame: frame, context: context, isChart: false)
-            return
-        }
         // The crop says which part of the picture fills the frame. Cut from
         // an edge, the picture is larger than the frame and clipped to it;
         // negative, it is smaller and the frame shows round it.
@@ -1009,6 +1007,12 @@ public struct SlideRenderer {
                 x: frame.minX - imageRect.width * picture.cropLeft,
                 y: frame.minY - imageRect.height * picture.cropTop
             )
+        }
+        guard let path = picture.imagePath,
+              let image = image(at: path, effects: picture.effects, maxPixelSize: pixelSize(of: imageRect, in: context),
+                                placeholderColor: nil, style: style) else {
+            drawStandIn(picture.standInLabel, frame: frame, context: context, isChart: false)
+            return
         }
         let (outlinePath, _, _, _) = outline(of: shape, in: frame)
         let look = style.threeDLook(for: shape, bounds: frame, fill: nil)
@@ -1050,11 +1054,21 @@ public struct SlideRenderer {
         }
     }
 
-    /// A picture from the package, with its colour effects applied.
+    /// The larger side of `rect` in pixels at the context's resolution, the
+    /// size a picture drawn in `rect` actually needs.
+    private func pixelSize(of rect: CGRect, in context: CGContext) -> Int {
+        let ctm = context.ctm
+        let resolution = sqrt(abs(ctm.a * ctm.d - ctm.b * ctm.c))
+        return Int((max(rect.width, rect.height) * resolution).rounded(.up))
+    }
+
+    /// A picture from the package, with its colour effects applied. Decoded
+    /// no larger than `maxPixelSize` pixels a side, the size it is drawn at.
     private func image(
-        at path: String, effects: BlipEffects, placeholderColor: RGBAColor?, style: SlideStyleContext
+        at path: String, effects: BlipEffects, maxPixelSize: Int, placeholderColor: RGBAColor?, style: SlideStyleContext
     ) -> CGImage? {
-        guard let data = presentation.data(at: path), let image = ImageCache.shared.image(for: data, path: path) else {
+        guard let data = presentation.data(at: path),
+              let image = ImageCache.shared.image(for: data, path: path, maxPixelSize: maxPixelSize) else {
             return nil
         }
         guard effects.altersColor else { return image }
