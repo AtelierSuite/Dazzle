@@ -2042,7 +2042,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "체커보드"
+            "value" : "바둑판 무늬"
           }
         },
         "zh-Hans" : {
@@ -2252,7 +2252,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "임의 막대"
+            "value" : "실선 무늬"
           }
         },
         "zh-Hans" : {
@@ -2287,7 +2287,7 @@
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "스트립"
+            "value" : "계단 모양"
           }
         },
         "zh-Hans" : {
