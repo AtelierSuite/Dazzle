@@ -1000,6 +1000,26 @@ struct FindReplaceTests {
         #expect(rereadGroup.children[0].text?.searchableText == "Sales in 2026 grew")
     }
 
+    @Test("Replace All inside a group read from a file survives a save")
+    func replaceInGroupFromFile() throws {
+        var original = Presentation.blank
+        let inner = groupShape(shapeID: 12, children: [textShape(shapeID: 10, "Deep 2025")])
+        original.slides[0].shapes = [groupShape(shapeID: 11, children: [textShape(shapeID: 13, "Sales 2025"), inner])]
+        original.slides[0].isModified = true
+        var presentation = try PPTXReader.presentation(from: PPTXWriter.data(from: original))
+        #expect(presentation.slides[0].shapes[0].source != nil)
+
+        presentation.replace(presentation.matches(for: FindQuery(text: "2025")), with: "2026")
+        let copy = try PPTXReader.presentation(from: PPTXWriter.data(from: presentation))
+        guard case .group(let group) = copy.slides[0].shapes[0].kind,
+              case .group(let innerGroup) = group.children[1].kind else {
+            Issue.record("Expected the groups to round-trip")
+            return
+        }
+        #expect(group.children[0].text?.searchableText == "Sales 2026")
+        #expect(innerGroup.children[0].text?.searchableText == "Deep 2026")
+    }
+
     @Test("A duplicated group's members get their own IDs")
     func duplicatedGroupMembersAreDistinct() {
         let group = groupShape(shapeID: 11, children: [textShape(shapeID: 10, "Sales 2025 up")])
