@@ -355,6 +355,7 @@ struct FormatPanel: View {
                     FrameNumberField("Y", value: frame.origin.y) { setFrame(y: $0) }
                         .accessibilityIdentifier("frameY")
                 }
+                .id(shape.id)
             }
             LabeledContent("Mac.Inspector.Size") {
                 HStack(spacing: 8) {
@@ -363,6 +364,7 @@ struct FormatPanel: View {
                     FrameNumberField("Mac.Inspector.Height.Short", value: frame.size.height) { setFrame(height: $0) }
                         .accessibilityIdentifier("frameH")
                 }
+                .id(shape.id)
             }
             Toggle("Arrange.KeepProportions", isOn: $keepProportions)
                 .accessibilityIdentifier("keepProportions")
@@ -1199,6 +1201,7 @@ private struct FrameNumberField: View {
                 }
             }
             .onSubmit { commitDraft() }
+            .onDisappear { commitDraft() }
     }
 
     private func commitDraft() {
