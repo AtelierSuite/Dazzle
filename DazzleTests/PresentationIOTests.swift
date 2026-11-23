@@ -126,6 +126,29 @@ struct ZipArchiveTests {
         #expect(after["ppt/theme/theme1.xml"]?.payload == before["ppt/theme/theme1.xml"]?.payload)
         #expect(try ZipArchive.entries(in: saved)["ppt/media/pic.png"] == media)
     }
+
+    @Test("An edited part whose CRC and size match the original is not replaced by the original's payload")
+    func crcCollisionIsNotReused() throws {
+        let path = "ppt/theme/theme1.xml"
+        let read = try PPTXReader.presentation(from: PPTXWriter.data(from: .blank))
+        let old = try #require(read.package.parts[path])
+        var edited = old
+        edited[edited.startIndex] = edited[edited.startIndex] == 0x20 ? 0x09 : 0x20
+        let stale = try #require(read.package.reusableEntries[path])
+        var reusable = read.package.reusableEntries
+        reusable[path] = ZipArchive.CompressedEntry(
+            method: stale.method, crc: ZipArchive.crc32(edited), uncompressedSize: edited.count, payload: stale.payload
+        )
+        let package = Package(
+            parts: read.package.parts, mainPart: read.package.mainPart,
+            unsupportedFeatures: read.package.unsupportedFeatures, reusableEntries: reusable
+        )
+        var presentation = Presentation(
+            slideSize: read.slideSize, slides: read.slides, resources: read.resources, package: package
+        )
+        presentation.addedParts[path] = edited
+        #expect(try ZipArchive.entries(in: PPTXWriter.data(from: presentation))[path] == edited)
+    }
 }
 
 @Suite("Package paths")

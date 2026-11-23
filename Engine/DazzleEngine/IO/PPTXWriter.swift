@@ -85,14 +85,14 @@ private struct PackageBuilder {
         // Content types first: some readers insist on it.
         let order = ["[Content_Types].xml", "_rels/.rels"]
         let rest = parts.keys.filter { !order.contains($0) }.sorted()
-        // Parts read from the original file and left alone keep their
-        // compressed bytes, so saving a big deck does not deflate every
-        // picture and movie again.
+        // A matching CRC alone could hide an edit, so only byte-identical parts keep their payload.
+        let original = presentation.package
+        let reusable = original.reusableEntries.filter { parts[$0.key] == original.parts[$0.key] }
         return try ZipArchive.archive(
             entries: (order + rest).compactMap { path in
                 parts[path].map { (path: path, data: $0) }
             },
-            reusing: presentation.package.reusableEntries
+            reusing: reusable
         )
     }
 
