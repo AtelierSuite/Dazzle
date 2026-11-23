@@ -1000,6 +1000,25 @@ struct FindReplaceTests {
         #expect(rereadGroup.children[0].text?.searchableText == "Sales in 2026 grew")
     }
 
+    @Test("A duplicated group's members get their own IDs")
+    func duplicatedGroupMembersAreDistinct() {
+        let group = groupShape(shapeID: 11, children: [textShape(shapeID: 10, "Sales 2025 up")])
+        let copy = SlideShape(copying: group)
+        guard case .group(let original) = group.kind, case .group(let copied) = copy.kind else {
+            Issue.record("Expected groups")
+            return
+        }
+        #expect(original.children[0].id != copied.children[0].id)
+
+        var presentation = Presentation.blank
+        presentation.slides[0].shapes = [group, copy]
+        presentation.replace(presentation.matches(for: FindQuery(text: "2025")), with: "X")
+        for shape in presentation.slides[0].shapes {
+            guard case .group(let edited) = shape.kind else { continue }
+            #expect(edited.children[0].text?.searchableText == "Sales X up")
+        }
+    }
+
     @Test("Find and replace reach text in nested groups")
     func replaceInNestedGroup() {
         var presentation = Presentation.blank
