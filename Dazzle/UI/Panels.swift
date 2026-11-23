@@ -330,17 +330,21 @@ struct FormatPanel: View {
             var frame = frame
             if let x { frame.origin.x = min(max(x, -10_000), 10_000) }
             if let y { frame.origin.y = min(max(y, -10_000), 10_000) }
-            if let width {
-                let width = min(max(width, 0), 10_000)
+            if var width {
+                width = min(max(width, 0), 10_000)
                 if keepProportions, frame.size.width > 0, width != frame.size.width {
-                    frame.size.height = min(max(frame.size.height * width / frame.size.width, 0), 10_000)
+                    let ratio = frame.size.height / frame.size.width
+                    if ratio > 0 { width = min(width, 10_000 / ratio) }
+                    frame.size.height = width * ratio
                 }
                 frame.size.width = width
             }
-            if let height {
-                let height = min(max(height, 0), 10_000)
+            if var height {
+                height = min(max(height, 0), 10_000)
                 if keepProportions, frame.size.height > 0, height != frame.size.height {
-                    frame.size.width = min(max(frame.size.width * height / frame.size.height, 0), 10_000)
+                    let ratio = frame.size.width / frame.size.height
+                    if ratio > 0 { height = min(height, 10_000 / ratio) }
+                    frame.size.width = height * ratio
                 }
                 frame.size.height = height
             }
