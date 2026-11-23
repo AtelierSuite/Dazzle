@@ -1211,7 +1211,7 @@ private struct FrameNumberField: View {
     private func commitDraft() {
         let entered = draft.trimmingCharacters(in: .whitespaces)
         guard entered != Self.text(value), entered != committedDraft else { return }
-        guard let parsed = Double(entered.replacingOccurrences(of: ",", with: ".")) else {
+        guard let parsed = Double(entered) ?? (try? Double(entered, format: .number)) else {
             draft = Self.text(value)
             return
         }
