@@ -1192,7 +1192,7 @@ private struct FrameNumberField: View {
             .keyboardType(.numbersAndPunctuation)
             .multilineTextAlignment(.trailing)
             .monospacedDigit()
-            .frame(width: 56)
+            .frame(width: 76)
             .textFieldStyle(.roundedBorder)
             .onAppear { draft = Self.text(value) }
             .onChange(of: value) { _, new in if !isFocused { draft = Self.text(new) } }
