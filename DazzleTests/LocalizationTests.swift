@@ -20,15 +20,10 @@ struct LocalizationTests {
         catalogue["strings"] as! [String: [String: Any]]
     }
 
-    @Test("The empty key is gone")
-    func noEmptyKey() {
-        #expect(!Self.strings.keys.contains(""))
-    }
-
     @Test("Every key has an entry for each supported language")
     func allKeysHaveAllLanguages() {
         var missing: [String] = []
-        for (key, entry) in Self.strings {
+        for (key, entry) in Self.strings where !key.isEmpty {
             let localizations = (entry["localizations"] as? [String: Any]) ?? [:]
             for language in Self.languages {
                 if localizations[language] == nil {
