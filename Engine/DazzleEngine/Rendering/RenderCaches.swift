@@ -31,18 +31,18 @@ public final class ImageCache: @unchecked Sendable {
     /// is no use decoding a 50-megapixel photo at full size.
     public static let fallbackMaxPixelSize = 3_000
 
-    // NSCache is thread-safe; the cost bookkeeping is guarded by the lock,
-    // which is what makes this class safe to share.
-    private let cache = NSCache<NSString, CGImage>()
     private let lock = NSLock()
-    private var countedCost = 0
-    private var costs: [String: Int] = [:]
+    private var entries: [String: (image: CGImage, cost: Int)] = [:]
     /// Cache keys, least recently used first.
     private var order: [String] = []
+    private var countedCost = 0
+    private var costLimit = ImageCache.byteLimit
+    private let countLimit = 120
+    private let memoryPressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .global(qos: .utility))
 
     private init() {
-        cache.countLimit = 120
-        cache.totalCostLimit = Self.byteLimit
+        memoryPressure.setEventHandler { [weak self] in self?.removeAll() }
+        memoryPressure.resume()
     }
 
     /// The combined byte cost of the pictures in the cache right now.
@@ -54,49 +54,47 @@ public final class ImageCache: @unchecked Sendable {
 
     /// The byte limit the cache keeps to, initially ``byteLimit``.
     public var totalCostLimit: Int {
-        get { cache.totalCostLimit }
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return costLimit
+        }
         set {
-            cache.totalCostLimit = newValue
-            enforceLimits()
+            lock.lock()
+            defer { lock.unlock() }
+            costLimit = newValue
+            evictLocked()
         }
     }
 
     /// The bytes a decoded picture takes: four bytes per pixel.
     private static func cost(of image: CGImage) -> Int { image.width * image.height * 4 }
 
-    /// Marks `key` as most recently used.
-    private func touch(_ key: String) {
+    private func cached(_ key: String) -> CGImage? {
         lock.lock()
         defer { lock.unlock() }
+        guard let entry = entries[key] else { return nil }
         if let index = order.firstIndex(of: key) { order.remove(at: index) }
         order.append(key)
+        return entry.image
     }
 
     private func add(_ image: CGImage, forKey key: String) {
         let cost = Self.cost(of: image)
         lock.lock()
-        if let old = costs[key] { countedCost -= old }
-        costs[key] = cost
+        defer { lock.unlock() }
+        if let old = entries[key] { countedCost -= old.cost }
+        entries[key] = (image, cost)
         countedCost += cost
         if let index = order.firstIndex(of: key) { order.remove(at: index) }
         order.append(key)
-        lock.unlock()
-        cache.setObject(image, forKey: key as NSString, cost: cost)
-        enforceLimits()
+        evictLocked()
     }
 
-    /// NSCache only evicts lazily, under memory pressure, so the limits are
-    /// enforced here: drop the least recently used pictures until the cache
-    /// is back within the byte and count limits.
-    private func enforceLimits() {
-        lock.lock()
-        defer { lock.unlock() }
-        while countedCost > cache.totalCostLimit || order.count > cache.countLimit, let oldest = order.first {
+    private func evictLocked() {
+        while countedCost > costLimit || order.count > countLimit, let oldest = order.first {
             order.removeFirst()
-            if let cost = costs.removeValue(forKey: oldest) {
-                countedCost -= cost
-                cache.removeObject(forKey: oldest as NSString)
-            }
+            if let entry = entries.removeValue(forKey: oldest) { countedCost -= entry.cost }
         }
     }
 
@@ -105,10 +103,7 @@ public final class ImageCache: @unchecked Sendable {
     public func image(for data: Data, path: String, maxPixelSize: Int = ImageCache.fallbackMaxPixelSize) -> CGImage? {
         let size = max(1, min(maxPixelSize, ImageCache.fallbackMaxPixelSize))
         let key = "\(path)#\(data.count)#\(data.hashValue)#\(size)"
-        if let cached = cache.object(forKey: key as NSString) {
-            touch(key)
-            return cached
-        }
+        if let cached = cached(key) { return cached }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
@@ -135,10 +130,7 @@ public final class ImageCache: @unchecked Sendable {
     public func processed(_ image: CGImage, key: String, effects: ResolvedPictureEffects) -> CGImage? {
         guard !effects.isEmpty else { return image }
         let cacheKey = "processed#\(key)#\(effects)"
-        if let cached = cache.object(forKey: cacheKey as NSString) {
-            touch(cacheKey)
-            return cached
-        }
+        if let cached = cached(cacheKey) { return cached }
         var source = image
         #if canImport(CoreImage)
         if !effects.artistic.isEmpty, let artistic = ArtisticRenderer.apply(effects.artistic, to: image) {
@@ -179,11 +171,10 @@ public final class ImageCache: @unchecked Sendable {
     /// Drops every cached picture, e.g. when memory is tight.
     public func removeAll() {
         lock.lock()
+        defer { lock.unlock() }
         countedCost = 0
-        costs = [:]
+        entries = [:]
         order = []
-        lock.unlock()
-        cache.removeAllObjects()
     }
 }
 
