@@ -104,8 +104,7 @@ extension DrawingColor {
         return inner.isEmpty ? open + "/>" : open + ">" + inner + close
     }
 
-    /// Theme slots a `prstClr` may name, resolved to the default Office
-    /// theme (a preset name has no theme of its own to follow).
+    /// Theme slot names some files put in a `prstClr`, resolved against the default Office theme.
     private static let presetSchemeColors: [String: UInt32] = [
         "phClr": 0x000000, "dk1": 0x000000, "lt1": 0xFFFFFF, "dk2": 0x44546A,
         "lt2": 0xE7E6E6, "accent1": 0x4472C4, "accent2": 0xED7D31, "accent3": 0xA5A5A5,
@@ -113,9 +112,7 @@ extension DrawingColor {
         "folHlink": 0x954F72,
     ]
 
-    /// Every named preset colour — the ECMA-376 `ST_PresetColorVal` list
-    /// (the CSS extended keywords, plus the grey-spelled variants) — so a
-    /// name like `coral` no longer falls back to black.
+    /// ECMA-376 `ST_PresetColorVal`, with the dk/lt/med abbreviations derived from the full names.
     private static let presetColors: [String: UInt32] = namedPresetColors.reduce(into: presetSchemeColors) { table, entry in
         table[entry.key] = entry.value
         for (long, short) in [("dark", "dk"), ("light", "lt"), ("medium", "med")] where entry.key.hasPrefix(long) {
