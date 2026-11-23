@@ -375,9 +375,9 @@ struct ImageCacheTests {
         let data = try png(width: 4_000, height: 2_000)
         let path = "cache-test/\(UUID().uuidString).png"
         let small = try #require(ImageCache.shared.image(for: data, path: path, maxPixelSize: 500))
-        #expect(max(small.width, small.height) <= 500)
+        #expect(max(small.width, small.height) <= 512)
         let larger = try #require(ImageCache.shared.image(for: data, path: path, maxPixelSize: 2_000))
-        #expect(max(larger.width, larger.height) <= 2_000)
+        #expect(max(larger.width, larger.height) <= 2_048)
         #expect(max(larger.width, larger.height) > max(small.width, small.height))
         // The default, and anything above it, never decode past the fallback size.
         let fallback = try #require(ImageCache.shared.image(for: data, path: path))

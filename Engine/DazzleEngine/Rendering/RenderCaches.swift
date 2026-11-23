@@ -101,7 +101,9 @@ public final class ImageCache: @unchecked Sendable {
     /// The decoded picture at `path`, decoded no larger than `maxPixelSize`
     /// on its larger side — pass the size it is drawn at in pixels.
     public func image(for data: Data, path: String, maxPixelSize: Int = ImageCache.fallbackMaxPixelSize) -> CGImage? {
-        let size = max(1, min(maxPixelSize, ImageCache.fallbackMaxPixelSize))
+        // Sizes round up to a power of two so a picture being resized or zoomed is not decoded every frame.
+        let requested = max(64, min(maxPixelSize, ImageCache.fallbackMaxPixelSize))
+        let size = min(1 << Int(log2(Double(requested - 1)).rounded(.down) + 1), ImageCache.fallbackMaxPixelSize)
         let key = "\(path)#\(data.count)#\(data.hashValue)#\(size)"
         if let cached = cached(key) { return cached }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
