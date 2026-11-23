@@ -57,7 +57,7 @@ public enum SlideSizeConverter {
             y: (Double(new.height) - Double(old.height) * factor) / 2
         )
 
-        var parts = try ZipArchive.entries(in: PPTXWriter.data(from: presentation))
+        var (parts, reusable) = try ZipArchive.entriesKeepingPayloads(in: PPTXWriter.data(from: presentation))
         let mainPart = presentation.package.mainPart
         for (path, data) in parts where isScaledPart(path) {
             guard let root = try? XMLLite.parse(data) else { continue }
@@ -67,6 +67,7 @@ public enum SlideSizeConverter {
             scaleText(in: root, by: factor)
             guard let xml = XMLLite.serialize(root) else { throw PresentationWriteError.unwritablePart(path) }
             parts[path] = Data((PackagePath.declaration + xml).utf8)
+            reusable[path] = nil
         }
 
         guard let data = parts[mainPart], let root = try? XMLLite.parse(data) else {
@@ -80,7 +81,8 @@ public enum SlideSizeConverter {
         if let defaults = root.firstChild(named: "defaultTextStyle") { scaleText(in: defaults, by: factor) }
         guard let xml = XMLLite.serialize(root) else { throw PresentationWriteError.unwritablePart(mainPart) }
         parts[mainPart] = Data((PackagePath.declaration + xml).utf8)
-        return try PPTXReader.presentation(fromParts: parts)
+        reusable[mainPart] = nil
+        return try PPTXReader.presentation(fromParts: parts, reusableEntries: reusable)
     }
 
     private static func isScaledPart(_ path: String) -> Bool {

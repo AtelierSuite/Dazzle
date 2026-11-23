@@ -139,6 +139,16 @@ struct ZipArchiveTests {
         #expect(try ZipArchive.entries(in: saved)["ppt/media/pic.png"] == media)
     }
 
+    @Test("A slide size change keeps untouched parts' payloads but drops rewritten ones")
+    func slideSizeChangeKeepsReusablePayloads() throws {
+        let read = try PPTXReader.presentation(from: PPTXWriter.data(from: .blank))
+        let converted = try SlideSizeConverter.convert(read, to: .standard, scaling: .ensureFit)
+        #expect(converted.package.reusableEntries["ppt/theme/theme1.xml"] != nil)
+        #expect(converted.package.reusableEntries[converted.package.mainPart] == nil)
+        let saved = try ZipArchive.entries(in: PPTXWriter.data(from: converted))
+        #expect(saved[converted.package.mainPart] == converted.package.parts[converted.package.mainPart])
+    }
+
     @Test("An edited part whose CRC and size match the original is not replaced by the original's payload")
     func crcCollisionIsNotReused() throws {
         let path = "ppt/theme/theme1.xml"
