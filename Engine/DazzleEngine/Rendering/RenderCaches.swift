@@ -40,7 +40,7 @@ public final class ImageCache: @unchecked Sendable {
     private let countLimit = 120
     private let memoryPressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .global(qos: .utility))
 
-    private init() {
+    init() {
         memoryPressure.setEventHandler { [weak self] in self?.removeAll() }
         memoryPressure.resume()
     }
