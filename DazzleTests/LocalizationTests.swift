@@ -22,18 +22,24 @@ struct LocalizationTests {
         #expect(!Self.strings.isEmpty)
     }
 
-    @Test("Every key has an entry for each supported language")
+    private static func isTranslated(_ localization: Any?) -> Bool {
+        guard let localization = localization as? [String: Any] else { return false }
+        if let unit = localization["stringUnit"] as? [String: Any] {
+            return unit["state"] as? String == "translated" && !((unit["value"] as? String) ?? "").isEmpty
+        }
+        return localization["variations"] != nil
+    }
+
+    @Test("Every key has a translation for each supported language")
     func allKeysHaveAllLanguages() {
         var missing: [String] = []
         for (key, entry) in Self.strings where !key.isEmpty {
             let localizations = (entry["localizations"] as? [String: Any]) ?? [:]
-            for language in Self.languages {
-                if localizations[language] == nil {
-                    missing.append("\(key)/\(language)")
-                }
+            for language in Self.languages where !Self.isTranslated(localizations[language]) {
+                missing.append("\(key)/\(language)")
             }
         }
-        #expect(missing.isEmpty, "keys missing a language entry: \(missing.prefix(20).joined(separator: ", "))")
+        #expect(missing.isEmpty, "keys missing a translation: \(missing.prefix(20).joined(separator: ", "))")
     }
 
     @Test("The sixteen animation effect names are translated into Korean and Chinese")
