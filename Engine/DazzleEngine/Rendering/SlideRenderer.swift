@@ -750,8 +750,8 @@ public struct SlideRenderer {
             drawImage(image, in: bounds, context: context)
             context.restoreGState()
         case .tiledPicture(let imagePath, let effects, let layout):
-            // Tiles repeat over the whole fill, so the bounds are the size to decode for.
-            guard let image = image(at: imagePath, effects: effects, maxPixelSize: pixelSize(of: bounds, in: context),
+            // The tile's size comes from the picture's pixels, so it is decoded at the usual size.
+            guard let image = image(at: imagePath, effects: effects, maxPixelSize: ImageCache.fallbackMaxPixelSize,
                                     placeholderColor: placeholderColor, style: style) else {
                 return
             }
