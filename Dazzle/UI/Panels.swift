@@ -344,6 +344,7 @@ struct FormatPanel: View {
                 }
                 frame.size.height = height
             }
+            guard EMURect(points: frame) != shape.frame else { return }
             state.setFrame(frame, of: shape.id, in: &presentation)
         }
         return Group {
@@ -1170,6 +1171,7 @@ private struct FrameNumberField: View {
     let commit: (Double) -> Void
 
     @State private var draft = ""
+    @State private var committedDraft: String?
     @FocusState private var isFocused: Bool
 
     init(_ label: LocalizedStringKey, value: Double, commit: @escaping (Double) -> Void) {
@@ -1188,17 +1190,26 @@ private struct FrameNumberField: View {
             .textFieldStyle(.roundedBorder)
             .onAppear { draft = Self.text(value) }
             .onChange(of: value) { _, new in if !isFocused { draft = Self.text(new) } }
-            .onChange(of: isFocused) { _, focused in if !focused { commitDraft() } }
+            .onChange(of: isFocused) { _, focused in
+                if focused {
+                    committedDraft = nil
+                } else {
+                    commitDraft()
+                    draft = Self.text(value)
+                }
+            }
             .onSubmit { commitDraft() }
     }
 
     private func commitDraft() {
-        guard let parsed = Double(draft.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: "."))
-        else {
+        let entered = draft.trimmingCharacters(in: .whitespaces)
+        guard entered != Self.text(value), entered != committedDraft else { return }
+        guard let parsed = Double(entered.replacingOccurrences(of: ",", with: ".")) else {
             draft = Self.text(value)
             return
         }
-        if parsed != value { commit(parsed) } else { draft = Self.text(value) }
+        committedDraft = entered
+        commit(parsed)
     }
 
     private static func text(_ value: Double) -> String {
