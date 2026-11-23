@@ -147,7 +147,7 @@ extension DrawingColor {
         "peru": 0xCD853F, "pink": 0xFFC0CB, "plum": 0xDDA0DD, "powderBlue": 0xB0E0E6,
         "purple": 0x800080, "red": 0xFF0000, "rosyBrown": 0xBC8F8F, "royalBlue": 0x4169E1,
         "saddleBrown": 0x8B4513, "salmon": 0xFA8072, "sandyBrown": 0xF4A460, "seaGreen": 0x2E8B57,
-        "seashell": 0xFFF5EE, "sienna": 0xA0522D, "silver": 0xC0C0C0, "skyBlue": 0x87CEEB,
+        "seaShell": 0xFFF5EE, "seashell": 0xFFF5EE, "sienna": 0xA0522D, "silver": 0xC0C0C0, "skyBlue": 0x87CEEB,
         "slateBlue": 0x6A5ACD, "slateGray": 0x708090, "snow": 0xFFFAFA, "springGreen": 0x00FF7F,
         "steelBlue": 0x4682B4, "tan": 0xD2B48C, "teal": 0x008080, "thistle": 0xD8BFD8,
         "tomato": 0xFF6347, "turquoise": 0x40E0D0, "violet": 0xEE82EE, "wheat": 0xF5DEB3,

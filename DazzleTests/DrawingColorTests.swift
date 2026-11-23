@@ -237,6 +237,7 @@ struct DrawingColorTests {
         ("salmon", 0xFA8072),
         ("sandyBrown", 0xF4A460),
         ("seaGreen", 0x2E8B57),
+        ("seaShell", 0xFFF5EE),
         ("seashell", 0xFFF5EE),
         ("sienna", 0xA0522D),
         ("silver", 0xC0C0C0),
