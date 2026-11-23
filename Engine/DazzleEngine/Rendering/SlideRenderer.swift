@@ -1059,7 +1059,8 @@ public struct SlideRenderer {
     private func pixelSize(of rect: CGRect, in context: CGContext) -> Int {
         let ctm = context.ctm
         let resolution = sqrt(abs(ctm.a * ctm.d - ctm.b * ctm.c))
-        return Int((max(rect.width, rect.height) * resolution).rounded(.up))
+        // A context in points, as SwiftUI's canvas and PDF pages are, is shown at up to three pixels a point.
+        return Int((max(rect.width, rect.height) * max(resolution, min(resolution * 3, 3))).rounded(.up))
     }
 
     /// A picture from the package, with its colour effects applied. Decoded

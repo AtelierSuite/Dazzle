@@ -25,6 +25,8 @@ struct SlideCanvas: View {
     /// on iPhone or floating over the middle on iPad.
     var isRaised = false
 
+    @Environment(\.displayScale) private var displayScale
+
     /// A move, resize or turn in progress, in slide points and degrees.
     @State private var interaction: Interaction?
 
@@ -343,7 +345,7 @@ struct SlideCanvas: View {
         return ZStack(alignment: .topLeading) {
             if let path = picture.imagePath, let data = presentation.data(at: path),
                let cgImage = ImageCache.shared.image(for: data, path: path,
-                                                     maxPixelSize: Int(max(image.width, image.height) * scale)) {
+                                                     maxPixelSize: Int(max(image.width, image.height) * scale * displayScale)) {
                 Image(decorative: cgImage, scale: 1)
                     .resizable()
                     .opacity(0.35)
