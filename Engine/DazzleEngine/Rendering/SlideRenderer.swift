@@ -1073,7 +1073,7 @@ public struct SlideRenderer {
         }
         guard effects.altersColor else { return image }
         let resolved = effects.resolved { style.color($0, placeholder: placeholderColor) }
-        return ImageCache.shared.processed(image, key: "\(path)#\(data.count)", effects: resolved)
+        return ImageCache.shared.processed(image, key: "\(path)#\(data.count)#\(image.width)x\(image.height)", effects: resolved)
     }
 
     /// CoreGraphics draws images bottom-up; the slide is drawn top-down.
