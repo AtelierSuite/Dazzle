@@ -92,7 +92,7 @@ private struct PackageBuilder {
             entries: (order + rest).compactMap { path in
                 parts[path].map { (path: path, data: $0) }
             },
-            reusing: presentation.package.originalArchive
+            reusing: presentation.package.reusableEntries
         )
     }
 

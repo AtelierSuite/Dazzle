@@ -131,16 +131,15 @@ public final class Package: Equatable, Sendable {
     public let mainPart: String
     public let unsupportedFeatures: UnsupportedFeatureReport
     public let contentTypes: ContentTypeMap
-    /// The archive the parts were read from, when there was one, so saving can
-    /// copy unchanged entries' compressed bytes instead of recompressing them.
-    public let originalArchive: Data?
+    /// Deflated payloads of `parts` as read, so saving can copy unchanged ones instead of recompressing them.
+    public let reusableEntries: [String: ZipArchive.CompressedEntry]
 
     public init(parts: [String: Data], mainPart: String, unsupportedFeatures: UnsupportedFeatureReport,
-                originalArchive: Data? = nil) {
+                reusableEntries: [String: ZipArchive.CompressedEntry] = [:]) {
         self.parts = parts
         self.mainPart = mainPart
         self.unsupportedFeatures = unsupportedFeatures
-        self.originalArchive = originalArchive
+        self.reusableEntries = reusableEntries
         contentTypes = ContentTypeMap(data: parts["[Content_Types].xml"])
     }
 

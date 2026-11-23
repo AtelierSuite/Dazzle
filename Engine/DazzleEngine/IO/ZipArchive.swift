@@ -76,18 +76,39 @@ public enum ZipArchive {
 
     /// Reads every entry, in the order the central directory lists them.
     public static func orderedEntries(in data: Data) throws -> [(path: String, data: Data)] {
+        try read(data).entries
+    }
+
+    /// Reads every entry, along with the deflated payloads `archive(entries:compresses:reusing:)`
+    /// can copy back unchanged instead of compressing them again.
+    public static func entriesKeepingPayloads(
+        in data: Data
+    ) throws -> (entries: [String: Data], reusable: [String: CompressedEntry]) {
+        let contents = try read(data)
+        let entries = Dictionary(contents.entries.map { ($0.path, $0.data) }, uniquingKeysWith: { _, last in last })
+        return (entries, contents.reusable)
+    }
+
+    private static func read(
+        _ data: Data
+    ) throws -> (entries: [(path: String, data: Data)], reusable: [String: CompressedEntry]) {
         var result: [(path: String, data: Data)] = []
+        var reusable: [String: CompressedEntry] = [:]
         for entry in try directoryRecords(in: data) {
             let record = entry.record
             // Bit 0 of the general purpose flags means the entry's bytes are
             // encrypted; decompressing them anyway would yield noise.
             guard record.flags & 1 == 0 else { throw ZipError.encryptedEntry(record.name) }
-            if !record.name.hasSuffix("/") {
-                result.append((record.name, try extract(entry.bytes, record: record)))
-            }
+            guard !record.name.hasSuffix("/") else { continue }
+            let payload = try storedPayload(entry.bytes, record: record)
+            result.append((record.name, try extract(payload, record: record)))
+            // Media is stored rather than deflated on save, so holding its payload would only cost memory.
+            reusable[record.name] = record.method == 8 && !isAlreadyCompressed(path: record.name)
+                ? CompressedEntry(method: 8, crc: record.crc, uncompressedSize: record.uncompressedSize, payload: payload)
+                : nil
         }
         guard !result.isEmpty else { throw ZipError.notAnArchive }
-        return result
+        return (result, reusable)
     }
 
     /// One entry of an existing archive, kept exactly as it sits on disk:
@@ -103,7 +124,7 @@ public enum ZipArchive {
     }
 
     /// Every entry of an archive with its stored payload, path-keyed, for
-    /// `archive(entries:compresses:reusing:)` to copy unchanged entries from.
+    /// inspecting how an archive stores them.
     public static func compressedEntries(in data: Data) throws -> [String: CompressedEntry] {
         var result: [String: CompressedEntry] = [:]
         for entry in try directoryRecords(in: data) {
@@ -233,9 +254,8 @@ public enum ZipArchive {
         return Int(value)
     }
 
-    private static func extract(_ bytes: [UInt8], record: DirectoryRecord) throws -> Data {
+    private static func extract(_ payload: Data, record: DirectoryRecord) throws -> Data {
         let name = record.name
-        let payload = try storedPayload(bytes, record: record)
 
         let content: Data
         switch record.method {
@@ -320,15 +340,12 @@ public enum ZipArchive {
     /// for OOXML readers that expect `[Content_Types].xml` first. Keynote
     /// stores every entry as it is, which `compresses` turned off matches.
     ///
-    /// When `original` is the archive a package was read from, an entry whose
-    /// CRC and size still match is copied with its stored bytes, so saving
-    /// does not recompress parts — pictures and movies above all — that did
-    /// not change. Types that are already compressed are stored without a
-    /// deflate attempt at all.
+    /// An entry in `reusable` whose CRC and size still match is copied with its
+    /// stored bytes instead of being deflated again. Types that are already
+    /// compressed are stored without a deflate attempt at all.
     public static func archive(
-        entries: [(path: String, data: Data)], compresses: Bool = true, reusing original: Data? = nil
+        entries: [(path: String, data: Data)], compresses: Bool = true, reusing reusable: [String: CompressedEntry] = [:]
     ) throws -> Data {
-        let reusable = try original.map { try compressedEntries(in: $0) } ?? [:]
         var output = Data()
         var directory = Data()
         var count: UInt16 = 0

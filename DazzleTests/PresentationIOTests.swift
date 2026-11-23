@@ -55,7 +55,7 @@ struct ZipArchiveTests {
         let before = try ZipArchive.compressedEntries(in: original)
         // Saving the same parts back, as the writer does after an edit elsewhere.
         let saved = try ZipArchive.archive(
-            entries: [("ppt/slides/slide1.xml", xml), ("ppt/media/image1.png", media)], reusing: original
+            entries: [("ppt/slides/slide1.xml", xml), ("ppt/media/image1.png", media)], reusing: ZipArchive.entriesKeepingPayloads(in: original).reusable
         )
         let after = try ZipArchive.compressedEntries(in: saved)
         #expect(after["ppt/slides/slide1.xml"]?.payload == before["ppt/slides/slide1.xml"]?.payload)
@@ -73,7 +73,7 @@ struct ZipArchiveTests {
         let before = try ZipArchive.compressedEntries(in: original)
         let edited = Data(String(repeating: "<p>edited</p>", count: 500).utf8)
         let saved = try ZipArchive.archive(
-            entries: [("ppt/slides/slide1.xml", edited), ("ppt/media/image1.png", media)], reusing: original
+            entries: [("ppt/slides/slide1.xml", edited), ("ppt/media/image1.png", media)], reusing: ZipArchive.entriesKeepingPayloads(in: original).reusable
         )
         let after = try ZipArchive.compressedEntries(in: saved)
         #expect(after["ppt/slides/slide1.xml"]?.payload != before["ppt/slides/slide1.xml"]?.payload)
@@ -87,23 +87,25 @@ struct ZipArchiveTests {
         let a = Data(String(repeating: "a", count: 2_048).utf8)
         let b = Data(String(repeating: "b", count: 2_048).utf8)
         let original = try ZipArchive.archive(entries: [("ppt/slides/slide1.xml", a)])
-        let saved = try ZipArchive.archive(entries: [("ppt/slides/slide1.xml", b)], reusing: original)
+        let saved = try ZipArchive.archive(
+            entries: [("ppt/slides/slide1.xml", b)], reusing: ZipArchive.entriesKeepingPayloads(in: original).reusable
+        )
         let before = try ZipArchive.compressedEntries(in: original)
         let after = try ZipArchive.compressedEntries(in: saved)
         #expect(after["ppt/slides/slide1.xml"]?.payload != before["ppt/slides/slide1.xml"]?.payload)
         #expect(try ZipArchive.entries(in: saved)["ppt/slides/slide1.xml"] == b)
     }
 
-    @Test("Stored entries from a Keynote-style archive are reused verbatim")
-    func reusesStoredEntries() throws {
-        let data = Data(String(repeating: "iwa", count: 1_000).utf8)
-        let original = try ZipArchive.archive(entries: [("Index/Document.iwa", data)], compresses: false)
-        let saved = try ZipArchive.archive(entries: [("Index/Document.iwa", data)], compresses: false, reusing: original)
-        let before = try ZipArchive.compressedEntries(in: original)
-        let after = try ZipArchive.compressedEntries(in: saved)
-        #expect(after["Index/Document.iwa"]?.payload == before["Index/Document.iwa"]?.payload)
-        #expect(after["Index/Document.iwa"]?.method == 0)
-        #expect(try ZipArchive.entries(in: saved)["Index/Document.iwa"] == data)
+    @Test("Only deflated, non-media payloads are kept for reuse")
+    func keepsOnlyDeflatedPayloads() throws {
+        let xml = Data(String(repeating: "<p>slide</p>", count: 500).utf8)
+        let media = Data(String(repeating: "x", count: 4_096).utf8)
+        let original = try ZipArchive.archive(entries: [
+            ("ppt/slides/slide1.xml", xml), ("ppt/media/image1.png", media), ("Index/Document.iwa", media),
+        ])
+        let stored = try ZipArchive.archive(entries: [("ppt/slides/slide1.xml", xml)], compresses: false)
+        #expect(Set(try ZipArchive.entriesKeepingPayloads(in: original).reusable.keys) == ["ppt/slides/slide1.xml", "Index/Document.iwa"])
+        #expect(try ZipArchive.entriesKeepingPayloads(in: stored).reusable.isEmpty)
     }
 
     @Test("Saving a read presentation keeps a media part's stored bytes")
@@ -113,13 +115,15 @@ struct ZipArchiveTests {
         presentation.addedParts["ppt/media/pic.png"] = media
         let original = try PPTXWriter.data(from: presentation)
         let reread = try PPTXReader.presentation(from: original)
-        #expect(reread.package.originalArchive == original)
+        #expect(reread.package.reusableEntries["ppt/media/pic.png"] == nil)
+        #expect(reread.package.reusableEntries["ppt/theme/theme1.xml"] != nil)
         let saved = try PPTXWriter.data(from: reread)
         let before = try ZipArchive.compressedEntries(in: original)
         let after = try ZipArchive.compressedEntries(in: saved)
         // The untouched picture keeps its stored bytes and is not deflated.
         #expect(after["ppt/media/pic.png"]?.payload == before["ppt/media/pic.png"]?.payload)
         #expect(after["ppt/media/pic.png"]?.method == 0)
+        #expect(after["ppt/theme/theme1.xml"]?.payload == before["ppt/theme/theme1.xml"]?.payload)
         #expect(try ZipArchive.entries(in: saved)["ppt/media/pic.png"] == media)
     }
 }
