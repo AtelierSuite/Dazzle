@@ -1,23 +1,25 @@
 import Foundation
 import Testing
 
-@Suite("Localization catalogue")
+private let catalogueURL = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .appendingPathComponent("Common/Localizable.xcstrings")
+
+// The catalogue is read from the source tree, which isn't there on a device or a test-without-building runner.
+@Suite("Localization catalogue", .enabled(if: FileManager.default.isReadableFile(atPath: catalogueURL.path)))
 struct LocalizationTests {
-    /// Every key in `Common/Localizable.xcstrings` must carry a non-empty
-    /// translation for each supported language.
     private static let languages = ["en", "ja", "ko", "zh-Hans", "zh-Hant"]
 
-    private static var catalogue: [String: Any] {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // DazzleTests/
-            .deletingLastPathComponent()  // repo root
-            .appendingPathComponent("Common/Localizable.xcstrings")
-        let data = try! Data(contentsOf: url)
-        return try! JSONSerialization.jsonObject(with: data) as! [String: Any]
-    }
+    nonisolated(unsafe) private static let strings: [String: [String: Any]] = {
+        guard let data = try? Data(contentsOf: catalogueURL),
+              let catalogue = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        return catalogue["strings"] as? [String: [String: Any]] ?? [:]
+    }()
 
-    private static var strings: [String: [String: Any]] {
-        catalogue["strings"] as! [String: [String: Any]]
+    @Test("The catalogue parses")
+    func catalogueParses() {
+        #expect(!Self.strings.isEmpty)
     }
 
     @Test("Every key has an entry for each supported language")
