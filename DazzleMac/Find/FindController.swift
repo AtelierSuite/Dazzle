@@ -97,17 +97,7 @@ final class FindController: NSObject, NSTableViewDataSource, NSTableViewDelegate
 
     /// Goes to the slide a match is on, and picks out the shape it is in.
     private func showMatch(_ match: FindMatch) {
-        let state = deck.state
-        state.selectSlide(match.slideID)
-        switch match.place {
-        case .shape(let id):
-            state.selectedShapeID = id
-        case .cell(let id, let position):
-            state.selectedShapeID = id
-            state.selectCell(position)
-        case .notes:
-            break
-        }
+        deck.state.show(match, in: deck.presentation)
     }
 
     // MARK: - Results

@@ -145,6 +145,12 @@ extension SlideShape {
     }
 }
 
+extension Slide {
+    public func topLevelShapeID(containing id: SlideShape.ID) -> SlideShape.ID? {
+        shapes.first { $0.flattened.contains { $0.id == id } }?.id
+    }
+}
+
 extension Presentation {
     /// Every match, slide by slide: shapes in stacking order, then table
     /// cells, then the speaker notes.

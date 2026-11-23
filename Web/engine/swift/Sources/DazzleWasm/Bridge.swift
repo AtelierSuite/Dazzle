@@ -749,10 +749,14 @@ final class Bridge {
                     "slide": match.slideID.uuidString, "loc": match.range.location, "len": match.range.length,
                     "excerpt": match.excerpt, "excerptLoc": match.excerptRange.location, "excerptLen": match.excerptRange.length,
                 ]
+                let slide = presentation.slides.first { $0.id == match.slideID }
                 switch match.place {
-                case .shape(let id): json["shape"] = id.uuidString
+                case .shape(let id):
+                    json["shape"] = id.uuidString
+                    json["select"] = (slide?.topLevelShapeID(containing: id) ?? id).uuidString
                 case .cell(let id, let position):
                     json["shape"] = id.uuidString
+                    json["select"] = (slide?.topLevelShapeID(containing: id) ?? id).uuidString
                     json["cell"] = ["r": position.row, "c": position.column]
                 case .notes: json["notes"] = true
                 }

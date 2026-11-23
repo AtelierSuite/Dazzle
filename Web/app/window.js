@@ -1478,7 +1478,7 @@ export class PresentationWindow {
     const match = matches[this.findIndex];
     // Shows the slide and selects what holds the match.
     await this.canvas.endEditing();
-    await this.engine.call("select", { slide: match.slide, shapes: match.shape ? [match.shape] : [] });
+    await this.engine.call("select", { slide: match.slide, shapes: match.select ? [match.select] : [] });
     if (match.notes) {
       this.setPanelVisible("notes", true);
       this.notes.focus();
