@@ -215,7 +215,7 @@ struct FormatPanel: View {
     @State private var replacement: PhotosPickerItem?
     /// A slide size picked, waiting on how to scale to it.
     @State private var pendingSize: SlideSizeConverter.Preset?
-    /// Whether the size fields keep the shape's proportions, as on the Mac.
+    /// Whether the size fields keep the shape's proportions.
     @State private var keepProportions = false
 
     private var slide: Slide? { state.selectedSlide(in: presentation) }
