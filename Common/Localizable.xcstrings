@@ -2019,7 +2019,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "盒狀"
+            "value" : "方塊"
           }
         }
       }
@@ -2054,7 +2054,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "棋盤"
+            "value" : "棋盤方塊"
           }
         }
       }
@@ -2229,7 +2229,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "劈裂"
+            "value" : "分割"
           }
         }
       }
@@ -2299,7 +2299,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "條狀"
+            "value" : "階梯狀"
           }
         }
       }
@@ -2404,7 +2404,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "填入色彩"
+            "value" : "填滿色彩"
           }
         }
       }
