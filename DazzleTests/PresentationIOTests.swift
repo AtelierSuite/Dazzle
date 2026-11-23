@@ -96,6 +96,18 @@ struct ZipArchiveTests {
         #expect(try ZipArchive.entries(in: saved)["ppt/slides/slide1.xml"] == b)
     }
 
+    @Test("An uncompressed archive never takes a deflated payload")
+    func uncompressedArchiveIgnoresDeflatedPayloads() throws {
+        let xml = Data(String(repeating: "<p>slide</p>", count: 500).utf8)
+        let original = try ZipArchive.archive(entries: [("Index/Document.iwa", xml)])
+        let saved = try ZipArchive.archive(
+            entries: [("Index/Document.iwa", xml)], compresses: false,
+            reusing: ZipArchive.entriesKeepingPayloads(in: original).reusable
+        )
+        #expect(try ZipArchive.compressedEntries(in: saved)["Index/Document.iwa"]?.method == 0)
+        #expect(try ZipArchive.entries(in: saved)["Index/Document.iwa"] == xml)
+    }
+
     @Test("Only deflated, non-media payloads are kept for reuse")
     func keepsOnlyDeflatedPayloads() throws {
         let xml = Data(String(repeating: "<p>slide</p>", count: 500).utf8)

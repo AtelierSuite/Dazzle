@@ -357,7 +357,7 @@ public enum ZipArchive {
 
             var payload = entry.data
             var method: UInt16 = 0
-            if let stored = reusable[entry.path], stored.method == 0 || stored.method == 8,
+            if let stored = reusable[entry.path], stored.method == 0 || (compresses && stored.method == 8),
                stored.crc == crc, stored.uncompressedSize == entry.data.count {
                 // Unchanged since it was read: keep its compressed bytes.
                 payload = stored.payload
