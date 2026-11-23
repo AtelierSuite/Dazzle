@@ -1462,7 +1462,7 @@ export class PresentationWindow {
     }
     if (action === "replace" && this.findIndex >= 0 && this.matches?.[this.findIndex]) {
       const match = this.matches[this.findIndex];
-      await this.engine.call("replace", { text: this.findInput.value, with: this.replaceInput.value, ...this.findOptions(), only: { slide: match.slide, loc: match.loc } });
+      await this.engine.call("replace", { text: this.findInput.value, with: this.replaceInput.value, ...this.findOptions(), only: { slide: match.slide, loc: match.loc, shape: match.shape, cell: match.cell, notes: match.notes } });
       const index = this.findIndex;
       await this.search();
       this.findIndex = Math.min(index, (this.matches?.length ?? 1) - 1) - 1;
