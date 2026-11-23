@@ -107,19 +107,17 @@ extension SlideShape {
     /// edited.
     @discardableResult
     public mutating func editText(of id: ID, _ body: (inout TextBody) -> Void) -> Bool {
-        if self.id == id, var text {
+        if self.id == id {
+            guard var text else { return false }
             body(&text)
             self.text = text
             edits.insert(.text)
             return true
         }
-        if case .group(var group) = kind {
-            var found = false
-            for index in group.children.indices where group.children[index].editText(of: id, body) {
-                found = true
-            }
-            if found { kind = .group(group) }
-            return found
+        guard case .group(var group) = kind else { return false }
+        for index in group.children.indices where group.children[index].editText(of: id, body) {
+            kind = .group(group)
+            return true
         }
         return false
     }
@@ -128,7 +126,8 @@ extension SlideShape {
     /// shape with `id`, searching inside groups as well as at the top level.
     @discardableResult
     public mutating func editCell(of id: ID, _ position: TableCellPosition, _ body: (inout TextBody) -> Void) -> Bool {
-        if self.id == id, case .table(var table) = kind, table.cell(at: position) != nil {
+        if self.id == id {
+            guard case .table(var table) = kind, table.cell(at: position) != nil else { return false }
             if var text = table.rows[position.row].cells[position.column].text {
                 body(&text)
                 table.rows[position.row].cells[position.column].text = text
@@ -137,13 +136,10 @@ extension SlideShape {
             edits.insert(.table)
             return true
         }
-        if case .group(var group) = kind {
-            var found = false
-            for index in group.children.indices where group.children[index].editCell(of: id, position, body) {
-                found = true
-            }
-            if found { kind = .group(group) }
-            return found
+        guard case .group(var group) = kind else { return false }
+        for index in group.children.indices where group.children[index].editCell(of: id, position, body) {
+            kind = .group(group)
+            return true
         }
         return false
     }
@@ -196,23 +192,18 @@ extension Presentation {
                 slides[slideIndex].areNotesModified = true
             case .shape(let id):
                 guard slides[slideIndex].canEditShapes else { continue }
-                // The shape may sit inside a group, so resolve its ID recursively.
-                var found = false
-                for shapeIndex in slides[slideIndex].shapes.indices {
-                    if slides[slideIndex].shapes[shapeIndex].editText(of: id, { $0.replace(match.range, with: replacement) }) {
-                        found = true
-                    }
+                for shapeIndex in slides[slideIndex].shapes.indices
+                where slides[slideIndex].shapes[shapeIndex].editText(of: id, { $0.replace(match.range, with: replacement) }) {
+                    slides[slideIndex].isModified = true
+                    break
                 }
-                if found { slides[slideIndex].isModified = true }
             case .cell(let id, let position):
                 guard slides[slideIndex].canEditShapes else { continue }
-                var found = false
-                for shapeIndex in slides[slideIndex].shapes.indices {
-                    if slides[slideIndex].shapes[shapeIndex].editCell(of: id, position, { $0.replace(match.range, with: replacement) }) {
-                        found = true
-                    }
+                for shapeIndex in slides[slideIndex].shapes.indices
+                where slides[slideIndex].shapes[shapeIndex].editCell(of: id, position, { $0.replace(match.range, with: replacement) }) {
+                    slides[slideIndex].isModified = true
+                    break
                 }
-                if found { slides[slideIndex].isModified = true }
             }
         }
     }
