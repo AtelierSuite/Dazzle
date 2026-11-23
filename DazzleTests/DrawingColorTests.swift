@@ -52,6 +52,21 @@ struct DrawingColorTests {
         try expect("lightSteelGrey", 0xB0C4DE)
     }
 
+    @Test("Abbreviated dk, lt and med names resolve like their full twins")
+    func abbreviatedNames() throws {
+        try expect("dkBlue", 0x00008B)
+        try expect("dkGrey", 0xA9A9A9)
+        try expect("dkSlateGray", 0x2F4F4F)
+        try expect("dkViolet", 0x9400D3)
+        try expect("ltGoldenrodYellow", 0xFAFAD2)
+        try expect("ltGray", 0xD3D3D3)
+        try expect("ltSteelBlue", 0xB0C4DE)
+        try expect("ltYellow", 0xFFFFE0)
+        try expect("medAquamarine", 0x66CDAA)
+        try expect("medSeaGreen", 0x3CB371)
+        try expect("medVioletRed", 0xC71585)
+    }
+
     @Test("Theme slots named by prstClr resolve to the default Office theme")
     func themeSlots() throws {
         try expect("dk1", 0x000000)

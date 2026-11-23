@@ -116,7 +116,14 @@ extension DrawingColor {
     /// Every named preset colour — the ECMA-376 `ST_PresetColorVal` list
     /// (the CSS extended keywords, plus the grey-spelled variants) — so a
     /// name like `coral` no longer falls back to black.
-    private static let presetColors: [String: UInt32] = presetSchemeColors.merging([
+    private static let presetColors: [String: UInt32] = namedPresetColors.reduce(into: presetSchemeColors) { table, entry in
+        table[entry.key] = entry.value
+        for (long, short) in [("dark", "dk"), ("light", "lt"), ("medium", "med")] where entry.key.hasPrefix(long) {
+            table[short + entry.key.dropFirst(long.count)] = entry.value
+        }
+    }
+
+    private static let namedPresetColors: [String: UInt32] = [
         "aliceBlue": 0xF0F8FF, "antiqueWhite": 0xFAEBD7, "aqua": 0x00FFFF, "aquamarine": 0x7FFFD4,
         "azure": 0xF0FFFF, "beige": 0xF5F5DC, "bisque": 0xFFE4C4, "black": 0x000000,
         "blanchedAlmond": 0xFFEBCD, "blue": 0x0000FF, "blueViolet": 0x8A2BE2, "brown": 0xA52A2A,
@@ -154,7 +161,7 @@ extension DrawingColor {
         "white": 0xFFFFFF, "whiteSmoke": 0xF5F5F5, "yellow": 0xFFFF00, "yellowGreen": 0x9ACD32,
         "grey": 0x808080, "darkGrey": 0xA9A9A9, "lightGrey": 0xD3D3D3, "dimGrey": 0x696969,
         "slateGrey": 0x708090, "darkSlateGrey": 0x2F4F4F, "lightSlateGrey": 0x778899, "lightSteelGrey": 0xB0C4DE,
-    ]) { _, new in new }
+    ]
 }
 
 /// A colour with everything resolved, ready to draw with.
