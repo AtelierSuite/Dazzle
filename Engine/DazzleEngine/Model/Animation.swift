@@ -235,6 +235,30 @@ public struct ShapeAnimation: Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
+/// A step in a slide's main sequence that isn't an effect on a shape, such
+/// as an ink replay or a sound on its own. It isn't listed or played, and is
+/// written back as read, after the effect it followed.
+public struct OpaqueAnimationStep: Equatable, Hashable, Sendable {
+    /// Its `p:par` as read.
+    public var source: String
+    /// Where it sat: starting a click, or with or after the step before it.
+    public var trigger: ShapeAnimation.Trigger
+    public var delay: Double
+    public var duration: Double
+    /// The effects read before it, the nearest last; it goes after
+    /// whichever of them is still there.
+    public var follows: [ShapeAnimation.ID]
+
+    public init(source: String, trigger: ShapeAnimation.Trigger, delay: Double = 0, duration: Double = 0,
+                follows: [ShapeAnimation.ID] = []) {
+        self.source = source
+        self.trigger = trigger
+        self.delay = delay
+        self.duration = duration
+        self.follows = follows
+    }
+}
+
 /// OOXML's acceleration/deceleration fractions remap time without changing
 /// the duration. Integrating the piecewise linear speed gives the position.
 public struct AnimationTimingCurve: Equatable, Hashable, Sendable {

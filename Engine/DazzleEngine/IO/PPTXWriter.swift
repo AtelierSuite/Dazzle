@@ -209,7 +209,7 @@ private struct PackageBuilder {
         slide.relationships = writer.relationships
         if slide.areAnimationsModified || slide.hasRemovedShapes {
             // Animations name shapes by id; with one gone, some point at nothing.
-            AnimationXML.write(slide.animations, shapes: slide.shapes, into: root)
+            AnimationXML.write(slide.animations, opaqueSteps: slide.opaqueAnimationSteps, shapes: slide.shapes, into: root)
         }
         let mediaEdited = Set(slide.shapes.filter { $0.edits.contains(.media) }.map(\.shapeID))
         if !mediaEdited.isEmpty { MediaXML.write(slide.shapes, changed: mediaEdited, into: root) }
