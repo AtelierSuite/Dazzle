@@ -225,6 +225,8 @@ public struct Slide: Identifiable, Equatable, Sendable {
     /// Whether `transition` must be written over the slide's own, which is
     /// otherwise kept exactly as it was.
     public var isTransitionEffectModified = false
+    /// The sound the transition starts or stops, kept when the transition is rewritten.
+    public var transitionSound: TransitionSound?
     /// Seconds before the slideshow moves on by itself, if it does.
     public var autoAdvanceAfter: Double?
     /// Whether a tap or click moves the slideshow on.

@@ -64,11 +64,14 @@ enum TransitionXML {
     /// `p:transition`, inside an `mc:AlternateContent` that gives PowerPoint
     /// 2010 and later its exact duration (`p14:dur`) and own effect, with
     /// the nearest speed for older readers.
-    static func xml(for transition: SlideTransition?, advanceAfter: Double?, advancesOnClick: Bool) -> String? {
+    /// `sound` is a `p:sndAc` to put in each version.
+    static func xml(for transition: SlideTransition?, advanceAfter: Double?, advancesOnClick: Bool, sound: String? = nil) -> String? {
         var advance = advancesOnClick ? "" : " advClick=\"0\""
         if let advanceAfter { advance += " advTm=\"\(Int((advanceAfter * 1_000).rounded()))\"" }
+        let sound = sound ?? ""
         guard let transition, transition.effect != .cut(throughBlack: false) || transition.duration > 0 else {
-            return advance.isEmpty ? nil : "<p:transition\(advance)/>"
+            if advance.isEmpty && sound.isEmpty { return nil }
+            return sound.isEmpty ? "<p:transition\(advance)/>" : "<p:transition\(advance)>\(sound)</p:transition>"
         }
         let speed = transition.duration < 0.625 ? "fast" : transition.duration < 0.875 ? "med" : "slow"
         let (plain, newer) = elements(for: transition.effect)
@@ -80,8 +83,8 @@ enum TransitionXML {
         return """
             <mc:AlternateContent xmlns:mc="\(markupCompatibility)" xmlns:p14="\(p14)"\(namespace)>\
             <mc:Choice Requires="\(isMorph ? "p159" : isNewest ? "p15" : "p14")">\
-            <p:transition spd="\(speed)" p14:dur="\(milliseconds)"\(advance)>\(newer ?? plain)</p:transition>\
-            </mc:Choice><mc:Fallback><p:transition spd="\(speed)"\(advance)>\(plain)</p:transition></mc:Fallback>\
+            <p:transition spd="\(speed)" p14:dur="\(milliseconds)"\(advance)>\(newer ?? plain)\(sound)</p:transition>\
+            </mc:Choice><mc:Fallback><p:transition spd="\(speed)"\(advance)>\(plain)\(sound)</p:transition></mc:Fallback>\
             </mc:AlternateContent>
             """
     }

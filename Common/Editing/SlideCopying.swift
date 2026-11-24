@@ -118,6 +118,7 @@ extension EditorState {
         copy.isTransitionModified = original.isTransitionModified
         copy.transition = original.transition
         copy.isTransitionEffectModified = original.isTransitionEffectModified
+        copy.transitionSound = original.transitionSound
         copy.animations = original.animations.map { ShapeAnimation(copying: $0) }
         copy.areAnimationsModified = original.areAnimationsModified
         // Notes and comments belong to one slide; the copy gets its own notes.
@@ -158,8 +159,9 @@ extension EditorState {
         copy.autoAdvanceAfter = slide.autoAdvanceAfter
         copy.advancesOnClick = slide.advancesOnClick
         copy.transition = slide.transition
-        copy.isTransitionEffectModified = slide.transition != nil
-        copy.isTransitionModified = slide.autoAdvanceAfter != nil || !slide.advancesOnClick || slide.transition != nil
+        copy.transitionSound = importedSound(of: slide, into: &copy, using: &importer)
+        copy.isTransitionEffectModified = slide.transition != nil || copy.transitionSound != nil
+        copy.isTransitionModified = slide.autoAdvanceAfter != nil || !slide.advancesOnClick || copy.isTransitionEffectModified
         // Effects as read may name the other file's parts, such as a sound;
         // only those Dazzle can write anew come across.
         copy.animations = slide.animations.filter(\.effect.isMadeByDazzle).map { animation in
@@ -172,6 +174,21 @@ extension EditorState {
         copy.areNotesModified = !slide.notes.isEmpty
         copy.isModified = true
         return copy
+    }
+
+    /// The slide's transition sound with its audio brought over, or `nil`
+    /// when the audio can't be, so no relationship is left pointing at nothing.
+    private static func importedSound(of slide: Slide, into copy: inout Slide, using importer: inout PartImporter) -> TransitionSound? {
+        guard var sound = slide.transitionSound else { return nil }
+        guard !sound.stopsSound else { return sound }
+        guard let path = slide.transitionSoundPath, let imported = importer.importPart(path) else { return nil }
+        let id = Relationship.unusedID(in: copy.relationships)
+        copy.relationships.append(Relationship(
+            id: id, type: OOXML.RelationshipType.audio,
+            target: PackagePath.relativeTarget(to: imported, from: PartImporter.newSlidePart)
+        ))
+        sound.relationshipID = id
+        return sound
     }
 
     /// The layout in `presentation` most like `layout`: the same name, or
