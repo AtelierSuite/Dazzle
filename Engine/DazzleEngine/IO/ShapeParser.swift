@@ -407,7 +407,7 @@ public final class ShapeParser {
         let properties = element.firstChild(named: "tblPr")
         let widths = element.firstChild(named: "tblGrid")?.children(named: "gridCol")
             .map { $0.attribute("w").flatMap(Int.init) ?? 0 } ?? []
-        let rows = element.children(named: "tr").map { row in
+        let rows = element.children(named: "tr").enumerated().map { index, row in
             SlideTable.Row(
                 height: row.attribute("h").flatMap(Int.init) ?? 0,
                 cells: row.children(named: "tc").map { cell in
@@ -432,13 +432,15 @@ public final class ShapeParser {
                         sourceProperties: cellProperties.flatMap(capture),
                         sourceBody: cell.firstChild(named: "txBody").flatMap(capture)
                     )
-                }
+                },
+                sourceIndex: index
             )
         }
         var table = SlideTable(
             columnWidths: widths, rows: rows, hasHeaderRow: false, hasBandedRows: false,
             styleID: properties?.firstChild(named: "tableStyleId")?.text.trimmed.nilIfEmpty,
-            sourceProperties: properties.flatMap(capture)
+            sourceProperties: properties.flatMap(capture),
+            sourceColumns: widths.indices.map { $0 }, sourceCells: rows.map(\.cells)
         )
         for option in SlideTable.StyleOption.allCases {
             table[option] = ["1", "true"].contains(properties?.attribute(option.attribute))

@@ -100,6 +100,7 @@ extension SlideTable {
     public mutating func insertColumn(at index: Int, copying template: Int) {
         guard columnWidths.indices.contains(template) else { return }
         let index = min(max(index, 0), columnWidths.count)
+        if sourceColumns.count == columnWidths.count { sourceColumns.insert(nil, at: index) }
         columnWidths.insert(columnWidths[template], at: index)
         for row in rows.indices {
             guard rows[row].cells.indices.contains(template) else { continue }
@@ -131,6 +132,7 @@ extension SlideTable {
                 }
             }
         }
+        if sourceColumns.count == columnWidths.count { sourceColumns.remove(at: index) }
         columnWidths.remove(at: index)
         for row in rows.indices where rows[row].cells.indices.contains(index) {
             rows[row].cells.remove(at: index)
