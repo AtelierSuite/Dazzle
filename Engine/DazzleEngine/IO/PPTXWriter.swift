@@ -378,7 +378,9 @@ private struct PackageBuilder {
             slide: &slide, slidePath: slidePath
         )
         slide.modernCommentsPart = writeCommentPart(
-            modern.isEmpty ? nil : CommentXML.modernXML(modern, authors: &modernCommentAuthors),
+            modern.isEmpty ? nil : CommentXML.modernXML(
+                modern, authors: &modernCommentAuthors, existing: slide.modernCommentsPart.flatMap { parts[$0] }
+            ),
             existing: slide.modernCommentsPart, prefix: "ppt/comments/modernComment_",
             type: OOXML.RelationshipType.modernComments, contentType: CommentXML.modernContentType,
             slide: &slide, slidePath: slidePath

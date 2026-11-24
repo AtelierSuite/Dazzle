@@ -156,25 +156,30 @@ public enum CommentXML {
 
     public static func modernComments(_ data: Data?, authors: [ModernCommentAuthor]) -> [SlideComment] {
         guard let data, let root = try? XMLLite.parse(data) else { return [] }
-        func comment(_ element: XMLElement) -> SlideComment {
-            let author = authors.first { $0.id == element.attribute("authorId") }
-            var comment = SlideComment(
-                id: element.attribute("id") ?? newID(), author: author?.name ?? "", initials: author?.initials ?? "",
-                date: date(element.attribute("created")), text: bodyText(element.firstChild(named: "txBody")), format: .modern
-            )
-            comment.isResolved = ["resolved", "closed"].contains(element.attribute("status") ?? "")
-            if let position = element.firstChild(named: "pos"),
-               let x = position.attribute("x").flatMap(Int.init), let y = position.attribute("y").flatMap(Int.init) {
-                comment.position = CGPoint(x: EMU.points(x), y: EMU.points(y))
-            }
-            return comment
-        }
         return root.children(named: "cm").map { element in
-            var thread = comment(element)
-            thread.replies = element.firstChild(named: "replyLst")?.children(named: "reply").map(comment) ?? []
+            var thread = modernComment(element, authors: authors)
+            thread.replies = element.firstChild(named: "replyLst")?.children(named: "reply").map { reply in
+                var comment = modernComment(reply, authors: authors)
+                comment.source = XMLLite.serialize(reply)
+                return comment
+            } ?? []
             thread.source = XMLLite.serialize(element)
             return thread
         }
+    }
+
+    private static func modernComment(_ element: XMLElement, authors: [ModernCommentAuthor]) -> SlideComment {
+        let author = authors.first { $0.id == element.attribute("authorId") }
+        var comment = SlideComment(
+            id: element.attribute("id") ?? newID(), author: author?.name ?? "", initials: author?.initials ?? "",
+            date: date(element.attribute("created")), text: bodyText(element.firstChild(named: "txBody")), format: .modern
+        )
+        comment.isResolved = ["resolved", "closed"].contains(element.attribute("status") ?? "")
+        if let position = element.firstChild(named: "pos"),
+           let x = position.attribute("x").flatMap(Int.init), let y = position.attribute("y").flatMap(Int.init) {
+            comment.position = CGPoint(x: EMU.points(x), y: EMU.points(y))
+        }
+        return comment
     }
 
     private static func bodyText(_ body: XMLElement?) -> String {
@@ -233,10 +238,14 @@ public enum CommentXML {
             }.joined() + "</p:cmAuthorLst>"
     }
 
-    /// A slide's comments in the newer format. A comment read from the file
-    /// keeps its anchor; one added here is anchored as the others are.
-    public static func modernXML(_ comments: [SlideComment], authors: inout [ModernCommentAuthor]) -> String {
+    /// A slide's comments in the newer format. A comment or reply read from
+    /// the file is written as read, changed only where it was edited; one
+    /// added here is anchored as the others are.
+    public static func modernXML(
+        _ comments: [SlideComment], authors: inout [ModernCommentAuthor], existing: Data? = nil
+    ) -> String {
         let namespaces = ["p188": modernNamespace, "a": OOXML.drawingML, "r": OOXML.relationshipsNS]
+        let known = authors
         func authorID(_ comment: SlideComment) -> String {
             if let existing = authors.first(where: { $0.name == comment.author }) { return existing.id }
             let author = ModernCommentAuthor(
@@ -245,35 +254,115 @@ public enum CommentXML {
             authors.append(author)
             return author.id
         }
-        func body(_ text: String) -> String {
-            let paragraphs = text.components(separatedBy: "\n").map { line in
+        func paragraphs(_ text: String) -> String {
+            text.components(separatedBy: "\n").map { line in
                 line.isEmpty ? "<a:p><a:endParaRPr lang=\"en-US\"/></a:p>"
                     : "<a:p><a:r><a:rPr lang=\"en-US\"/><a:t>\(XMLLite.escape(line))</a:t></a:r></a:p>"
+            }.joined()
+        }
+        func body(_ text: String) -> String {
+            "<p188:txBody><a:bodyPr/><a:lstStyle/>\(paragraphs(text))</p188:txBody>"
+        }
+        func parsed(_ source: String?) -> XMLElement? {
+            source.flatMap { try? XMLLite.parse(Data($0.utf8)) }
+        }
+        /// Brings an element read from the file in line with what was edited.
+        func update(_ element: XMLElement, to comment: SlideComment, isThread: Bool) {
+            let read = modernComment(element, authors: known)
+            if read.text != comment.text {
+                let lines = XMLLite.fragment("<a:fragment>\(paragraphs(comment.text))</a:fragment>", namespaces: namespaces)?.children ?? []
+                if let txBody = element.firstChild(named: "txBody") {
+                    for paragraph in txBody.children(named: "p") { txBody.removeChild(paragraph) }
+                    for line in lines { txBody.insertChild(line, at: txBody.children.count) }
+                } else if let txBody = XMLLite.fragment(body(comment.text), namespaces: namespaces) {
+                    let extensions = element.children.firstIndex { $0.name == "extLst" } ?? element.children.count
+                    element.insertChild(txBody, at: extensions)
+                }
             }
-            return "<p188:txBody><a:bodyPr/><a:lstStyle/>\(paragraphs.joined())</p188:txBody>"
+            if read.author != comment.author { element.setAttribute("authorId", authorID(comment)) }
+            if read.date != comment.date { element.setAttribute("created", string(comment.date)) }
+            guard isThread else { return }
+            if read.isResolved != comment.isResolved {
+                element.setAttribute("status", comment.isResolved ? "resolved" : nil)
+            }
+            if read.position != comment.position {
+                let pos = element.firstChild(named: "pos")
+                if let point = comment.position {
+                    let x = String(EMU.from(points: point.x)), y = String(EMU.from(points: point.y))
+                    if let pos {
+                        pos.setAttribute("x", x)
+                        pos.setAttribute("y", y)
+                    } else if let pos = XMLLite.fragment("<p188:pos x=\"\(x)\" y=\"\(y)\"/>", namespaces: namespaces) {
+                        let anchor = element.children.lastIndex { $0.name.hasSuffix("MkLst") }.map { $0 + 1 } ?? 0
+                        element.insertChild(pos, at: anchor)
+                    }
+                } else if let pos {
+                    element.removeChild(pos)
+                }
+            }
+        }
+        func reply(_ reply: SlideComment) -> XMLElement? {
+            if let element = parsed(reply.source) {
+                update(element, to: reply, isThread: false)
+                return element
+            }
+            return XMLLite.fragment(
+                "<p188:reply id=\"\(reply.id)\" authorId=\"\(authorID(reply))\" created=\"\(string(reply.date))\">"
+                    + body(reply.text) + "</p188:reply>",
+                namespaces: namespaces
+            )
         }
         // The anchor a new comment borrows: the slide's, from another comment.
-        let anchor = comments.lazy.compactMap { $0.source.flatMap { XMLLite.fragment($0, namespaces: namespaces) } }
+        let anchor = comments.lazy.compactMap { parsed($0.source) }
             .compactMap { $0.children.first { $0.name.hasSuffix("MkLst") } }.first.flatMap { XMLLite.serialize($0) } ?? ""
 
-        let entries = comments.map { thread -> String in
-            let element = thread.source.flatMap { XMLLite.fragment($0, namespaces: namespaces) }
-            let kept = element?.children.filter { $0.name != "replyLst" && $0.name != "txBody" && $0.name != "pos" }
-                .compactMap { XMLLite.serialize($0) } ?? []
-            let marker = kept.first { $0.contains("MkLst") } ?? anchor
-            let rest = kept.filter { !$0.contains("MkLst") }
-            let status = thread.isResolved ? " status=\"resolved\"" : ""
-            let position = thread.position.map { "<p188:pos x=\"\(EMU.from(points: $0.x))\" y=\"\(EMU.from(points: $0.y))\"/>" } ?? ""
-            let replies = thread.replies.map { reply in
-                "<p188:reply id=\"\(reply.id)\" authorId=\"\(authorID(reply))\" created=\"\(string(reply.date))\">"
-                    + body(reply.text) + "</p188:reply>"
-            }.joined()
-            return "<p188:cm id=\"\(thread.id)\" authorId=\"\(authorID(thread))\" created=\"\(string(thread.date))\"\(status)>"
-                + marker + position + (replies.isEmpty ? "" : "<p188:replyLst>\(replies)</p188:replyLst>")
-                + body(thread.text) + rest.filter { $0.contains("extLst") }.joined() + "</p188:cm>"
+        let entries = comments.compactMap { thread -> XMLElement? in
+            let replies = thread.replies.compactMap(reply)
+            guard let element = parsed(thread.source) else {
+                let status = thread.isResolved ? " status=\"resolved\"" : ""
+                let position = thread.position.map { "<p188:pos x=\"\(EMU.from(points: $0.x))\" y=\"\(EMU.from(points: $0.y))\"/>" } ?? ""
+                let element = XMLLite.fragment(
+                    "<p188:cm id=\"\(thread.id)\" authorId=\"\(authorID(thread))\" created=\"\(string(thread.date))\"\(status)>"
+                        + anchor + position + body(thread.text) + "</p188:cm>",
+                    namespaces: namespaces
+                )
+                if let element, !replies.isEmpty, let list = XMLLite.fragment("<p188:replyLst/>", namespaces: namespaces) {
+                    for reply in replies { list.insertChild(reply, at: list.children.count) }
+                    element.insertChild(list, at: element.children.firstIndex { $0.name == "txBody" } ?? element.children.count)
+                }
+                return element
+            }
+            update(element, to: thread, isThread: true)
+            let list = element.firstChild(named: "replyLst")
+            let readReplies = list?.children(named: "reply") ?? []
+            if replies.isEmpty {
+                if let list {
+                    readReplies.forEach(list.removeChild)
+                    if list.children.isEmpty { element.removeChild(list) }
+                }
+            } else if let list {
+                let first = list.children.firstIndex { $0.name == "reply" } ?? list.children.count
+                readReplies.forEach(list.removeChild)
+                for (offset, reply) in replies.enumerated() { list.insertChild(reply, at: first + offset) }
+            } else if let list = XMLLite.fragment("<p188:replyLst/>", namespaces: namespaces) {
+                for reply in replies { list.insertChild(reply, at: list.children.count) }
+                let index = element.children.firstIndex { $0.name == "txBody" || $0.name == "extLst" } ?? element.children.count
+                element.insertChild(list, at: index)
+            }
+            return element
         }
-        return "<p188:cmLst xmlns:a=\"\(OOXML.drawingML)\" xmlns:r=\"\(OOXML.relationshipsNS)\" xmlns:p188=\"\(modernNamespace)\">"
-            + entries.joined() + "</p188:cmLst>"
+        func list(in root: XMLElement) -> String? {
+            let first = root.children.firstIndex { $0.name == "cm" } ?? root.children.firstIndex { $0.name == "extLst" }
+                ?? root.children.count
+            root.children(named: "cm").forEach(root.removeChild)
+            for (offset, entry) in entries.enumerated() { root.insertChild(entry, at: first + offset) }
+            return XMLLite.serialize(root)
+        }
+        let read = existing.flatMap { try? XMLLite.parse($0) }.flatMap { $0.name == "cmLst" ? $0 : nil }
+        return read.flatMap(list) ?? list(in: XMLElement(
+            name: "cmLst", qualifiedName: "p188:cmLst", attributes: [:],
+            qualifiedAttributes: Dictionary(uniqueKeysWithValues: namespaces.map { ("xmlns:\($0.key)", $0.value) })
+        )) ?? ""
     }
 
     public static func modernAuthorsXML(_ authors: [ModernCommentAuthor]) -> String {
