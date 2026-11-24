@@ -1,6 +1,7 @@
 import AVFoundation
 import DazzleEngine
 import Observation
+import UniformTypeIdentifiers
 
 /// The videos and sounds on the slide being shown, and which are playing.
 ///
@@ -23,6 +24,9 @@ final class MediaPlayback {
     @ObservationIgnored private var timeObservers: [SlideShape.ID: Any] = [:]
     /// Each file's length in seconds, once known.
     @ObservationIgnored private var durations: [SlideShape.ID: Double] = [:]
+    /// The sound the last slide transition started, which a looping one
+    /// keeps playing across slides until another sound starts or stops it.
+    @ObservationIgnored private var transitionSound: AVAudioPlayer?
 
     /// The media on a slide: each media shape, and where it plays from.
     static func media(on slide: Slide) -> [(shape: SlideShape, media: SlideShape.Media)] {
@@ -37,6 +41,7 @@ final class MediaPlayback {
     /// across slides keeps playing.
     func show(_ slide: Slide?, in presentation: Presentation?) {
         guard slide?.id != slideID else { return }
+        if slide == nil { stopTransitionSound() }
         let carried = slide == nil ? [] : Set(playing.filter { settings[$0]?.playsAcrossSlides == true && settings[$0]?.kind == .audio })
         stop(except: carried)
         slideID = slide?.id
@@ -117,6 +122,27 @@ final class MediaPlayback {
         } else if media.hidesWhenNotPlaying {
             started.remove(id)
         }
+    }
+
+    /// Plays the sound the slide's transition starts, in place of the one
+    /// playing, or stops that one if the transition says so.
+    func playTransitionSound(of slide: Slide, in presentation: Presentation) {
+        guard let sound = slide.transitionSound else { return }
+        stopTransitionSound()
+        guard !sound.stopsSound, let path = slide.transitionSoundPath, let data = presentation.data(at: path) else { return }
+        let hint = UTType(filenameExtension: (path as NSString).pathExtension)?.identifier
+        guard let player = (try? AVAudioPlayer(data: data, fileTypeHint: hint)) ?? (try? AVAudioPlayer(data: data)) else { return }
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setCategory(.playback)
+        #endif
+        player.numberOfLoops = sound.loops ? -1 : 0
+        player.play()
+        transitionSound = player
+    }
+
+    func stopTransitionSound() {
+        transitionSound?.stop()
+        transitionSound = nil
     }
 
     func isPlaying(_ id: SlideShape.ID) -> Bool { playing.contains(id) }

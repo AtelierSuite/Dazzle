@@ -150,7 +150,7 @@ export class Slideshow extends EventTarget {
     this.unloading = () => this.audience?.close();
     window.addEventListener("pagehide", this.unloading);
     this.watchAudience();
-    await this.showSlide({ fullyBuilt: false });
+    await this.showSlide({ fullyBuilt: false, sound: true });
     this.noteActivity();
     this.dispatchEvent(new CustomEvent("start"));
   }
@@ -204,6 +204,7 @@ export class Slideshow extends EventTarget {
     }
     this.audience = null;
     this.stopMedia();
+    this.stopTransitionSound();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     this.view?.remove();
     this.view = null;
@@ -400,7 +401,7 @@ export class Slideshow extends EventTarget {
    * Draws the slide now showing, its first animations beginning once its
    * transition, if it plays one, has brought it on.
    */
-  async showSlide({ fullyBuilt, transition: withTransition = false, zoom = null }) {
+  async showSlide({ fullyBuilt, transition: withTransition = false, zoom = null, sound = withTransition && !zoom }) {
     const id = this.slideID;
     // How far through its animations the slide being left is, for a Morph.
     const leftAt = this.builds;
@@ -410,6 +411,7 @@ export class Slideshow extends EventTarget {
     this.builds = built ? timeline.steps : timeline.initial;
     this.buildStartedAt = built ? -Infinity : performance.now();
     this.stopMedia();
+    if (sound) this.playTransitionSound(timeline.sound);
     const scene = await this.engine.call("scene", { slide: id });
     if (id !== this.slideID) return;
     const transition = withTransition && this.scene && (zoom || timeline.transition > 0)
@@ -521,6 +523,29 @@ export class Slideshow extends EventTarget {
   }
 
   // MARK: - Media
+
+  /**
+   * Starts the sound a slide's transition plays, in place of the one playing,
+   * or stops that one. A looping sound plays on across slides until then.
+   */
+  async playTransitionSound(sound) {
+    if (!sound) return;
+    this.stopTransitionSound();
+    if (sound.stop || !sound.path) return;
+    const token = this.transitionSoundToken;
+    const url = await this.media.url(sound.path);
+    if (!url || !this.active || token !== this.transitionSoundToken) return;
+    const player = new Audio(url);
+    player.loop = Boolean(sound.loop);
+    this.transitionSound = player;
+    player.play().catch(() => {});
+  }
+
+  stopTransitionSound() {
+    this.transitionSoundToken = (this.transitionSoundToken ?? 0) + 1;
+    this.transitionSound?.pause();
+    this.transitionSound = null;
+  }
 
   playStepMedia(timeline, step) {
     for (const id of timeline.media?.[step] ?? []) this.playMedia(id, "play");

@@ -96,6 +96,7 @@ final class PresentationSession {
         zoomReturns = []
         isPresenting = true
         beginSlide()
+        if let slide = currentSlide { media.playTransitionSound(of: slide, in: presentation) }
         noteActivity()
         publish()
     }
@@ -279,6 +280,10 @@ final class PresentationSession {
         finishTransition()
         if let newOrder { order = newOrder }
         position = index
+        // A zoom plays in place of the slide's transition, and so without its sound.
+        if replacement == nil, let presentation, let incoming = currentSlide {
+            media.playTransitionSound(of: incoming, in: presentation)
+        }
         if let outgoing, let incoming = currentSlide, let transition = (replacement ?? incoming.transition)?.played(
             reduceMotion: Self.prefersReducedMotion, seed: position
         ), transition.isAnimated {
