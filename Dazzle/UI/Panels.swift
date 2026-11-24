@@ -215,6 +215,8 @@ struct FormatPanel: View {
     @State private var replacement: PhotosPickerItem?
     /// A slide size picked, waiting on how to scale to it.
     @State private var pendingSize: SlideSizeConverter.Preset?
+    /// Whether the size fields keep the shape's proportions.
+    @State private var keepProportions = false
 
     private var slide: Slide? { state.selectedSlide(in: presentation) }
     private var shape: SlideShape? { state.selectedShape(in: presentation) }
@@ -278,6 +280,9 @@ struct FormatPanel: View {
             Button("Arrange.Back", systemImage: "square.3.layers.3d.bottom.filled") {
                 state.arrangeSelectedShape(.back, in: &presentation)
             }
+            if !state.hasMultipleSelection {
+                frameFields(shape)
+            }
         }
         AlignButtons(presentation: $presentation, state: state)
         GroupButtons(presentation: $presentation, state: state)
@@ -314,6 +319,59 @@ struct FormatPanel: View {
                 }
                 RotateAndFlipButtons(presentation: $presentation, state: state)
             }
+        }
+    }
+
+    /// Numeric position (X, Y) and size (W, H) fields for the selected shape,
+    /// as in the Mac's Arrange section. `frame` is in points.
+    private func frameFields(_ shape: SlideShape) -> some View {
+        let frame = shape.frame.points
+        func setFrame(x: CGFloat? = nil, y: CGFloat? = nil, width: CGFloat? = nil, height: CGFloat? = nil) {
+            var frame = frame
+            if let x { frame.origin.x = min(max(x, -10_000), 10_000) }
+            if let y { frame.origin.y = min(max(y, -10_000), 10_000) }
+            if var width {
+                width = min(max(width, 0), 10_000)
+                if keepProportions, frame.size.width > 0, width != frame.size.width {
+                    let ratio = frame.size.height / frame.size.width
+                    if ratio > 0 { width = min(width, 10_000 / ratio) }
+                    frame.size.height = width * ratio
+                }
+                frame.size.width = width
+            }
+            if var height {
+                height = min(max(height, 0), 10_000)
+                if keepProportions, frame.size.height > 0, height != frame.size.height {
+                    let ratio = frame.size.width / frame.size.height
+                    if ratio > 0 { height = min(height, 10_000 / ratio) }
+                    frame.size.width = height * ratio
+                }
+                frame.size.height = height
+            }
+            guard EMURect(points: frame) != shape.frame else { return }
+            state.setFrame(frame, of: shape.id, in: &presentation)
+        }
+        return Group {
+            LabeledContent("Mac.Inspector.Position") {
+                HStack(spacing: 8) {
+                    FrameNumberField("X", value: frame.origin.x) { setFrame(x: $0) }
+                        .accessibilityIdentifier("frameX")
+                    FrameNumberField("Y", value: frame.origin.y) { setFrame(y: $0) }
+                        .accessibilityIdentifier("frameY")
+                }
+                .id(shape.id)
+            }
+            LabeledContent("Mac.Inspector.Size") {
+                HStack(spacing: 8) {
+                    FrameNumberField("Mac.Inspector.Width.Short", value: frame.size.width) { setFrame(width: $0) }
+                        .accessibilityIdentifier("frameW")
+                    FrameNumberField("Mac.Inspector.Height.Short", value: frame.size.height) { setFrame(height: $0) }
+                        .accessibilityIdentifier("frameH")
+                }
+                .id(shape.id)
+            }
+            Toggle("Arrange.KeepProportions", isOn: $keepProportions)
+                .accessibilityIdentifier("keepProportions")
         }
     }
 
@@ -1108,5 +1166,60 @@ struct StyleToggle: View {
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// A numeric text field for a shape's frame, in points, that hands its value
+/// back when it is left or submitted rather than on every keystroke.
+private struct FrameNumberField: View {
+    let label: LocalizedStringKey
+    let value: Double
+    let commit: (Double) -> Void
+
+    @State private var draft = ""
+    @State private var committedDraft: String?
+    @FocusState private var isFocused: Bool
+
+    init(_ label: LocalizedStringKey, value: Double, commit: @escaping (Double) -> Void) {
+        self.label = label
+        self.value = value
+        self.commit = commit
+    }
+
+    var body: some View {
+        TextField(label, text: $draft)
+            .focused($isFocused)
+            .keyboardType(.numbersAndPunctuation)
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .frame(width: 76)
+            .textFieldStyle(.roundedBorder)
+            .onAppear { draft = Self.text(value) }
+            .onChange(of: value) { _, new in if !isFocused { draft = Self.text(new) } }
+            .onChange(of: isFocused) { _, focused in
+                if focused {
+                    committedDraft = nil
+                } else {
+                    commitDraft()
+                    draft = Self.text(value)
+                }
+            }
+            .onSubmit { commitDraft() }
+            .onDisappear { commitDraft() }
+    }
+
+    private func commitDraft() {
+        let entered = draft.trimmingCharacters(in: .whitespaces)
+        guard entered != Self.text(value), entered != committedDraft else { return }
+        guard let parsed = Double(entered) ?? (try? Double(entered, format: .number)) else {
+            draft = Self.text(value)
+            return
+        }
+        committedDraft = entered
+        commit(parsed)
+    }
+
+    private static func text(_ value: Double) -> String {
+        value.rounded() == value ? String(Int(value.rounded())) : String(format: "%.1f", value)
     }
 }
