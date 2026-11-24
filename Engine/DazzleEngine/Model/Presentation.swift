@@ -232,6 +232,8 @@ public struct Slide: Identifiable, Equatable, Sendable {
     public var isTransitionModified = false
     /// The effects the slideshow plays as the slide is tapped through.
     public var animations: [ShapeAnimation] = []
+    /// Steps between them Dazzle doesn't model, kept to write back.
+    public var opaqueAnimationSteps: [OpaqueAnimationStep] = []
     public var areAnimationsModified = false
     public var legacyCommentsPart: String?
     public var modernCommentsPart: String?

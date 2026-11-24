@@ -410,7 +410,7 @@ public enum PPTXReader {
         slide.canEditShapes = !parser.hasUncapturableShape
         features.formUnion(parser.features)
         if let timing = root.firstChild(named: "timing") {
-            slide.animations = AnimationXML.animations(in: timing)
+            (slide.animations, slide.opaqueAnimationSteps) = AnimationXML.sequence(in: timing)
             markAutoplay(in: timing, shapes: &slide.shapes)
             MediaXML.read(timing, into: &slide.shapes)
         }

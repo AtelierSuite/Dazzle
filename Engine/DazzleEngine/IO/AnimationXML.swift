@@ -12,9 +12,16 @@ public enum AnimationXML {
 
     /// The effects in a slide's main sequence, in the order they play.
     public static func animations(in timing: XMLElement) -> [ShapeAnimation] {
+        sequence(in: timing).animations
+    }
+
+    /// The effects in a slide's main sequence, in the order they play, and
+    /// the steps between them that aren't effects on a shape.
+    public static func sequence(in timing: XMLElement) -> (animations: [ShapeAnimation], opaqueSteps: [OpaqueAnimationStep]) {
         guard let sequence = mainSequence(in: timing),
-              let groups = sequence.firstDescendant(atPath: "cTn/childTnLst")?.children(named: "par") else { return [] }
+              let groups = sequence.firstDescendant(atPath: "cTn/childTnLst")?.children(named: "par") else { return ([], []) }
         var result: [ShapeAnimation] = []
+        var opaque: [OpaqueAnimationStep] = []
         for (groupIndex, group) in groups.enumerated() {
             let groupNode = group.firstChild(named: "cTn")
             // The first group starts with the slide when it waits on the sequence beginning, not a click.
@@ -34,11 +41,19 @@ public enum AnimationXML {
                     } else {
                         .onClick
                     }
-                    if let animation = animation(from: effect, trigger: trigger) { result.append(animation) }
+                    if let animation = animation(from: effect, trigger: trigger) {
+                        result.append(animation)
+                    } else if let source = XMLLite.serialize(effect) {
+                        let node = effect.firstChild(named: "cTn")
+                        opaque.append(OpaqueAnimationStep(
+                            source: source, trigger: trigger, delay: milliseconds(node.flatMap(delay(of:))) ?? 0,
+                            duration: node.map(duration(of:)) ?? 0, follows: result.map(\.id)
+                        ))
+                    }
                 }
             }
         }
-        return result
+        return (result, opaque)
     }
 
     private static func animation(from par: XMLElement, trigger: ShapeAnimation.Trigger) -> ShapeAnimation? {
@@ -201,16 +216,24 @@ public enum AnimationXML {
 
     // MARK: - Writing
 
-    /// Puts `animations` in the slide's main sequence, making a timing for
-    /// it if there is none and removing one left with nothing to do. Effects
-    /// on shapes no longer on the slide are left out, and so is anything else
-    /// in the timing that pointed at one.
-    public static func write(_ animations: [ShapeAnimation], shapes: [SlideShape], into root: XMLElement) {
+    /// Puts `animations` in the slide's main sequence, with the steps Dazzle
+    /// doesn't model where they were, making a timing for it if there is none
+    /// and removing one left with nothing to do. Effects on shapes no longer
+    /// on the slide are left out, and so is anything else in the timing that
+    /// pointed at one.
+    public static func write(
+        _ animations: [ShapeAnimation], opaqueSteps: [OpaqueAnimationStep] = [], shapes: [SlideShape], into root: XMLElement
+    ) {
         let shapeIDs = Set(shapes.map(\.shapeID))
+        // Shapes Dazzle reads without their id, such as ink, are still in the tree.
+        let present = shapeIDs.union(allShapeIDs(in: root.firstChild(named: "cSld") ?? root))
         let animations = animations.filter { shapeIDs.contains($0.shapeID) }
+        let sequence = merged(animations, opaqueSteps.filter { step in
+            XMLLite.fragment(step.source, namespaces: OOXML.namespaces).map { targets(of: $0).isSubset(of: present) } ?? false
+        })
         var timing = root.firstChild(named: "timing")
         if timing == nil {
-            guard !animations.isEmpty, let created = XMLLite.fragment(Self.emptyTiming, namespaces: OOXML.namespaces) else { return }
+            guard !sequence.entries.isEmpty, let created = XMLLite.fragment(Self.emptyTiming, namespaces: OOXML.namespaces) else { return }
             // After the slide's transition; before its extensions.
             let after = root.children.lastIndex { ["cSld", "clrMapOvr", "transition", "AlternateContent"].contains($0.name) }
             root.insertChild(created, at: (after ?? 0) + 1)
@@ -219,25 +242,25 @@ public enum AnimationXML {
         guard let timing, let rootList = timing.firstDescendant(atPath: "tnLst/par/cTn/childTnLst") else { return }
 
         // Whatever else the timing does, it cannot do to a shape that is gone.
-        for child in rootList.children where !isMainSequence(child) && !targets(of: child).isSubset(of: shapeIDs) {
+        for child in rootList.children where !isMainSequence(child) && !targets(of: child).isSubset(of: present) {
             rootList.removeChild(child)
         }
 
         var nextID = (allNodeIDs(in: timing).max() ?? 2) + 1
         let existing = rootList.children.first(where: isMainSequence)
-        if animations.isEmpty {
+        if sequence.entries.isEmpty {
             if let existing { rootList.removeChild(existing) }
         } else {
-            let sequence = existing ?? {
+            let sequenceElement = existing ?? {
                 let created = XMLLite.fragment(sequenceXML(id: nextID), namespaces: OOXML.namespaces)
                 nextID += 1
                 if let created { rootList.insertChild(created, at: 0) }
                 return created
             }()
-            if let sequence, let node = sequence.firstChild(named: "cTn") {
+            if let sequenceElement, let node = sequenceElement.firstChild(named: "cTn") {
                 let sequenceID = node.attribute("id") ?? "2"
                 node.firstChild(named: "childTnLst").map(node.removeChild)
-                let groups = groupsXML(animations, sequenceID: sequenceID, nextID: &nextID)
+                let groups = groupsXML(sequence.entries, asRead: sequence.opaqueIDs, sequenceID: sequenceID, nextID: &nextID)
                 if let list = XMLLite.fragment("<p:childTnLst>\(groups)</p:childTnLst>", namespaces: OOXML.namespaces) {
                     let after = node.children.lastIndex { ["stCondLst", "endCondLst", "endSync", "iterate"].contains($0.name) }
                     node.insertChild(list, at: (after ?? -1) + 1)
@@ -252,9 +275,36 @@ public enum AnimationXML {
         writeBuilds(for: animations, shapes: shapes, into: timing)
     }
 
+    /// The effects with the steps Dazzle doesn't model put back among them,
+    /// each after the nearest effect it followed that is still there, as
+    /// stand-ins written as read.
+    private static func merged(
+        _ animations: [ShapeAnimation], _ steps: [OpaqueAnimationStep]
+    ) -> (entries: [ShapeAnimation], opaqueIDs: Set<ShapeAnimation.ID>) {
+        let ids = Set(animations.map(\.id))
+        var following: [ShapeAnimation.ID?: [ShapeAnimation]] = [:]
+        var opaqueIDs: Set<ShapeAnimation.ID> = []
+        for step in steps {
+            let standIn = ShapeAnimation(
+                shapeID: 0, category: .other(""), effect: .preset(id: 0, subtype: 0), trigger: step.trigger,
+                duration: step.duration, delay: step.delay, source: step.source
+            )
+            opaqueIDs.insert(standIn.id)
+            following[step.follows.last(where: ids.contains), default: []].append(standIn)
+        }
+        var entries = following[nil] ?? []
+        for animation in animations {
+            entries.append(animation)
+            entries += following[animation.id] ?? []
+        }
+        return (entries, opaqueIDs)
+    }
+
     /// The effects, grouped by the click that starts them and the runs
     /// that start together, as PowerPoint nests them.
-    private static func groupsXML(_ animations: [ShapeAnimation], sequenceID: String, nextID: inout Int) -> String {
+    private static func groupsXML(
+        _ animations: [ShapeAnimation], asRead: Set<ShapeAnimation.ID>, sequenceID: String, nextID: inout Int
+    ) -> String {
         let timeline = AnimationTimeline(animations: animations)
         var xml = ""
         for (stepIndex, step) in timeline.steps.enumerated() {
@@ -273,7 +323,8 @@ public enum AnimationXML {
             for run in runs {
                 xml += "<p:par><p:cTn id=\"\(take(&nextID))\" fill=\"hold\"><p:stCondLst><p:cond delay=\"\(ms(run.start))\"/></p:stCondLst><p:childTnLst>"
                 for entry in run.entries {
-                    xml += effectXML(entry.animation, nodeType: nodeType(of: entry.animation), nextID: &nextID)
+                    let animation = entry.animation
+                    xml += effectXML(animation, nodeType: nodeType(of: animation), asRead: asRead.contains(animation.id), nextID: &nextID)
                 }
                 xml += "</p:childTnLst></p:cTn></p:par>"
             }
@@ -291,8 +342,12 @@ public enum AnimationXML {
     }
 
     /// One effect's `p:par`: as read, retimed, if it has not changed; made
-    /// anew if it has.
-    private static func effectXML(_ animation: ShapeAnimation, nodeType: String, nextID: inout Int) -> String {
+    /// anew if it has. A step Dazzle doesn't model is written just as read.
+    private static func effectXML(_ animation: ShapeAnimation, nodeType: String, asRead: Bool = false, nextID: inout Int) -> String {
+        if asRead, let source = animation.source, let par = XMLLite.fragment(source, namespaces: OOXML.namespaces),
+           let xml = XMLLite.serialize(par, inheritedNamespaces: OOXML.namespaces) {
+            return xml
+        }
         if let source = animation.source, let par = XMLLite.fragment(source, namespaces: OOXML.namespaces),
            let node = par.firstChild(named: "cTn") {
             node.setAttribute("nodeType", nodeType)
@@ -503,7 +558,17 @@ public enum AnimationXML {
     private static func targets(of element: XMLElement) -> Set<Int> {
         var result: Set<Int> = []
         func visit(_ element: XMLElement) {
-            if element.name == "spTgt", let id = element.attribute("spid").flatMap(Int.init) { result.insert(id) }
+            if ["spTgt", "inkTgt"].contains(element.name), let id = element.attribute("spid").flatMap(Int.init) { result.insert(id) }
+            element.children.forEach(visit)
+        }
+        visit(element)
+        return result
+    }
+
+    private static func allShapeIDs(in element: XMLElement) -> Set<Int> {
+        var result: Set<Int> = []
+        func visit(_ element: XMLElement) {
+            if element.name == "cNvPr", let id = element.attribute("id").flatMap(Int.init) { result.insert(id) }
             element.children.forEach(visit)
         }
         visit(element)

@@ -119,6 +119,12 @@ extension EditorState {
         copy.transition = original.transition
         copy.isTransitionEffectModified = original.isTransitionEffectModified
         copy.animations = original.animations.map { ShapeAnimation(copying: $0) }
+        let copiedIDs = Dictionary(uniqueKeysWithValues: zip(original.animations.map(\.id), copy.animations.map(\.id)))
+        copy.opaqueAnimationSteps = original.opaqueAnimationSteps.map { step in
+            var step = step
+            step.follows = step.follows.compactMap { copiedIDs[$0] }
+            return step
+        }
         copy.areAnimationsModified = original.areAnimationsModified
         // Notes and comments belong to one slide; the copy gets its own notes.
         copy.relationships.removeAll {
