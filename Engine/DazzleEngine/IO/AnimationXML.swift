@@ -242,7 +242,7 @@ public enum AnimationXML {
         guard let timing, let rootList = timing.firstDescendant(atPath: "tnLst/par/cTn/childTnLst") else { return }
 
         // Whatever else the timing does, it cannot do to a shape that is gone.
-        for child in rootList.children where !isMainSequence(child) && !targets(of: child).isSubset(of: present) {
+        for child in rootList.children where !isMainSequence(child) && !prune(child, keeping: present) {
             rootList.removeChild(child)
         }
 
@@ -298,6 +298,32 @@ public enum AnimationXML {
             entries += following[animation.id] ?? []
         }
         return (entries, opaqueIDs)
+    }
+
+    /// Whether to keep a part of the timing other than the main sequence. A
+    /// shape's own sequence loses the effects on shapes that are gone, and
+    /// goes once its shape or every effect is gone; anything else goes if it
+    /// names a shape that is gone.
+    private static func prune(_ element: XMLElement, keeping present: Set<Int>) -> Bool {
+        guard element.name == "seq", let node = element.firstChild(named: "cTn"),
+              node.attribute("nodeType") == "interactiveSeq", let groups = node.firstChild(named: "childTnLst") else {
+            return targets(of: element).isSubset(of: present)
+        }
+        let triggers = [node.firstChild(named: "stCondLst"), element.firstChild(named: "nextCondLst"),
+                        element.firstChild(named: "prevCondLst")].compactMap { $0 }
+        guard triggers.allSatisfy({ targets(of: $0).isSubset(of: present) }) else { return false }
+        for group in groups.children(named: "par") {
+            let runs = group.firstDescendant(atPath: "cTn/childTnLst")
+            for run in runs?.children(named: "par") ?? [] {
+                let effects = run.firstDescendant(atPath: "cTn/childTnLst")
+                for effect in effects?.children(named: "par") ?? [] where !targets(of: effect).isSubset(of: present) {
+                    effects?.removeChild(effect)
+                }
+                if effects?.children.isEmpty ?? true { runs?.removeChild(run) }
+            }
+            if runs?.children.isEmpty ?? true { groups.removeChild(group) }
+        }
+        return !groups.children.isEmpty && targets(of: element).isSubset(of: present)
     }
 
     /// The effects, grouped by the click that starts them and the runs
