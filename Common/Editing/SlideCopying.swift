@@ -132,6 +132,57 @@ extension EditorState {
         return copy
     }
 
+    /// A copy of the effect whose XML as read names the copy's own
+    /// relationships, to parts brought over; one Dazzle can't write anew is
+    /// left out when a part can't come.
+    private static func importedAnimation(
+        _ animation: ShapeAnimation, of slide: Slide, into copy: inout Slide, using importer: inout PartImporter
+    ) -> ShapeAnimation? {
+        var copied = ShapeAnimation(copying: animation)
+        guard let source = animation.source else { return copied }
+        let sourcePart = slide.partName ?? slide.sourcePart ?? PartImporter.newSlidePart
+        var named: [Relationship] = []
+        var isComplete = true
+        let readable = PartImporter.remappingRelationships(in: source, namespaces: PartImporter.commonNamespaces) { id in
+            guard let relationship = slide.relationships.first(where: { $0.id == id }),
+                  relationship.isExternal || importer.source.data(at: PackagePath.resolve(relationship.target, from: sourcePart)) != nil
+            else {
+                isComplete = false
+                return nil
+            }
+            named.append(relationship)
+            return id
+        } != nil
+        guard readable, isComplete else {
+            guard animation.effect.isMadeByDazzle else { return nil }
+            copied.source = nil
+            return copied
+        }
+        var ids: [String: String] = [:]
+        for relationship in named where ids[relationship.id] == nil {
+            var moved = relationship
+            if !relationship.isExternal {
+                guard let path = importer.importPart(PackagePath.resolve(relationship.target, from: sourcePart)) else { return nil }
+                moved.target = PackagePath.relativeTarget(to: path, from: PartImporter.newSlidePart)
+            }
+            if let existing = copy.relationships.first(where: {
+                $0.type == moved.type && $0.target == moved.target && $0.isExternal == moved.isExternal
+            }) {
+                ids[relationship.id] = existing.id
+            } else {
+                moved.id = Relationship.unusedID(in: copy.relationships)
+                copy.relationships.append(moved)
+                ids[relationship.id] = moved.id
+            }
+        }
+        guard !ids.isEmpty else { return copied }
+        guard let remapped = PartImporter.remappingRelationships(
+            in: source, namespaces: PartImporter.commonNamespaces, using: { ids[$0] }
+        ) else { return nil }
+        copied.source = remapped
+        return copied
+    }
+
     /// A slide from another presentation, rebuilt on this one's closest layout.
     private static func imported(
         _ slide: Slide, from source: Presentation, into presentation: Presentation, using importer: inout PartImporter
@@ -161,12 +212,9 @@ extension EditorState {
         copy.isTransitionEffectModified = slide.transition != nil
         copy.isTransitionModified = slide.autoAdvanceAfter != nil || !slide.advancesOnClick || slide.transition != nil
         // Effects as read may name the other file's parts, such as a sound;
-        // only those Dazzle can write anew come across.
-        copy.animations = slide.animations.filter(\.effect.isMadeByDazzle).map { animation in
-            var copied = ShapeAnimation(copying: animation)
-            copied.source = nil
-            return copied
-        }
+        // those come across with them, and an effect whose parts can't is left out.
+        let animations = slide.animations.compactMap { importedAnimation($0, of: slide, into: &copy, using: &importer) }
+        copy.animations = animations
         copy.areAnimationsModified = !copy.animations.isEmpty
         copy.notes = slide.notes
         copy.areNotesModified = !slide.notes.isEmpty
