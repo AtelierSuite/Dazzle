@@ -447,11 +447,12 @@ private struct PackageBuilder {
             let body = tree.children(named: "sp").first {
                 $0.firstChild(named: "nvSpPr")?.firstChild(named: "nvPr")?.firstChild(named: "ph")?.attribute("type") == "body"
             }
-            if let body {
-                let text = body.firstChild(named: "txBody")
-                for paragraph in text?.children(named: "p") ?? [] { text?.removeChild(paragraph) }
-                if let text, let wrapper = XMLLite.fragment("<a:txBody>\(paragraphXML)</a:txBody>", namespaces: OOXML.namespaces) {
-                    for paragraph in wrapper.children { text.insertChild(paragraph, at: text.children.count) }
+            if let body, let text = body.firstChild(named: "txBody") {
+                try patchNotes(text, lines: slide.notes.components(separatedBy: "\n"), notesPath: notesPath)
+            } else if let body {
+                if let wrapper = XMLLite.fragment("<p:txBody><a:bodyPr/><a:lstStyle/>\(paragraphXML)</p:txBody>", namespaces: OOXML.namespaces) {
+                    let before = body.children.firstIndex { $0.name == "extLst" } ?? body.children.count
+                    body.insertChild(wrapper, at: before)
                 }
             } else if let shape = XMLLite.fragment(SlideSkeleton.notesBody(paragraphXML, id: 99), namespaces: OOXML.namespaces) {
                 tree.insertChild(shape, at: tree.children.count)
@@ -477,6 +478,31 @@ private struct PackageBuilder {
             target: PackagePath.relativeTarget(to: notesPath, from: slidePath)
         ))
         slide.notesPart = notesPath
+    }
+
+    /// Rewrites only the notes paragraphs whose text changed, so the others
+    /// keep their bullets, colours and links exactly as the file had them.
+    private mutating func patchNotes(_ text: XMLElement, lines: [String], notesPath: String) throws {
+        let relationshipsPath = PackagePath.relationships(of: notesPath)
+        let relationships = Relationship.parse(parts[relationshipsPath])
+        let namespaces = PPTXReader.namespacesInScope(of: text)
+        let parser = ShapeParser(partPath: notesPath, relationships: relationships, namespaces: namespaces,
+                                 parts: [:], capturesSource: true)
+        let elements = text.children(named: "p")
+        let old = parser.textBody(text).paragraphs
+        var writer = ShapeWriter(partPath: notesPath, namespaces: namespaces, relationships: relationships)
+        let paragraphs: [XMLElement] = lines.enumerated().compactMap { index, line in
+            if old.indices.contains(index), old[index].plainText == line { return elements[index] }
+            let template = old.isEmpty ? Paragraph(runs: []) : old[min(index, old.count - 1)]
+            return XMLLite.fragment(writer.paragraphXML(template.replacingText(line)), namespaces: writer.fragmentNamespaces)
+        }
+        let position = elements.first.flatMap { first in text.children.firstIndex { $0 === first } }
+            ?? (text.children.firstIndex { $0.name == "extLst" } ?? text.children.count)
+        for element in elements { text.removeChild(element) }
+        for (offset, element) in paragraphs.enumerated() { text.insertChild(element, at: position + offset) }
+        if writer.relationships != relationships {
+            parts[relationshipsPath] = Relationship.xml(writer.relationships)
+        }
     }
 
     /// The presentation's notes master, made if it has none: notes pages
