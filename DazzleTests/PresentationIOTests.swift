@@ -356,6 +356,49 @@ struct RoundTripTests {
         #expect(final.slides[0].notes == "Changed.")
     }
 
+    @Test("Editing speaker notes keeps the other paragraphs' formatting")
+    func notesFormattingSurvivesEdit() throws {
+        var presentation = Presentation.blank
+        presentation.slides[0].notes = "placeholder"
+        presentation.slides[0].areNotesModified = true
+        var entries = try ZipArchive.entries(in: PPTXWriter.data(from: presentation))
+        let notesPath = try #require(try reread(presentation).slides[0].notesPart)
+        let bold = "<a:p><a:pPr indent=\"-171450\" marL=\"171450\"><a:buFont typeface=\"Arial\"/><a:buChar char=\"•\"/></a:pPr>"
+            + "<a:r><a:rPr b=\"1\" dirty=\"0\" lang=\"en-US\"><a:solidFill><a:srgbClr val=\"C00000\"/></a:solidFill></a:rPr>"
+            + "<a:t>Bold red bullet</a:t></a:r></a:p>"
+        let link = "<a:p><a:r><a:rPr dirty=\"0\" lang=\"en-US\"><a:hlinkClick r:id=\"rId99\"/></a:rPr>"
+            + "<a:t>A link</a:t></a:r></a:p>"
+        let typo = "<a:p><a:pPr indent=\"-171450\" marL=\"171450\"><a:buFont typeface=\"Arial\"/><a:buChar char=\"•\"/></a:pPr>"
+            + "<a:r><a:rPr dirty=\"0\" i=\"1\" lang=\"en-US\"/><a:t>Tpyo here</a:t></a:r></a:p>"
+        var notesXML = String(decoding: try #require(entries[notesPath]), as: UTF8.self)
+        let start = try #require(notesXML.range(of: "<a:p>"))
+        let end = try #require(notesXML.range(of: "</a:p>", options: .backwards))
+        notesXML.replaceSubrange(start.lowerBound..<end.upperBound, with: bold + link + typo)
+        entries[notesPath] = Data(notesXML.utf8)
+        let relsPath = PackagePath.relationships(of: notesPath)
+        var rels = Relationship.parse(entries[relsPath])
+        rels.append(Relationship(id: "rId99", type: OOXML.RelationshipType.hyperlink, target: "https://example.com", isExternal: true))
+        entries[relsPath] = Relationship.xml(rels)
+        let formatted = try PPTXReader.presentation(from: ZipArchive.archive(entries: entries.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }))
+        #expect(formatted.slides[0].notes == "Bold red bullet\nA link\nTpyo here")
+
+        let untouched = try ZipArchive.entries(in: PPTXWriter.data(from: formatted))
+        #expect(untouched[notesPath] == entries[notesPath])
+
+        var edited = formatted
+        edited.slides[0].notes = "Bold red bullet\nA link\nTypo here"
+        edited.slides[0].areNotesModified = true
+        let saved = try ZipArchive.entries(in: PPTXWriter.data(from: edited))
+        let savedXML = String(decoding: try #require(saved[notesPath]), as: UTF8.self)
+        #expect(savedXML.contains(bold))
+        #expect(savedXML.contains(link))
+        #expect(!savedXML.contains("Tpyo"))
+        #expect(savedXML.contains("<a:buChar char=\"•\"/></a:pPr><a:r><a:rPr dirty=\"0\" i=\"1\" lang=\"en-US\"/><a:t>Typo here</a:t>"))
+        #expect(Relationship.parse(saved[relsPath]).contains { $0.id == "rId99" })
+        let final = try PPTXReader.presentation(from: PPTXWriter.data(from: edited))
+        #expect(final.slides[0].notes == "Bold red bullet\nA link\nTypo here")
+    }
+
     @Test("Pictures are added to the package with a relationship")
     func picture() throws {
         var presentation = Presentation.blank
