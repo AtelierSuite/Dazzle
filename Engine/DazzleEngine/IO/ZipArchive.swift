@@ -76,26 +76,100 @@ public enum ZipArchive {
 
     /// Reads every entry, in the order the central directory lists them.
     public static func orderedEntries(in data: Data) throws -> [(path: String, data: Data)] {
+        try read(data).entries
+    }
+
+    /// Reads every entry, along with the deflated payloads `archive(entries:compresses:reusing:)`
+    /// can copy back unchanged instead of compressing them again.
+    public static func entriesKeepingPayloads(
+        in data: Data
+    ) throws -> (entries: [String: Data], reusable: [String: CompressedEntry]) {
+        let contents = try read(data)
+        let entries = Dictionary(contents.entries.map { ($0.path, $0.data) }, uniquingKeysWith: { _, last in last })
+        return (entries, contents.reusable)
+    }
+
+    private static func read(
+        _ data: Data
+    ) throws -> (entries: [(path: String, data: Data)], reusable: [String: CompressedEntry]) {
+        var result: [(path: String, data: Data)] = []
+        var reusable: [String: CompressedEntry] = [:]
+        for entry in try directoryRecords(in: data) {
+            let record = entry.record
+            // Bit 0 of the general purpose flags means the entry's bytes are
+            // encrypted; decompressing them anyway would yield noise.
+            guard record.flags & 1 == 0 else { throw ZipError.encryptedEntry(record.name) }
+            guard !record.name.hasSuffix("/") else { continue }
+            let payload = try storedPayload(entry.bytes, record: record)
+            result.append((record.name, try extract(payload, record: record)))
+            // Media is stored rather than deflated on save, so holding its payload would only cost memory.
+            reusable[record.name] = record.method == 8 && !isAlreadyCompressed(path: record.name)
+                ? CompressedEntry(method: 8, crc: record.crc, uncompressedSize: record.uncompressedSize, payload: payload)
+                : nil
+        }
+        guard !result.isEmpty else { throw ZipError.notAnArchive }
+        return (result, reusable)
+    }
+
+    /// One entry of an existing archive, kept exactly as it sits on disk:
+    /// still compressed, so an unchanged entry can be copied without
+    /// decompressing and recompressing it.
+    public struct CompressedEntry: Equatable, Sendable {
+        /// 0 for stored, 8 for deflated.
+        public let method: UInt16
+        public let crc: UInt32
+        public let uncompressedSize: Int
+        /// The entry's bytes as stored: the compressed payload for method 8.
+        public let payload: Data
+    }
+
+    /// Every entry of an archive with its stored payload, path-keyed, for
+    /// inspecting how an archive stores them.
+    public static func compressedEntries(in data: Data) throws -> [String: CompressedEntry] {
+        var result: [String: CompressedEntry] = [:]
+        for entry in try directoryRecords(in: data) {
+            let record = entry.record
+            guard record.flags & 1 == 0, !record.name.hasSuffix("/") else { continue }
+            let payload = try storedPayload(entry.bytes, record: record)
+            result[record.name] = CompressedEntry(
+                method: record.method, crc: record.crc,
+                uncompressedSize: record.uncompressedSize, payload: payload
+            )
+        }
+        guard !result.isEmpty else { throw ZipError.notAnArchive }
+        return result
+    }
+
+    /// The central directory records of an archive, each with the whole file
+    /// for slicing payloads out of.
+    private static func directoryRecords(in data: Data) throws -> [(bytes: [UInt8], record: DirectoryRecord)] {
         let bytes = [UInt8](data)
         guard !bytes.starts(with: compoundFileSignature) else { throw ZipError.protectedOrLegacyPresentation }
         guard let directoryStart = locateCentralDirectory(bytes) else { throw ZipError.notAnArchive }
 
-        var result: [(path: String, data: Data)] = []
+        var records: [(bytes: [UInt8], record: DirectoryRecord)] = []
         var offset = directoryStart
         while offset + 46 <= bytes.count, readUInt32(bytes, offset) == centralDirectorySignature {
             let record = try directoryRecord(bytes, at: offset)
-
-            // Bit 0 of the general purpose flags means the entry's bytes are
-            // encrypted; decompressing them anyway would yield noise.
-            guard record.flags & 1 == 0 else { throw ZipError.encryptedEntry(record.name) }
-
-            if !record.name.hasSuffix("/") {
-                result.append((record.name, try extract(bytes, record: record)))
-            }
+            records.append((bytes, record))
             offset += record.length
         }
-        guard !result.isEmpty else { throw ZipError.notAnArchive }
-        return result
+        return records
+    }
+
+    /// The stored (possibly compressed) bytes of an entry, without inflating.
+    private static func storedPayload(_ bytes: [UInt8], record: DirectoryRecord) throws -> Data {
+        guard record.localHeaderOffset >= 0, record.localHeaderOffset + 30 <= bytes.count,
+              readUInt32(bytes, record.localHeaderOffset) == localHeaderSignature else {
+            throw ZipError.corruptEntry(record.name)
+        }
+        let nameLength = Int(readUInt16(bytes, record.localHeaderOffset + 26))
+        let extraLength = Int(readUInt16(bytes, record.localHeaderOffset + 28))
+        let start = record.localHeaderOffset + 30 + nameLength + extraLength
+        guard record.compressedSize >= 0, start + record.compressedSize <= bytes.count else {
+            throw ZipError.corruptEntry(record.name)
+        }
+        return Data(bytes[start..<(start + record.compressedSize)])
     }
 
     /// Everything one central directory record says about a single entry.
@@ -180,19 +254,8 @@ public enum ZipArchive {
         return Int(value)
     }
 
-    private static func extract(_ bytes: [UInt8], record: DirectoryRecord) throws -> Data {
+    private static func extract(_ payload: Data, record: DirectoryRecord) throws -> Data {
         let name = record.name
-        guard record.localHeaderOffset >= 0, record.localHeaderOffset + 30 <= bytes.count,
-              readUInt32(bytes, record.localHeaderOffset) == localHeaderSignature else {
-            throw ZipError.corruptEntry(name)
-        }
-        let nameLength = Int(readUInt16(bytes, record.localHeaderOffset + 26))
-        let extraLength = Int(readUInt16(bytes, record.localHeaderOffset + 28))
-        let start = record.localHeaderOffset + 30 + nameLength + extraLength
-        guard record.compressedSize >= 0, start + record.compressedSize <= bytes.count else {
-            throw ZipError.corruptEntry(name)
-        }
-        let payload = Data(bytes[start..<(start + record.compressedSize)])
 
         let content: Data
         switch record.method {
@@ -259,10 +322,30 @@ public enum ZipArchive {
 
     // MARK: - Writing
 
+    /// File extensions whose contents are already compressed, so deflating
+    /// them again is pure wasted work: JPEG/PNG and friends, and the usual
+    /// movie and sound containers.
+    private static let alreadyCompressedExtensions: Set<String> = [
+        "jpg", "jpeg", "jfif", "png", "gif", "webp", "avif", "heic", "heif",
+        "mp4", "m4v", "mov", "3gp", "3g2", "webm", "mkv",
+        "mp3", "m4a", "m4b", "aac", "ogg", "oga", "opus", "flac", "wma",
+    ]
+
+    /// Whether a part's type is already compressed, by its extension.
+    static func isAlreadyCompressed(path: String) -> Bool {
+        alreadyCompressedExtensions.contains((path as NSString).pathExtension.lowercased())
+    }
+
     /// Builds an archive. Entries are written in the order given, which matters
     /// for OOXML readers that expect `[Content_Types].xml` first. Keynote
     /// stores every entry as it is, which `compresses` turned off matches.
-    public static func archive(entries: [(path: String, data: Data)], compresses: Bool = true) throws -> Data {
+    ///
+    /// An entry in `reusable` whose CRC and size still match is copied with its
+    /// stored bytes instead of being deflated again. Types that are already
+    /// compressed are stored without a deflate attempt at all.
+    public static func archive(
+        entries: [(path: String, data: Data)], compresses: Bool = true, reusing reusable: [String: CompressedEntry] = [:]
+    ) throws -> Data {
         var output = Data()
         var directory = Data()
         var count: UInt16 = 0
@@ -274,7 +357,13 @@ public enum ZipArchive {
 
             var payload = entry.data
             var method: UInt16 = 0
-            if compresses, entry.data.count > 64, let deflated = deflate(entry.data), deflated.count < entry.data.count {
+            if let stored = reusable[entry.path], stored.method == 0 || (compresses && stored.method == 8),
+               stored.crc == crc, stored.uncompressedSize == entry.data.count {
+                // Unchanged since it was read: keep its compressed bytes.
+                payload = stored.payload
+                method = stored.method
+            } else if compresses, entry.data.count > 64, !isAlreadyCompressed(path: entry.path),
+                      let deflated = deflate(entry.data), deflated.count < entry.data.count {
                 payload = deflated
                 method = 8
             }
