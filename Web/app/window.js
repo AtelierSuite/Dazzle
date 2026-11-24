@@ -1462,7 +1462,7 @@ export class PresentationWindow {
     }
     if (action === "replace" && this.findIndex >= 0 && this.matches?.[this.findIndex]) {
       const match = this.matches[this.findIndex];
-      await this.engine.call("replace", { text: this.findInput.value, with: this.replaceInput.value, ...this.findOptions(), only: { slide: match.slide, loc: match.loc } });
+      await this.engine.call("replace", { text: this.findInput.value, with: this.replaceInput.value, ...this.findOptions(), only: { slide: match.slide, loc: match.loc, shape: match.shape, cell: match.cell, notes: match.notes } });
       const index = this.findIndex;
       await this.search();
       this.findIndex = Math.min(index, (this.matches?.length ?? 1) - 1) - 1;
@@ -1478,7 +1478,7 @@ export class PresentationWindow {
     const match = matches[this.findIndex];
     // Shows the slide and selects what holds the match.
     await this.canvas.endEditing();
-    await this.engine.call("select", { slide: match.slide, shapes: match.shape ? [match.shape] : [] });
+    await this.engine.call("select", { slide: match.slide, shapes: match.select ? [match.select] : [] });
     if (match.notes) {
       this.setPanelVisible("notes", true);
       this.notes.focus();

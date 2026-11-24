@@ -749,10 +749,14 @@ final class Bridge {
                     "slide": match.slideID.uuidString, "loc": match.range.location, "len": match.range.length,
                     "excerpt": match.excerpt, "excerptLoc": match.excerptRange.location, "excerptLen": match.excerptRange.length,
                 ]
+                let slide = presentation.slides.first { $0.id == match.slideID }
                 switch match.place {
-                case .shape(let id): json["shape"] = id.uuidString
+                case .shape(let id):
+                    json["shape"] = id.uuidString
+                    json["select"] = (slide?.topLevelShapeID(containing: id) ?? id).uuidString
                 case .cell(let id, let position):
                     json["shape"] = id.uuidString
+                    json["select"] = (slide?.topLevelShapeID(containing: id) ?? id).uuidString
                     json["cell"] = ["r": position.row, "c": position.column]
                 case .notes: json["notes"] = true
                 }
@@ -763,8 +767,16 @@ final class Bridge {
             let replacement = r["with"] as? String ?? ""
             var matches = presentation.matches(for: query)
             if let only = r["only"] as? [String: Any] {
+                let cell = only["cell"] as? [String: Any]
                 matches = matches.filter { match in
-                    match.slideID.uuidString == only["slide"] as? String && match.range.location == only["loc"] as? Int
+                    guard match.slideID.uuidString == only["slide"] as? String, match.range.location == only["loc"] as? Int else { return false }
+                    switch match.place {
+                    case .notes: return only["notes"] as? Bool == true
+                    case .shape(let id): return cell == nil && id.uuidString == only["shape"] as? String
+                    case .cell(let id, let position):
+                        return id.uuidString == only["shape"] as? String
+                            && position.row == cell?["r"] as? Int && position.column == cell?["c"] as? Int
+                    }
                 }
             }
             guard !matches.isEmpty else { return 0 }

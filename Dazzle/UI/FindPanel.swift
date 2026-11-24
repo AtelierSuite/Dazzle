@@ -97,15 +97,6 @@ struct FindPanel: View {
 
     /// Goes to the slide a match is on, and picks out the shape it is in.
     private func show(_ match: FindMatch) {
-        state.selectSlide(match.slideID)
-        switch match.place {
-        case .shape(let id):
-            state.selectedShapeID = id
-        case .cell(let id, let position):
-            state.selectedShapeID = id
-            state.selectCell(position)
-        case .notes:
-            break
-        }
+        state.show(match, in: presentation)
     }
 }

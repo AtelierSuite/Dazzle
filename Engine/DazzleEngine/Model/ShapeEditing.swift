@@ -63,7 +63,15 @@ extension SlideShape {
     }
 
     private static func copy(of shape: SlideShape) -> SlideShape {
-        var copy = SlideShape(id: UUID(), shapeID: shape.shapeID, name: shape.name, kind: shape.kind, frame: shape.frame)
+        var kind = shape.kind
+        if case .group(var group) = kind {
+            group.children = group.children.map(copy(of:))
+            kind = .group(group)
+        }
+        var copy = SlideShape(id: UUID(), shapeID: shape.shapeID, name: shape.name, kind: kind, frame: shape.frame)
+        copy.isHidden = shape.isHidden
+        copy.scene3D = shape.scene3D
+        copy.shape3D = shape.shape3D
         copy.hasOwnFrame = shape.hasOwnFrame
         copy.rotation = shape.rotation
         copy.flipsHorizontally = shape.flipsHorizontally

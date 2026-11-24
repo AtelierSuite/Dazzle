@@ -961,6 +961,21 @@ final class EditorState {
     }
 
     /// Picks a cell of the selected table, optionally to type into.
+    func show(_ match: FindMatch, in presentation: Presentation) {
+        selectSlide(match.slideID)
+        let slide = presentation.slides.first { $0.id == match.slideID }
+        switch match.place {
+        case .shape(let id):
+            selectedShapeID = slide?.topLevelShapeID(containing: id) ?? id
+        case .cell(let id, let position):
+            let selected = slide?.topLevelShapeID(containing: id) ?? id
+            selectedShapeID = selected
+            if selected == id { selectCell(position) }
+        case .notes:
+            break
+        }
+    }
+
     func selectCell(_ position: TableCellPosition?, editing: Bool = false) {
         selectedCell = position
         isEditingCell = editing && position != nil

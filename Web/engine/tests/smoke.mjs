@@ -147,6 +147,33 @@ test("adds slides, shapes, tables, charts and moves them", () => {
   assert.ok(chart.chart.some((item) => item.k === "path"), "a pie draws slices");
 });
 
+test("finds text inside a group and replaces one result at a time", () => {
+  const boxes = [];
+  for (const text of ["Zq2025 grouped", "Other", "Zq2025 alone"]) {
+    call("insertTextBox");
+    const box = call("scene").result.shapes.at(-1);
+    call("beginText", { shape: box.id });
+    call("setText", { paras: [{ src: 0, runs: [{ t: text }] }] });
+    call("endText");
+    boxes.push(box.id);
+  }
+  call("select", { shapes: boxes.slice(0, 2) });
+  call("group");
+  const group = call("scene").result.shapes.find((node) => node.kind === "group" && !boxes.includes(node.id));
+  assert.ok(group, "the first two boxes are grouped");
+
+  const matches = call("find", { text: "Zq2025" }).result;
+  assert.equal(matches.length, 2);
+  const grouped = matches.find((match) => match.select !== match.shape);
+  assert.ok(grouped, "a match inside a group selects the group");
+  assert.equal(grouped.select, group.id);
+  const count = call("replace", { text: "Zq2025", with: "Zq2026", only: { slide: grouped.slide, loc: grouped.loc, shape: grouped.shape } }).result;
+  assert.equal(count, 1, "replaces only the chosen result, though both start at the same offset");
+  const left = call("find", { text: "Zq2025" }).result;
+  assert.equal(left.length, 1);
+  assert.equal(left[0].select, left[0].shape);
+});
+
 test("attaches a connector to a shape, which then takes it along", () => {
   call("insertShape", { preset: "rect" });
   const box = call("scene").result.shapes.at(-1);

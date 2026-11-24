@@ -114,7 +114,7 @@ public final class ShapeParser {
     // MARK: - Shapes
 
     /// A shape's `cNvPr`, looking inside an alternative's rendition if need be.
-    private static func commonProperties(of element: XMLElement) -> XMLElement? {
+    static func commonProperties(of element: XMLElement) -> XMLElement? {
         var shape: XMLElement? = element
         if element.name == "AlternateContent" {
             let choice = element.firstChild(named: "Choice")?.children.first

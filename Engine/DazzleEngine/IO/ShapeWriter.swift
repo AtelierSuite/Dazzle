@@ -17,7 +17,7 @@ public struct ShapeWriter {
     public var slidePath: (Slide.ID) -> String? = { _ in nil }
 
     public mutating func xml(for shape: SlideShape) -> String? {
-        if shape.edits.isEmpty, let source = shape.source { return source }
+        if shape.edits.isEmpty, !shape.hasEditedMembers, let source = shape.source { return source }
         guard let element = element(for: shape) else { return shape.source }
         let edits: Set<SlideShape.Edit> = shape.source == nil
             ? [.transform, .fill, .line, .text, .table, .picture, .altText, .effects, .link, .geometry, .connections, .media]
@@ -71,6 +71,9 @@ public struct ShapeWriter {
         if edits.contains(.placeholder), shape.placeholder == nil {
             let details = element.children.first { $0.name.hasPrefix("nv") }?.firstChild(named: "nvPr")
             if let mark = details?.firstChild(named: "ph") { details?.removeChild(mark) }
+        }
+        if shape.source != nil, shape.hasEditedMembers, case .group(let group) = shape.kind {
+            writeMembers(group.children, into: element)
         }
         return XMLLite.serialize(element, inheritedNamespaces: namespaces)
     }
@@ -207,6 +210,18 @@ public struct ShapeWriter {
     }
 
     // MARK: - Patching
+
+    private mutating func writeMembers(_ members: [SlideShape], into group: XMLElement) {
+        var remaining = members
+        for child in group.children {
+            guard let id = ShapeParser.commonProperties(of: child)?.attribute("id").flatMap(Int.init),
+                  let index = remaining.firstIndex(where: { $0.shapeID == id }) else { continue }
+            let member = remaining.remove(at: index)
+            guard !member.edits.isEmpty || member.hasEditedMembers,
+                  let xml = xml(for: member), let element = fragment(xml) else { continue }
+            group.replaceChild(child, with: element)
+        }
+    }
 
     /// The element holding a shape's visual properties.
     private func properties(of element: XMLElement) -> XMLElement? {
@@ -867,5 +882,12 @@ public struct ShapeWriter {
             writeLink(properties.link, tooltip: properties.linkTooltip, into: element, before: ["hlinkMouseOver", "rtl", "extLst"])
         }
         return XMLLite.serialize(element, inheritedNamespaces: fragmentNamespaces) ?? ""
+    }
+}
+
+private extension SlideShape {
+    var hasEditedMembers: Bool {
+        guard case .group(let group) = kind else { return false }
+        return group.children.contains { !$0.edits.isEmpty || $0.hasEditedMembers }
     }
 }
