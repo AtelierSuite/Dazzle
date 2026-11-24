@@ -346,3 +346,85 @@ struct PictureRecolourTests {
         #expect(restored.effects == picture.effects)
     }
 }
+
+@Suite("Image cache limits")
+struct ImageCacheTests {
+    /// PNG data of a solid `width`×`height` picture.
+    private func png(width: Int, height: Int) throws -> Data {
+        let canvas = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        canvas.setFillColor(CGColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 1))
+        canvas.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let image = try #require(canvas.makeImage())
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    @Test("The cache starts with a byte limit")
+    func defaultByteLimit() {
+        #expect(ImageCache.byteLimit > 0)
+        #expect(ImageCache.shared.totalCostLimit == ImageCache.byteLimit)
+    }
+
+    @Test("A picture is decoded no larger than the size it is drawn at")
+    func decodeHonorsDrawnSize() throws {
+        let cache = ImageCache()
+        let data = try png(width: 4_000, height: 2_000)
+        let path = "cache-test/\(UUID().uuidString).png"
+        let small = try #require(cache.image(for: data, path: path, maxPixelSize: 500))
+        #expect(max(small.width, small.height) <= 512)
+        let larger = try #require(cache.image(for: data, path: path, maxPixelSize: 2_000))
+        #expect(max(larger.width, larger.height) <= 2_048)
+        #expect(max(larger.width, larger.height) > max(small.width, small.height))
+        // The default, and anything above it, never decode past the fallback size.
+        let fallback = try #require(cache.image(for: data, path: path))
+        #expect(max(fallback.width, fallback.height) <= ImageCache.fallbackMaxPixelSize)
+        #expect(max(fallback.width, fallback.height) > max(larger.width, larger.height))
+        let clamped = try #require(cache.image(for: data, path: path, maxPixelSize: 100_000))
+        #expect(max(clamped.width, clamped.height) <= ImageCache.fallbackMaxPixelSize)
+        // A size already decoded is served from the cache, unchanged.
+        let again = try #require(cache.image(for: data, path: path, maxPixelSize: 500))
+        #expect(again.width == small.width && again.height == small.height)
+    }
+
+    @Test("Each cached picture counts its bytes, four per pixel")
+    func costIsPixelBytes() throws {
+        let cache = ImageCache()
+        let data = try png(width: 120, height: 80)
+        let path = "cache-test/\(UUID().uuidString).png"
+        let before = cache.totalCost
+        let image = try #require(cache.image(for: data, path: path, maxPixelSize: 120))
+        #expect(image.width == 120 && image.height == 80)
+        #expect(cache.totalCost == before + image.width * image.height * 4)
+        // A second decode at the same size is a cache hit and costs nothing.
+        _ = cache.image(for: data, path: path, maxPixelSize: 120)
+        #expect(cache.totalCost == before + image.width * image.height * 4)
+    }
+
+    @Test("A recoloured picture counts its bytes too")
+    func processedCountsTowardLimit() throws {
+        let cache = ImageCache()
+        let data = try png(width: 64, height: 64)
+        let path = "cache-test/\(UUID().uuidString).png"
+        let image = try #require(cache.image(for: data, path: path, maxPixelSize: 64))
+        let before = cache.totalCost
+        let grey = try #require(cache.recolored(image, key: "grey-\(UUID().uuidString)", isGreyscale: true, duotone: []))
+        #expect(cache.totalCost == before + grey.width * grey.height * 4)
+    }
+
+    @Test("The cache evicts pictures once the byte limit is passed")
+    func evictsAboveByteLimit() throws {
+        let cache = ImageCache()
+        cache.totalCostLimit = 100_000
+        // Ten 100×100 pictures cost 40_000 bytes each: 400_000 without a limit.
+        for index in 0..<10 {
+            let data = try png(width: 100, height: 100)
+            _ = cache.image(for: data, path: "cache-test/evict-\(index)-\(UUID().uuidString).png", maxPixelSize: 100)
+        }
+        #expect(cache.totalCost <= 100_000)
+    }
+}

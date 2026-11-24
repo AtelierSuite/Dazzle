@@ -1352,7 +1352,9 @@ public struct TextRenderer {
     /// A renderer that draws picture bullets from `presentation`'s package.
     public init(style: SlideStyleContext, slideNumber: Int, presentation: Presentation) {
         self.init(style: style, slideNumber: slideNumber) { path in
-            presentation.data(at: path).flatMap { ImageCache.shared.image(for: $0, path: path) }
+            // A picture bullet is drawn at about the text's size, so there
+            // is no use decoding it larger than a small icon.
+            presentation.data(at: path).flatMap { ImageCache.shared.image(for: $0, path: path, maxPixelSize: 256) }
         }
     }
 }

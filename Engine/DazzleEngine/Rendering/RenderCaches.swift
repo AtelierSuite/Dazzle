@@ -22,26 +22,98 @@ public typealias PlatformFont = NSFont
 public final class ImageCache: @unchecked Sendable {
     public static let shared = ImageCache()
 
-    // NSCache is thread-safe, which is what makes this class safe to share.
-    private let cache = NSCache<NSString, CGImage>()
+    /// The most decoded bytes the cache holds at once. 256 MB is about seven
+    /// full-screen 4K pictures, or dozens of slide-sized ones, so a
+    /// picture-heavy presentation cannot hold gigabytes of decoded pictures.
+    public static let byteLimit = 256 * 1024 * 1024
+    /// The largest side a picture is decoded at when the caller does not say
+    /// how big it is drawn: no larger than a slide on a big display, so there
+    /// is no use decoding a 50-megapixel photo at full size.
+    public static let fallbackMaxPixelSize = 3_000
 
-    private init() {
-        cache.countLimit = 120
+    private let lock = NSLock()
+    private var entries: [String: (image: CGImage, cost: Int)] = [:]
+    /// Cache keys, least recently used first.
+    private var order: [String] = []
+    private var countedCost = 0
+    private var costLimit = ImageCache.byteLimit
+    private let countLimit = 120
+    private let memoryPressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .global(qos: .utility))
+
+    init() {
+        memoryPressure.setEventHandler { [weak self] in self?.removeAll() }
+        memoryPressure.resume()
     }
 
-    public func image(for data: Data, path: String) -> CGImage? {
-        let key = "\(path)#\(data.count)#\(data.hashValue)" as NSString
-        if let cached = cache.object(forKey: key) { return cached }
+    /// The combined byte cost of the pictures in the cache right now.
+    public var totalCost: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return countedCost
+    }
+
+    /// The byte limit the cache keeps to, initially ``byteLimit``.
+    public var totalCostLimit: Int {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return costLimit
+        }
+        set {
+            lock.lock()
+            defer { lock.unlock() }
+            costLimit = newValue
+            evictLocked()
+        }
+    }
+
+    /// The bytes a decoded picture takes: four bytes per pixel.
+    private static func cost(of image: CGImage) -> Int { image.width * image.height * 4 }
+
+    private func cached(_ key: String) -> CGImage? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = entries[key] else { return nil }
+        if let index = order.firstIndex(of: key) { order.remove(at: index) }
+        order.append(key)
+        return entry.image
+    }
+
+    private func add(_ image: CGImage, forKey key: String) {
+        let cost = Self.cost(of: image)
+        lock.lock()
+        defer { lock.unlock() }
+        if let old = entries[key] { countedCost -= old.cost }
+        entries[key] = (image, cost)
+        countedCost += cost
+        if let index = order.firstIndex(of: key) { order.remove(at: index) }
+        order.append(key)
+        evictLocked()
+    }
+
+    private func evictLocked() {
+        while countedCost > costLimit || order.count > countLimit, let oldest = order.first {
+            order.removeFirst()
+            if let entry = entries.removeValue(forKey: oldest) { countedCost -= entry.cost }
+        }
+    }
+
+    /// The decoded picture at `path`, decoded no larger than `maxPixelSize`
+    /// on its larger side — pass the size it is drawn at in pixels.
+    public func image(for data: Data, path: String, maxPixelSize: Int = ImageCache.fallbackMaxPixelSize) -> CGImage? {
+        // Sizes round up to a power of two so a picture being resized or zoomed is not decoded every frame.
+        let requested = max(64, min(maxPixelSize, ImageCache.fallbackMaxPixelSize))
+        let size = min(1 << Int(log2(Double(requested - 1)).rounded(.down) + 1), ImageCache.fallbackMaxPixelSize)
+        let key = "\(path)#\(data.count)#\(data.hashValue)#\(size)"
+        if let cached = cached(key) { return cached }
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        // Pictures are drawn no larger than a slide on a big display, so
-        // there is no use decoding a 50-megapixel photo at full size.
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: 3_000,
+            kCGImageSourceThumbnailMaxPixelSize: size,
             kCGImageSourceCreateThumbnailWithTransform: true,
         ]
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        cache.setObject(image, forKey: key)
+        add(image, forKey: key)
         return image
     }
 
@@ -59,8 +131,8 @@ public final class ImageCache: @unchecked Sendable {
     /// Office applied them to the original, then the colour effects.
     public func processed(_ image: CGImage, key: String, effects: ResolvedPictureEffects) -> CGImage? {
         guard !effects.isEmpty else { return image }
-        let cacheKey = "processed#\(key)#\(effects)" as NSString
-        if let cached = cache.object(forKey: cacheKey) { return cached }
+        let cacheKey = "processed#\(key)#\(effects)"
+        if let cached = cached(cacheKey) { return cached }
         var source = image
         #if canImport(CoreImage)
         if !effects.artistic.isEmpty, let artistic = ArtisticRenderer.apply(effects.artistic, to: image) {
@@ -94,8 +166,17 @@ public final class ImageCache: @unchecked Sendable {
             }
         }
         guard let processed = context.makeImage() else { return image }
-        cache.setObject(processed, forKey: cacheKey)
+        add(processed, forKey: cacheKey)
         return processed
+    }
+
+    /// Drops every cached picture, e.g. when memory is tight.
+    public func removeAll() {
+        lock.lock()
+        defer { lock.unlock() }
+        countedCost = 0
+        entries = [:]
+        order = []
     }
 }
 
