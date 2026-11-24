@@ -232,12 +232,19 @@ extension SlideShape {
             chart.path = path(chart.path)
             shape.kind = .chart(chart)
         case .table(var table):
-            for row in table.rows.indices {
-                for cell in table.rows[row].cells.indices {
-                    table.rows[row].cells[cell].text = table.rows[row].cells[cell].text?.remapped(xml: xml)
-                    table.rows[row].cells[cell].fill = table.rows[row].cells[cell].fill?.remapped(path: path)
+            func remap(_ cells: [[SlideTable.Cell]]) -> [[SlideTable.Cell]] {
+                cells.map { row in
+                    row.map { cell in
+                        var cell = cell
+                        cell.text = cell.text?.remapped(xml: xml)
+                        cell.fill = cell.fill?.remapped(path: path)
+                        return cell
+                    }
                 }
             }
+            let rows = remap(table.rows.map(\.cells))
+            for row in table.rows.indices { table.rows[row].cells = rows[row] }
+            table.sourceCells = remap(table.sourceCells)
             shape.kind = .table(table)
         default:
             break

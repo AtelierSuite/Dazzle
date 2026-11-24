@@ -623,8 +623,9 @@ public struct ShapeWriter {
 
     // MARK: - Tables
 
-    /// Writes the table's grid, rows and cells from the model, each cell
-    /// starting from the XML it was read with.
+    /// Writes the table's grid, rows and cells from the model. Rows, columns
+    /// and cells the file had keep their elements, extensions and all, with
+    /// only what changed rewritten; ones Dazzle added are built afresh.
     private mutating func writeTable(_ table: SlideTable, into element: XMLElement) {
         guard let data = element.firstChild(named: "graphic")?.firstChild(named: "graphicData"),
               let grid = data.firstChild(named: "tbl") else { return }
@@ -638,20 +639,133 @@ public struct ShapeWriter {
             properties.insertChild(style, at: properties.children.count)
         }
         let extensions = grid.firstChild(named: "extLst")
+        let sourceGrid = grid.firstChild(named: "tblGrid")
+        let sourceColumns = sourceGrid?.children(named: "gridCol") ?? []
+        let sourceRows = grid.children(named: "tr")
         for child in grid.children { grid.removeChild(child) }
         grid.insertChild(properties, at: 0)
-        let columns = table.columnWidths.map { "<a:gridCol w=\"\($0)\"/>" }.joined()
-        if let gridColumns = fragment("<a:tblGrid>\(columns)</a:tblGrid>") {
-            grid.insertChild(gridColumns, at: grid.children.count)
+
+        // Each column's element in the file, used once at most.
+        var usedColumns = Set<Int>()
+        let columnSources: [Int?] = table.columnWidths.indices.map { index in
+            guard table.sourceColumns.count == table.columnWidths.count, let source = table.sourceColumns[index],
+                  sourceColumns.indices.contains(source), usedColumns.insert(source).inserted else { return nil }
+            return source
         }
+        if let columnGrid = sourceGrid ?? fragment("<a:tblGrid/>") {
+            for child in columnGrid.children(named: "gridCol") { columnGrid.removeChild(child) }
+            var columnIDs = IdentifierPool(sourceColumns, name: "colId")
+            for (index, width) in table.columnWidths.enumerated() {
+                let column: XMLElement?
+                if let source = columnSources[index] {
+                    column = sourceColumns[source]
+                    if column?.attribute("w").flatMap(Int.init) != width { column?.setAttribute("w", String(width)) }
+                } else {
+                    column = fragment("<a:gridCol w=\"\(width)\"/>")
+                    if let column, let ids = columnIDs.extensions(using: fragmentNamespaces) {
+                        column.insertChild(ids, at: column.children.count)
+                    }
+                }
+                if let column { columnGrid.insertChild(column, at: index) }
+            }
+            grid.insertChild(columnGrid, at: grid.children.count)
+        }
+
+        var rowIDs = IdentifierPool(sourceRows, name: "rowId")
+        var usedRows = Set<Int>()
         for row in table.rows {
-            guard let rowElement = fragment("<a:tr h=\"\(row.height)\"/>") else { continue }
-            for cell in row.cells {
-                if let cellElement = cellElement(cell) { rowElement.insertChild(cellElement, at: rowElement.children.count) }
+            let source = row.sourceIndex.flatMap { sourceRows.indices.contains($0) && usedRows.insert($0).inserted ? $0 : nil }
+            let rowElement: XMLElement
+            if let source {
+                rowElement = sourceRows[source]
+                if rowElement.attribute("h").flatMap(Int.init) != row.height { rowElement.setAttribute("h", String(row.height)) }
+            } else {
+                guard let fresh = fragment("<a:tr h=\"\(row.height)\"/>") else { continue }
+                if let ids = rowIDs.extensions(using: fragmentNamespaces) { fresh.insertChild(ids, at: 0) }
+                rowElement = fresh
+            }
+            let sourceCells = rowElement.children(named: "tc")
+            for cell in sourceCells { rowElement.removeChild(cell) }
+            let originals = source.flatMap { table.sourceCells.indices.contains($0) ? table.sourceCells[$0] : nil } ?? []
+            var usedCells = Set<Int>()
+            var position = 0
+            for (index, cell) in row.cells.enumerated() {
+                let cellElement: XMLElement?
+                if source != nil, columnSources.indices.contains(index), let column = columnSources[index],
+                   sourceCells.indices.contains(column), usedCells.insert(column).inserted {
+                    cellElement = update(sourceCells[column], to: cell, from: originals.indices.contains(column) ? originals[column] : nil)
+                } else {
+                    cellElement = self.cellElement(cell)
+                }
+                guard let cellElement else { continue }
+                rowElement.insertChild(cellElement, at: position)
+                position += 1
             }
             grid.insertChild(rowElement, at: grid.children.count)
         }
         if let extensions { grid.insertChild(extensions, at: grid.children.count) }
+    }
+
+    /// The `a16:rowId` or `a16:colId` values a table's rows or columns carry,
+    /// and new ones for rows or columns Dazzle adds, if the table uses them.
+    private struct IdentifierPool {
+        private var template: XMLElement?
+        private let name: String
+        private var used: Set<String> = []
+
+        init(_ elements: [XMLElement], name: String) {
+            self.name = name
+            for element in elements {
+                for entry in element.firstChild(named: "extLst")?.children(named: "ext") ?? [] {
+                    guard let id = entry.firstChild(named: name) else { continue }
+                    if template == nil { template = entry }
+                    if let value = id.attribute("val") { used.insert(value) }
+                }
+            }
+        }
+
+        /// An `a:extLst` holding a copy of the table's own ID extension with a value none of its others has.
+        mutating func extensions(using namespaces: [String: String]) -> XMLElement? {
+            guard let template, let entry = XMLLite.serialize(template, inheritedNamespaces: namespaces),
+                  let list = XMLLite.fragment("<a:extLst>\(entry)</a:extLst>", namespaces: namespaces),
+                  let id = list.firstChild(named: "ext")?.firstChild(named: name) else { return nil }
+            var value: String
+            repeat { value = String(UInt32.random(in: 1...UInt32.max)) } while used.contains(value)
+            used.insert(value)
+            id.setAttribute("val", value)
+            return list
+        }
+    }
+
+    /// A cell the file had, with only what differs from how it was read rewritten.
+    private mutating func update(_ element: XMLElement, to cell: SlideTable.Cell, from original: SlideTable.Cell?) -> XMLElement {
+        func flag(_ key: String, _ value: Bool) {
+            if ["1", "true"].contains(element.attribute(key)) != value { element.setAttribute(key, value ? "1" : nil) }
+        }
+        func span(_ key: String, _ value: Int) {
+            if (element.attribute(key).flatMap(Int.init) ?? 1) != value { element.setAttribute(key, value > 1 ? String(value) : nil) }
+        }
+        span("gridSpan", cell.columnSpan)
+        span("rowSpan", cell.rowSpan)
+        flag("hMerge", cell.isHorizontalMerge)
+        flag("vMerge", cell.isVerticalMerge)
+
+        if original == nil || cell.text != original?.text || cell.sourceBody != original?.sourceBody {
+            for body in element.children(named: "txBody") { element.removeChild(body) }
+            if let body = bodyElement(for: cell) { element.insertChild(body, at: 0) }
+        }
+
+        var properties = element.firstChild(named: "tcPr")
+        if properties == nil || original == nil || cell.sourceProperties != original?.sourceProperties {
+            if let old = properties { element.removeChild(old) }
+            properties = cell.sourceProperties.flatMap(fragment) ?? fragment("<a:tcPr/>")
+            if let properties {
+                let before = element.children.firstIndex { $0.name == "extLst" }
+                element.insertChild(properties, at: before ?? element.children.count)
+            }
+        }
+        if let properties { apply(cell, to: properties) }
+        return element
     }
 
     private mutating func cellElement(_ cell: SlideTable.Cell) -> XMLElement? {
@@ -660,43 +774,50 @@ public struct ShapeWriter {
         element.setAttribute("rowSpan", cell.rowSpan > 1 ? String(cell.rowSpan) : nil)
         element.setAttribute("hMerge", cell.isHorizontalMerge ? "1" : nil)
         element.setAttribute("vMerge", cell.isVerticalMerge ? "1" : nil)
-
-        let body = cell.sourceBody.flatMap(fragment) ?? fragment("<a:txBody><a:bodyPr/><a:lstStyle/></a:txBody>")
-        if let body {
-            for paragraph in body.children(named: "p") { body.removeChild(paragraph) }
-            let paragraphs = cell.text?.paragraphs.nilIfEmpty ?? [Paragraph(runs: [])]
-            for paragraph in paragraphs {
-                if let paragraphElement = fragment(paragraphXML(paragraph)) {
-                    body.insertChild(paragraphElement, at: body.children.count)
-                }
-            }
-            element.insertChild(body, at: element.children.count)
-        }
-
-        let properties = cell.sourceProperties.flatMap(fragment) ?? fragment("<a:tcPr/>")
-        if let properties {
-            func margin(_ key: String, _ value: Int?) {
-                if let value { properties.setAttribute(key, String(value)) }
-            }
-            margin("marL", cell.marginLeft)
-            margin("marR", cell.marginRight)
-            margin("marT", cell.marginTop)
-            margin("marB", cell.marginBottom)
-            if let anchor = cell.anchor { properties.setAttribute("anchor", anchor.rawValue) }
-            // A picture fill is left as the file had it; others are written as they now are.
-            switch cell.fill {
-            case .picture?, .tiledPicture?:
-                break
-            default:
-                for child in properties.children where Fill.elementNames.contains(child.name) { properties.removeChild(child) }
-                if let fill = cell.fill, let fillElement = fragment(fill.xml) {
-                    let before = properties.children.firstIndex { ["headers", "extLst"].contains($0.name) }
-                    properties.insertChild(fillElement, at: before ?? properties.children.count)
-                }
-            }
+        if let body = bodyElement(for: cell) { element.insertChild(body, at: element.children.count) }
+        if let properties = cell.sourceProperties.flatMap(fragment) ?? fragment("<a:tcPr/>") {
+            apply(cell, to: properties)
             element.insertChild(properties, at: element.children.count)
         }
         return element
+    }
+
+    private mutating func bodyElement(for cell: SlideTable.Cell) -> XMLElement? {
+        guard let body = cell.sourceBody.flatMap(fragment) ?? fragment("<a:txBody><a:bodyPr/><a:lstStyle/></a:txBody>") else {
+            return nil
+        }
+        for paragraph in body.children(named: "p") { body.removeChild(paragraph) }
+        let paragraphs = cell.text?.paragraphs.nilIfEmpty ?? [Paragraph(runs: [])]
+        for paragraph in paragraphs {
+            if let paragraphElement = fragment(paragraphXML(paragraph)) {
+                body.insertChild(paragraphElement, at: body.children.count)
+            }
+        }
+        return body
+    }
+
+    /// Writes the cell's margins, anchor and fill into its `a:tcPr` where they differ from what it says.
+    private func apply(_ cell: SlideTable.Cell, to properties: XMLElement) {
+        func set(_ key: String, _ value: String?) {
+            if let value, properties.attribute(key) != value { properties.setAttribute(key, value) }
+        }
+        set("marL", cell.marginLeft.map(String.init))
+        set("marR", cell.marginRight.map(String.init))
+        set("marT", cell.marginTop.map(String.init))
+        set("marB", cell.marginBottom.map(String.init))
+        set("anchor", cell.anchor?.rawValue)
+        // A picture fill is left as the file had it, and so is any other that reads back as the model has it.
+        switch cell.fill {
+        case .picture?, .tiledPicture?:
+            return
+        default:
+            guard Fill.parse(in: properties, image: { $0 }) != cell.fill else { return }
+        }
+        for child in properties.children where Fill.elementNames.contains(child.name) { properties.removeChild(child) }
+        if let fill = cell.fill, let fillElement = fragment(fill.xml) {
+            let before = properties.children.firstIndex { ["headers", "extLst"].contains($0.name) }
+            properties.insertChild(fillElement, at: before ?? properties.children.count)
+        }
     }
 
     // MARK: - Paragraphs

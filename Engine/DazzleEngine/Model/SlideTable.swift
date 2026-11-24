@@ -37,6 +37,8 @@ public struct SlideTable: Equatable, Hashable, Sendable {
         /// EMU.
         public var height: Int
         public var cells: [Cell]
+        /// The row's place in the file's table; `nil` for one Dazzle added.
+        public var sourceIndex: Int?
     }
 
     /// EMU.
@@ -54,6 +56,10 @@ public struct SlideTable: Equatable, Hashable, Sendable {
     public var styleID: String?
     /// `a:tblPr` as the file wrote it.
     public var sourceProperties: String?
+    /// Each column's place in the file's table, `nil` for one Dazzle added.
+    public var sourceColumns: [Int?] = []
+    /// The cells as read, by their row and column in the file, to tell which were changed.
+    public var sourceCells: [[Cell]] = []
 }
 
 public extension SlideTable {

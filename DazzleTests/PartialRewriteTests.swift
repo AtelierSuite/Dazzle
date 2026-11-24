@@ -90,4 +90,99 @@ struct PartialRewriteTests {
         #expect(outline.firstChild(named: "noFill") == nil)
         #expect(outline.firstChild(named: "prstDash")?.attribute("val") == "dash")
     }
+
+    // MARK: - Tables
+
+    private static let rowIDs = ["1001", "1002"]
+    private static let columnIDs = ["2001", "2002", "2003"]
+
+    private func identified(_ name: String, _ value: String) -> String {
+        let uri = name == "rowId" ? "{0D108BD9-81ED-4DB2-BD59-A6C34878D82A}" : "{9D8B030D-6E8A-4147-A177-3AD203B41FA5}"
+        return "<a:extLst><a:ext uri=\"\(uri)\"><a16:\(name) xmlns:a16=\"http://schemas.microsoft.com/office/drawing/2014/main\" "
+            + "val=\"\(value)\"/></a:ext></a:extLst>"
+    }
+
+    private func cell(_ text: String, fill: String) -> String {
+        "<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang=\"en-US\" dirty=\"0\"/><a:t>\(text)</a:t></a:r></a:p></a:txBody>"
+            + "<a:tcPr marL=\"91440\">\(fill)</a:tcPr></a:tc>"
+    }
+
+    private var tableXML: String {
+        let gradient = """
+            <a:gradFill flip="y" rotWithShape="0"><a:gsLst><a:gs pos="0"><a:srgbClr val="00FF00"/></a:gs>\
+            <a:gs pos="100000"><a:srgbClr val="FFFF00"/></a:gs></a:gsLst><a:lin ang="0" scaled="1"/><a:tileRect/></a:gradFill>
+            """
+        let solid = "<a:solidFill><a:schemeClr val=\"accent2\"><a:lumMod val=\"60000\"/></a:schemeClr></a:solidFill>"
+        let columns = Self.columnIDs.map { "<a:gridCol w=\"3000000\">\(identified("colId", $0))</a:gridCol>" }.joined()
+        let rows = Self.rowIDs.enumerated().map { row, id in
+            "<a:tr h=\"370840\">" + (0..<3).map { cell("R\(row)C\($0)", fill: $0 == 1 ? gradient : solid) }.joined()
+                + identified("rowId", id) + "</a:tr>"
+        }.joined()
+        return """
+            <p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="3" name="Table"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>\
+            <p:xfrm><a:off x="0" y="0"/><a:ext cx="9000000" cy="741680"/></p:xfrm>\
+            <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl>\
+            <a:tblPr firstRow="1"/><a:tblGrid>\(columns)</a:tblGrid>\(rows)</a:tbl></a:graphicData></a:graphic></p:graphicFrame>
+            """
+    }
+
+    private func identifier(of element: XMLElement, _ name: String) -> String? {
+        element.firstChild(named: "extLst")?.children(named: "ext").lazy.compactMap { $0.firstChild(named: name) }.first?.attribute("val")
+    }
+
+    private func grid(of shape: SlideShape) throws -> XMLElement {
+        try #require(try element(of: shape).firstDescendant(atPath: "graphic/graphicData/tbl"))
+    }
+
+    @Test("Editing a table keeps its rows' and columns' IDs and its untouched cells' fills")
+    func editedTable() throws {
+        var shape = try shape(tableXML)
+        let before = try grid(of: shape)
+        guard case .table(var model) = shape.kind else { Issue.record("not a table"); return }
+        model.rows[0].cells[0].text = TextBody(paragraphs: [Paragraph(runs: [TextRun(text: "Edited")])])
+        model.insertRow(at: 1, copying: 0)
+        model.deleteColumn(at: 2)
+        shape.kind = .table(model)
+        shape.edits.insert(.table)
+        let after = try grid(of: saved(shape))
+
+        let columns = try #require(after.firstChild(named: "tblGrid")).children(named: "gridCol")
+        #expect(columns.map { identifier(of: $0, "colId") } == ["2001", "2002"])
+        let rows = after.children(named: "tr")
+        try #require(rows.count == 3)
+        #expect(identifier(of: rows[0], "rowId") == "1001")
+        #expect(identifier(of: rows[2], "rowId") == "1002")
+        #expect(identifier(of: rows[1], "rowId").map { !Self.rowIDs.contains($0) } == true)
+
+        let sourceRows = before.children(named: "tr")
+        let edited = rows[0].children(named: "tc")
+        #expect(edited.count == 2)
+        #expect(edited.first?.firstChild(named: "txBody")?.firstChild(named: "p")?.firstChild(named: "r")?
+            .firstChild(named: "t")?.text == "Edited")
+        // The edited cell's fill, and every cell of the row left alone, are as the file had them.
+        #expect(canonical(edited[0].firstChild(named: "tcPr")) == canonical(sourceRows[0].children(named: "tc")[0].firstChild(named: "tcPr")))
+        #expect(canonical(edited[1]) == canonical(sourceRows[0].children(named: "tc")[1]))
+        let untouched = rows[2].children(named: "tc")
+        #expect(untouched.count == 2)
+        for column in 0..<2 {
+            #expect(canonical(untouched[column]) == canonical(sourceRows[1].children(named: "tc")[column]))
+        }
+        let gradient = try #require(untouched[1].firstDescendant(atPath: "tcPr/gradFill"))
+        #expect(gradient.attribute("flip") == "y")
+        #expect(gradient.attribute("rotWithShape") == "0")
+    }
+
+    @Test("A column added to a table with column IDs gets an ID of its own")
+    func addedColumn() throws {
+        var shape = try shape(tableXML)
+        guard case .table(var model) = shape.kind else { Issue.record("not a table"); return }
+        model.insertColumn(at: 0, copying: 0)
+        shape.kind = .table(model)
+        shape.edits.insert(.table)
+        let columns = try #require(try grid(of: saved(shape)).firstChild(named: "tblGrid")).children(named: "gridCol")
+        let ids = columns.map { identifier(of: $0, "colId") }
+        #expect(Array(ids.dropFirst()) == Self.columnIDs)
+        let added = try #require(ids.first ?? nil)
+        #expect(!Self.columnIDs.contains(added))
+    }
 }
