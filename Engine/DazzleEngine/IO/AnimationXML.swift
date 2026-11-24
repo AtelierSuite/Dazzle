@@ -295,6 +295,7 @@ public enum AnimationXML {
     private static func effectXML(_ animation: ShapeAnimation, nodeType: String, nextID: inout Int) -> String {
         if let source = animation.source, let par = XMLLite.fragment(source, namespaces: OOXML.namespaces),
            let node = par.firstChild(named: "cTn") {
+            renumber(par, nextID: &nextID)
             node.setAttribute("nodeType", nodeType)
             if let condition = node.firstChild(named: "stCondLst")?.children(named: "cond").first(where: { $0.attribute("evt") == nil }) {
                 condition.setAttribute("delay", ms(animation.delay))
@@ -518,6 +519,27 @@ public enum AnimationXML {
         }
         visit(element)
         return result
+    }
+
+    /// New ids for an effect's nodes as read, so they can't repeat any around it.
+    private static func renumber(_ par: XMLElement, nextID: inout Int) {
+        var ids: [String: String] = [:]
+        var next = nextID
+        func number(_ element: XMLElement) {
+            if element.name == "cTn", let old = element.attribute("id") {
+                let new = String(take(&next))
+                ids[old] = new
+                element.setAttribute("id", new)
+            }
+            for child in element.children { number(child) }
+        }
+        func relink(_ element: XMLElement) {
+            if element.name == "tn", let new = element.attribute("val").flatMap({ ids[$0] }) { element.setAttribute("val", new) }
+            for child in element.children { relink(child) }
+        }
+        number(par)
+        relink(par)
+        nextID = next
     }
 
     private static func take(_ id: inout Int) -> Int {
