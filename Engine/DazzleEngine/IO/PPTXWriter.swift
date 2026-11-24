@@ -372,7 +372,9 @@ private struct PackageBuilder {
         let legacy = slide.comments.filter { $0.format == .legacy }
         let modern = slide.comments.filter { $0.format == .modern }
         slide.legacyCommentsPart = writeCommentPart(
-            legacy.isEmpty ? nil : CommentXML.legacyXML(legacy, authors: &commentAuthors),
+            legacy.isEmpty ? nil : CommentXML.legacyXML(
+                legacy, authors: &commentAuthors, existing: slide.legacyCommentsPart.flatMap { parts[$0] }
+            ),
             existing: slide.legacyCommentsPart, prefix: "ppt/comments/comment",
             type: OOXML.RelationshipType.comments, contentType: CommentXML.legacyContentType,
             slide: &slide, slidePath: slidePath
@@ -426,7 +428,7 @@ private struct PackageBuilder {
             }
         }
         if !commentAuthors.isEmpty {
-            write({ _ in CommentXML.legacyAuthorsXML(commentAuthors) }, type: OOXML.RelationshipType.commentAuthors,
+            write({ CommentXML.legacyAuthorsXML(commentAuthors, existing: $0) }, type: OOXML.RelationshipType.commentAuthors,
                   contentType: CommentXML.legacyAuthorsContentType, name: "ppt/commentAuthors.xml")
         }
         if !modernCommentAuthors.isEmpty {

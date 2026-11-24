@@ -1585,6 +1585,81 @@ struct CommentTests {
         #expect(copy.slides[0].comments[0].source == kept)
         #expect(copy.data(at: "ppt/authors.xml") == threeAuthors)
     }
+
+    @Test("Editing one older-format comment leaves the others, their numbers and the authors list as read")
+    func legacyEditsKeepTheRest() throws {
+        var parts = PresentationTemplate.parts()
+        let p15 = CommentXML.threadingNamespace
+        parts["ppt/commentAuthors.xml"] = Data("""
+            <p:cmAuthorLst xmlns:p="\(OOXML.presentationML)"><p:cmAuthor id="1" name="Grace Hopper" initials="GH" lastIdx="7" \
+            clrIdx="0"><p:extLst><p:ext uri="{19B8F6BF-5375-455C-9EA6-DF929625EA0E}"><p15:presenceInfo xmlns:p15="\(p15)" \
+            userId="grace@example.com" providerId="AD"/></p:ext></p:extLst></p:cmAuthor>\
+            <p:cmAuthor id="2" name="Alan Turing" initials="AT" lastIdx="3" clrIdx="1"/></p:cmAuthorLst>
+            """.utf8)
+        parts["ppt/comments/comment1.xml"] = Data("""
+            <p:cmLst xmlns:p="\(OOXML.presentationML)"><p:cm authorId="1" dt="2025-01-02T03:04:05.123" idx="5">\
+            <p:pos x="800" y="400"/><p:text>First</p:text><p:extLst><p:ext uri="{C676402C-5697-4E1C-873F-D02D1690AC5C}">\
+            <p15:threadingInfo xmlns:p15="\(p15)" timeZoneBias="-540"/></p:ext></p:extLst></p:cm>\
+            <p:cm authorId="2" dt="2025-01-03T00:00:00.000" idx="3"><p:pos x="800" y="400"/><p:text>Reply</p:text>\
+            <p:extLst><p:ext uri="{C676402C-5697-4E1C-873F-D02D1690AC5C}"><p15:threadingInfo xmlns:p15="\(p15)" \
+            timeZoneBias="-540"><p15:parentCm authorId="1" idx="5"/></p15:threadingInfo></p:ext></p:extLst></p:cm>\
+            <p:cm authorId="1" dt="2025-02-02T03:04:05.000" idx="7"><p:pos x="1600" y="80"/><p:text>Second</p:text></p:cm>\
+            </p:cmLst>
+            """.utf8)
+        let slideRels = "ppt/slides/_rels/slide1.xml.rels"
+        var relationships = Relationship.parse(parts[slideRels])
+        relationships.append(Relationship(id: "rId99", type: OOXML.RelationshipType.comments, target: "../comments/comment1.xml"))
+        parts[slideRels] = Relationship.xml(relationships)
+        var main = Relationship.parse(parts["ppt/_rels/presentation.xml.rels"])
+        main.append(Relationship(id: "rId99", type: OOXML.RelationshipType.commentAuthors, target: "commentAuthors.xml"))
+        parts["ppt/_rels/presentation.xml.rels"] = Relationship.xml(main)
+        let original = try PPTXReader.presentation(fromParts: parts)
+        let authors = try #require(original.data(at: "ppt/commentAuthors.xml"))
+        let first = try #require(original.slides[0].comments.first)
+        let second = try #require(original.slides[0].comments.last)
+        #expect(first.replies.map(\.text) == ["Reply"])
+
+        // Editing the first thread's text.
+        var presentation = original
+        presentation.slides[0].comments[0].text = "First, edited"
+        presentation.slides[0].areCommentsModified = true
+        var copy = try reread(presentation)
+        #expect(copy.slides[0].comments.map(\.text) == ["First, edited", "Second"])
+        #expect(copy.slides[0].comments.map(\.id) == ["1-5", "1-7"])
+        #expect(copy.slides[0].comments[1].source == second.source)
+        #expect(copy.slides[0].comments[0].replies.map(\.source) == first.replies.map(\.source))
+        let edited = try element(copy.slides[0].comments[0].source)
+        let read = try element(first.source)
+        #expect(serialized(edited.firstChild(named: "extLst")) == serialized(read.firstChild(named: "extLst")))
+        #expect(edited.attribute("dt") == "2025-01-02T03:04:05.123")
+        #expect(copy.data(at: "ppt/commentAuthors.xml") == authors)
+
+        // Replying to it numbers the reply on from Alan's last comment.
+        presentation = copy
+        let state = EditorState()
+        state.selectSlide(presentation.slides[0].id)
+        state.reply(to: "1-5", with: "Thanks", author: "Alan Turing", in: &presentation)
+        copy = try reread(presentation)
+        #expect(copy.slides[0].comments[0].replies.map(\.text) == ["Reply", "Thanks"])
+        #expect(copy.slides[0].comments[0].replies.map(\.id) == ["2-3", "2-4"])
+        #expect(copy.slides[0].comments[0].replies.first?.source == first.replies.first?.source)
+        #expect(copy.slides[0].comments[1].source == second.source)
+        let writtenAuthors = try XMLLite.parse(try #require(copy.data(at: "ppt/commentAuthors.xml")))
+        let written = writtenAuthors.children(named: "cmAuthor")
+        let readAuthors = try XMLLite.parse(authors)
+        #expect(serialized(written.first) == serialized(readAuthors.children(named: "cmAuthor").first))
+        #expect(written.last?.attribute("lastIdx") == "4")
+        #expect(serialized(written.first)?.contains("presenceInfo") == true)
+
+        // Deleting the second thread.
+        let kept = copy.slides[0].comments[0]
+        presentation = copy
+        state.deleteComment("1-7", in: &presentation)
+        copy = try reread(presentation)
+        #expect(copy.slides[0].comments.count == 1)
+        #expect(copy.slides[0].comments[0].source == kept.source)
+        #expect(copy.slides[0].comments[0].replies.map(\.source) == kept.replies.map(\.source))
+    }
 }
 
 @Suite("Header and footer")

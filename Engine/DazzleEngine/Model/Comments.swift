@@ -126,17 +126,8 @@ public enum CommentXML {
         var threads: [SlideComment] = []
         var replies: [(parent: String, comment: SlideComment)] = []
         for element in root.children(named: "cm") {
-            let authorID = element.attribute("authorId").flatMap(Int.init) ?? 0
-            let index = element.attribute("idx").flatMap(Int.init) ?? 0
-            let author = authors.first { $0.id == authorID }
-            var comment = SlideComment(
-                id: "\(authorID)-\(index)", author: author?.name ?? "", initials: author?.initials ?? "",
-                date: date(element.attribute("dt")), text: element.firstChild(named: "text")?.text ?? "", format: .legacy
-            )
-            if let position = element.firstChild(named: "pos"),
-               let x = position.attribute("x").flatMap(Double.init), let y = position.attribute("y").flatMap(Double.init) {
-                comment.position = CGPoint(x: x / legacyUnitsPerPoint, y: y / legacyUnitsPerPoint)
-            }
+            var comment = legacyComment(element, authors: authors)
+            comment.source = XMLLite.serialize(element)
             let parent = element.firstDescendant(atPath: "extLst/ext/threadingInfo/parentCm")
             if let parent, let parentAuthor = parent.attribute("authorId"), let parentIndex = parent.attribute("idx") {
                 replies.append(("\(parentAuthor)-\(parentIndex)", comment))
@@ -152,6 +143,21 @@ public enum CommentXML {
             }
         }
         return threads
+    }
+
+    private static func legacyComment(_ element: XMLElement, authors: [CommentAuthor]) -> SlideComment {
+        let authorID = element.attribute("authorId").flatMap(Int.init) ?? 0
+        let index = element.attribute("idx").flatMap(Int.init) ?? 0
+        let author = authors.first { $0.id == authorID }
+        var comment = SlideComment(
+            id: "\(authorID)-\(index)", author: author?.name ?? "", initials: author?.initials ?? "",
+            date: date(element.attribute("dt")), text: element.firstChild(named: "text")?.text ?? "", format: .legacy
+        )
+        if let position = element.firstChild(named: "pos"),
+           let x = position.attribute("x").flatMap(Double.init), let y = position.attribute("y").flatMap(Double.init) {
+            comment.position = CGPoint(x: x / legacyUnitsPerPoint, y: y / legacyUnitsPerPoint)
+        }
+        return comment
     }
 
     public static func modernComments(_ data: Data?, authors: [ModernCommentAuthor]) -> [SlideComment] {
@@ -193,10 +199,25 @@ public enum CommentXML {
 
     // MARK: - Writing
 
-    /// A slide's comments in the older format. Each author's comments are
-    /// numbered on from the highest number that author has used.
-    public static func legacyXML(_ comments: [SlideComment], authors: inout [CommentAuthor]) -> String {
-        var entries: [String] = []
+    /// A slide's comments in the older format. A comment read from the file
+    /// keeps its number and is written as read, changed only where it was
+    /// edited; each author's new comments are numbered on from the highest
+    /// number that author has used.
+    public static func legacyXML(_ comments: [SlideComment], authors: inout [CommentAuthor], existing: Data? = nil) -> String {
+        let namespaces = ["a": OOXML.drawingML, "r": OOXML.relationshipsNS, "p": OOXML.presentationML]
+        let known = authors
+        func parsed(_ source: String?) -> XMLElement? {
+            source.flatMap { try? XMLLite.parse(Data($0.utf8)) }
+        }
+        func number(of element: XMLElement) -> (author: Int, index: Int)? {
+            guard let author = element.attribute("authorId").flatMap(Int.init),
+                  let index = element.attribute("idx").flatMap(Int.init) else { return nil }
+            return (author, index)
+        }
+        for element in comments.flatMap({ [$0] + $0.replies }).compactMap({ parsed($0.source) }) {
+            guard let number = number(of: element), let position = authors.firstIndex(where: { $0.id == number.author }) else { continue }
+            authors[position].lastIndex = max(authors[position].lastIndex, number.index)
+        }
         func author(named name: String, initials: String) -> Int {
             if let existing = authors.first(where: { $0.name == name }) { return existing.id }
             let id = (authors.map(\.id).max() ?? -1) + 1
@@ -205,37 +226,85 @@ public enum CommentXML {
             ))
             return id
         }
-        func entry(_ comment: SlideComment, parent: (author: Int, index: Int)?) -> (author: Int, index: Int) {
+        func position(_ point: CGPoint) -> (x: String, y: String) {
+            (String(Int(point.x * legacyUnitsPerPoint)), String(Int(point.y * legacyUnitsPerPoint)))
+        }
+        func entry(_ comment: SlideComment, parent: (author: Int, index: Int)?) -> XMLElement? {
+            if let element = parsed(comment.source) {
+                let read = legacyComment(element, authors: known)
+                if read.text != comment.text { element.firstChild(named: "text")?.setText(comment.text) }
+                if read.date != comment.date { element.setAttribute("dt", string(comment.date)) }
+                if read.position != comment.position, let point = comment.position, let pos = element.firstChild(named: "pos") {
+                    let (x, y) = position(point)
+                    pos.setAttribute("x", x)
+                    pos.setAttribute("y", y)
+                }
+                return element
+            }
             let authorID = author(named: comment.author, initials: comment.initials)
-            let position = authors.firstIndex { $0.id == authorID } ?? 0
-            authors[position].lastIndex += 1
-            let index = authors[position].lastIndex
-            let point = comment.position ?? .zero
-            var xml = "<p:cm authorId=\"\(authorID)\" dt=\"\(string(comment.date))\" idx=\"\(index)\">"
-                + "<p:pos x=\"\(Int(point.x * legacyUnitsPerPoint))\" y=\"\(Int(point.y * legacyUnitsPerPoint))\"/>"
-                + "<p:text>\(XMLLite.escape(comment.text))</p:text>"
+            let index = authors.firstIndex { $0.id == authorID } ?? 0
+            authors[index].lastIndex += 1
+            let (x, y) = position(comment.position ?? .zero)
+            var xml = "<p:cm authorId=\"\(authorID)\" dt=\"\(string(comment.date))\" idx=\"\(authors[index].lastIndex)\">"
+                + "<p:pos x=\"\(x)\" y=\"\(y)\"/><p:text>\(XMLLite.escape(comment.text))</p:text>"
             if let parent {
                 xml += "<p:extLst><p:ext uri=\"\(threadingExtension)\"><p15:threadingInfo xmlns:p15=\"\(threadingNamespace)\" "
                     + "timeZoneBias=\"0\"><p15:parentCm authorId=\"\(parent.author)\" idx=\"\(parent.index)\"/>"
                     + "</p15:threadingInfo></p:ext></p:extLst>"
             }
-            entries.append(xml + "</p:cm>")
-            return (authorID, index)
+            return XMLLite.fragment(xml + "</p:cm>", namespaces: namespaces)
         }
+        var entries: [XMLElement] = []
         for thread in comments {
-            let parent = entry(thread, parent: nil)
-            for reply in thread.replies { _ = entry(reply, parent: parent) }
+            guard let element = entry(thread, parent: nil) else { continue }
+            entries.append(element)
+            let parent = number(of: element)
+            entries += thread.replies.compactMap { entry($0, parent: parent) }
         }
-        return "<p:cmLst xmlns:a=\"\(OOXML.drawingML)\" xmlns:r=\"\(OOXML.relationshipsNS)\" xmlns:p=\"\(OOXML.presentationML)\">"
-            + entries.joined() + "</p:cmLst>"
+        func list(in root: XMLElement) -> String? {
+            let first = root.children.firstIndex { $0.name == "cm" } ?? root.children.firstIndex { $0.name == "extLst" }
+                ?? root.children.count
+            root.children(named: "cm").forEach(root.removeChild)
+            for (offset, entry) in entries.enumerated() { root.insertChild(entry, at: first + offset) }
+            return XMLLite.serialize(root)
+        }
+        let read = existing.flatMap { try? XMLLite.parse($0) }.flatMap { $0.name == "cmLst" ? $0 : nil }
+        return read.flatMap(list) ?? list(in: XMLElement(
+            name: "cmLst", qualifiedName: "p:cmLst", attributes: [:],
+            qualifiedAttributes: Dictionary(uniqueKeysWithValues: namespaces.map { ("xmlns:\($0.key)", $0.value) })
+        )) ?? ""
     }
 
-    public static func legacyAuthorsXML(_ authors: [CommentAuthor]) -> String {
-        "<p:cmAuthorLst xmlns:a=\"\(OOXML.drawingML)\" xmlns:r=\"\(OOXML.relationshipsNS)\" xmlns:p=\"\(OOXML.presentationML)\">"
-            + authors.map { author in
-                "<p:cmAuthor id=\"\(author.id)\" name=\"\(XMLLite.escape(author.name))\" initials=\"\(XMLLite.escape(author.initials))\" "
-                    + "lastIdx=\"\(author.lastIndex)\" clrIdx=\"\(author.colorIndex)\"/>"
-            }.joined() + "</p:cmAuthorLst>"
+    /// The older format's list of who has commented. A list read from the
+    /// file is kept as read, with each author's highest comment number
+    /// brought up to date and new authors added; `nil` when nothing changed.
+    public static func legacyAuthorsXML(_ authors: [CommentAuthor], existing: Data? = nil) -> String? {
+        func entry(_ author: CommentAuthor) -> String {
+            "<p:cmAuthor id=\"\(author.id)\" name=\"\(XMLLite.escape(author.name))\" initials=\"\(XMLLite.escape(author.initials))\" "
+                + "lastIdx=\"\(author.lastIndex)\" clrIdx=\"\(author.colorIndex)\"/>"
+        }
+        if let existing, let root = try? XMLLite.parse(existing), root.name == "cmAuthorLst" {
+            var changed = false
+            let listed = root.children(named: "cmAuthor")
+            for element in listed {
+                guard let author = authors.first(where: { String($0.id) == element.attribute("id") }),
+                      element.attribute("lastIdx") != String(author.lastIndex) else { continue }
+                element.setAttribute("lastIdx", String(author.lastIndex))
+                changed = true
+            }
+            let ids = Set(listed.compactMap { $0.attribute("id") })
+            let added = authors.filter { !ids.contains(String($0.id)) }
+            let index = root.children.firstIndex { $0.name == "extLst" } ?? root.children.count
+            for (offset, author) in added.enumerated() {
+                guard let element = XMLLite.fragment(entry(author), namespaces: ["p": OOXML.presentationML]) else { continue }
+                root.insertChild(element, at: index + offset)
+                changed = true
+            }
+            guard changed else { return nil }
+            if let xml = XMLLite.serialize(root) { return xml }
+        }
+        return "<p:cmAuthorLst xmlns:a=\"\(OOXML.drawingML)\" xmlns:r=\"\(OOXML.relationshipsNS)\" xmlns:p=\"\(OOXML.presentationML)\">"
+            + authors.map(entry).joined() + "</p:cmAuthorLst>"
     }
 
     /// A slide's comments in the newer format. A comment or reply read from
