@@ -219,8 +219,11 @@ test("copies a slide and pastes it after", () => {
   const before = call("info").state.slides.length;
   call("select", { shapes: [] });
   call("copy");
+  const animations = call("inspect").result.animations.length;
   call("paste");
   assert.equal(call("info").state.slides.length, before + 1);
+  assert.ok(animations > 0);
+  assert.equal(call("inspect").result.animations.length, animations, "keeps its animations");
 });
 
 test("saves as PowerPoint and reads it back", () => {
