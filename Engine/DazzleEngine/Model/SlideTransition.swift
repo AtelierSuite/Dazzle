@@ -162,7 +162,8 @@ extension SlideTransition {
     /// all is one it cannot, it is recorded in `approximates`.
     public init?(versions: [XMLElement]) {
         let parsed = versions.compactMap { element in
-            element.children.first.map { (element: element, effect: Self.effect(of: $0)) }
+            element.children.first { !["sndAc", "extLst"].contains($0.name) }
+                .map { (element: element, effect: Self.effect(of: $0)) }
         }
         guard let richest = parsed.first else { return nil }
         let chosen = parsed.first { $0.effect.approximates == nil } ?? richest

@@ -676,6 +676,7 @@ final class Bridge {
                 "after": slide.autoAdvanceAfter as Any, "onClick": slide.advancesOnClick, "notes": slide.notes,
                 "loop": presentation.showSettings.playsInLoop,
                 "transition": slide.transition.map { $0.isAnimated ? $0.duration : 0 } ?? 0,
+                "sound": transitionSoundJSON(of: slide) as Any,
             ]
         case "transition":
             // The slide's transition as keyframes for each layer, for the
@@ -1573,6 +1574,14 @@ final class Bridge {
             "x": comment.position.map { Double($0.x) } as Any, "y": comment.position.map { Double($0.y) } as Any,
             "replies": comment.replies.map(commentJSON),
         ]
+    }
+
+    /// The sound a slide's transition starts (`path`, `loop`) or stops (`stop`).
+    private func transitionSoundJSON(of slide: Slide) -> [String: Any]? {
+        guard let sound = slide.transitionSound else { return nil }
+        if sound.stopsSound { return ["stop": true] }
+        guard let path = slide.transitionSoundPath else { return nil }
+        return ["path": path, "loop": sound.loops]
     }
 
     /// A transition as keyframes for each of its layers, back to front: a

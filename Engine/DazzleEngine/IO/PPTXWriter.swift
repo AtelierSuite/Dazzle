@@ -250,7 +250,11 @@ private struct PackageBuilder {
     /// Writes the slide's transition anew, in place of every version it had.
     private func replaceTransition(of slide: Slide, in root: XMLElement) {
         var index: Int?
-        for transition in PPTXReader.transitions(in: root) {
+        let versions = PPTXReader.transitions(in: root)
+        // The sound as the file had it, or for a slide from elsewhere, as read.
+        let sound = versions.lazy.compactMap { $0.firstChild(named: "sndAc") }.first.flatMap { XMLLite.serialize($0) }
+            ?? slide.transitionSound?.xml
+        for transition in versions {
             // A version offered by an `mc:AlternateContent` goes with it.
             var element = transition
             while let parent = element.parent, parent !== root { element = parent }
@@ -259,7 +263,7 @@ private struct PackageBuilder {
             root.removeChild(element)
         }
         guard let xml = TransitionXML.xml(
-            for: slide.transition, advanceAfter: slide.autoAdvanceAfter, advancesOnClick: slide.advancesOnClick
+            for: slide.transition, advanceAfter: slide.autoAdvanceAfter, advancesOnClick: slide.advancesOnClick, sound: sound
         ), let created = XMLLite.fragment(xml, namespaces: OOXML.namespaces) else { return }
         // After the slide's colour mapping; before its timing and extensions.
         let after = root.children.lastIndex { ["cSld", "clrMapOvr"].contains($0.name) }

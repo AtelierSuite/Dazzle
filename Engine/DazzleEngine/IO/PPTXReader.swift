@@ -401,6 +401,7 @@ public enum PPTXReader {
         let versions = transitions(in: root)
         if let transition = versions.first {
             slide.transition = SlideTransition(versions: versions)
+            slide.transitionSound = TransitionSound(versions: versions)
             // An effect Dazzle has no drawing for is played as a fade.
             if slide.transition?.approximates != nil { features.insert(.transitions) }
             slide.autoAdvanceAfter = transition.attribute("advTm").flatMap(Double.init).map { $0 / 1_000 }
