@@ -1516,6 +1516,7 @@ struct CommentTests {
         let second = try #require(original.slides[0].comments.last)
         #expect(first.text == "Ask @Alan Turing about this")
         #expect(second.text == "Second\n@Grace Hopper")
+        let authors = try #require(original.data(at: "ppt/authors.xml"))
         let read = try element(first.source)
 
         func checkFirstKeepsTheRest(_ thread: SlideComment) throws {
@@ -1540,6 +1541,7 @@ struct CommentTests {
         #expect(copy.slides[0].comments[1].source == second.source)
         #expect(copy.slides[0].comments[0].replies.map(\.source) == first.replies.map(\.source))
         try checkFirstKeepsTheRest(copy.slides[0].comments[0])
+        #expect(copy.data(at: "ppt/authors.xml") == authors)
 
         // Resolving it.
         presentation = copy
@@ -1552,8 +1554,9 @@ struct CommentTests {
         #expect(copy.slides[0].comments[1].source == second.source)
         #expect(copy.slides[0].comments[0].replies.map(\.source) == first.replies.map(\.source))
         try checkFirstKeepsTheRest(copy.slides[0].comments[0])
-        let editedBody = serialized(try element(edited).firstChild(named: "txBody"))
-        #expect(serialized(try element(copy.slides[0].comments[0].source).firstChild(named: "txBody")) == editedBody)
+        let editedElement = try element(edited), resolvedElement = try element(copy.slides[0].comments[0].source)
+        #expect(serialized(resolvedElement.firstChild(named: "txBody")) == serialized(editedElement.firstChild(named: "txBody")))
+        #expect(serialized(resolvedElement.firstChild(named: "txBody")) != nil)
 
         // Replying to it, as someone new.
         presentation = copy
@@ -1564,16 +1567,23 @@ struct CommentTests {
         #expect(copy.slides[0].comments[0].isResolved)
         #expect(copy.slides[0].comments[1].source == second.source)
         try checkFirstKeepsTheRest(copy.slides[0].comments[0])
+        let originalList = try XMLLite.parse(authors), writtenList = try XMLLite.parse(try #require(copy.data(at: "ppt/authors.xml")))
+        let originalAuthors = originalList.children(named: "author"), writtenAuthors = writtenList.children(named: "author")
+        #expect(writtenAuthors.count == 3)
+        #expect(Array(writtenAuthors.prefix(2)).map(serialized) == originalAuthors.map(serialized))
+        #expect(serialized(originalAuthors.first)?.contains("FAKE-AUTHOR-EXT") == true)
         #expect(copy.modernCommentAuthors.last?.name == "Ada Lovelace")
         #expect(copy.slides[0].comments[0].replies.last?.author == "Ada Lovelace")
 
         // Deleting the second thread.
         let kept = copy.slides[0].comments[0].source
+        let threeAuthors = copy.data(at: "ppt/authors.xml")
         presentation = copy
         state.deleteComment(second.id, in: &presentation)
         copy = try reread(presentation)
         #expect(copy.slides[0].comments.count == 1)
         #expect(copy.slides[0].comments[0].source == kept)
+        #expect(copy.data(at: "ppt/authors.xml") == threeAuthors)
     }
 }
 

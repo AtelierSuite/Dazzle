@@ -365,11 +365,28 @@ public enum CommentXML {
         )) ?? ""
     }
 
-    public static func modernAuthorsXML(_ authors: [ModernCommentAuthor]) -> String {
-        "<p188:authorLst xmlns:a=\"\(OOXML.drawingML)\" xmlns:r=\"\(OOXML.relationshipsNS)\" xmlns:p188=\"\(modernNamespace)\">"
-            + authors.map { author in
-                "<p188:author id=\"\(author.id)\" name=\"\(XMLLite.escape(author.name))\" initials=\"\(XMLLite.escape(author.initials))\" "
-                    + "userId=\"\(XMLLite.escape(author.userID))\" providerId=\"\(XMLLite.escape(author.providerID))\"/>"
-            }.joined() + "</p188:authorLst>"
+    /// The newer format's list of who has commented. A list read from the
+    /// file is kept as read, with only the authors new to it added; `nil`
+    /// when it has none to add.
+    public static func modernAuthorsXML(_ authors: [ModernCommentAuthor], existing: Data? = nil) -> String? {
+        func entry(_ author: ModernCommentAuthor) -> String {
+            "<p188:author id=\"\(XMLLite.escape(author.id))\" name=\"\(XMLLite.escape(author.name))\" "
+                + "initials=\"\(XMLLite.escape(author.initials))\" userId=\"\(XMLLite.escape(author.userID))\" "
+                + "providerId=\"\(XMLLite.escape(author.providerID))\"/>"
+        }
+        if let existing, let root = try? XMLLite.parse(existing), root.name == "authorLst" {
+            let listed = Set(root.children(named: "author").compactMap { $0.attribute("id") })
+            let added = authors.filter { !listed.contains($0.id) }
+            guard !added.isEmpty else { return nil }
+            let namespaces = ["p188": modernNamespace]
+            let index = root.children.firstIndex { $0.name == "extLst" } ?? root.children.count
+            for (offset, author) in added.enumerated() {
+                guard let element = XMLLite.fragment(entry(author), namespaces: namespaces) else { continue }
+                root.insertChild(element, at: index + offset)
+            }
+            if let xml = XMLLite.serialize(root) { return xml }
+        }
+        return "<p188:authorLst xmlns:a=\"\(OOXML.drawingML)\" xmlns:r=\"\(OOXML.relationshipsNS)\" xmlns:p188=\"\(modernNamespace)\">"
+            + authors.map(entry).joined() + "</p188:authorLst>"
     }
 }

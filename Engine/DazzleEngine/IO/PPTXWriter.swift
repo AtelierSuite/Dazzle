@@ -412,9 +412,10 @@ private struct PackageBuilder {
 
     /// The lists of who has commented, made or rewritten.
     private mutating func writeCommentAuthors() {
-        func write(_ xml: String, type: String, contentType: String, name: String) {
+        func write(_ xml: (Data?) -> String?, type: String, contentType: String, name: String) {
             let path = mainRelationships.first { $0.type == type }.map { PackagePath.resolve($0.target, from: mainPart) }
                 ?? name
+            guard let xml = xml(parts[path]) else { return }
             parts[path] = Data((PackagePath.declaration + xml).utf8)
             contentTypes.setOverride(contentType, for: path)
             if !mainRelationships.contains(where: { $0.type == type }) {
@@ -425,11 +426,11 @@ private struct PackageBuilder {
             }
         }
         if !commentAuthors.isEmpty {
-            write(CommentXML.legacyAuthorsXML(commentAuthors), type: OOXML.RelationshipType.commentAuthors,
+            write({ _ in CommentXML.legacyAuthorsXML(commentAuthors) }, type: OOXML.RelationshipType.commentAuthors,
                   contentType: CommentXML.legacyAuthorsContentType, name: "ppt/commentAuthors.xml")
         }
         if !modernCommentAuthors.isEmpty {
-            write(CommentXML.modernAuthorsXML(modernCommentAuthors), type: OOXML.RelationshipType.authors,
+            write({ CommentXML.modernAuthorsXML(modernCommentAuthors, existing: $0) }, type: OOXML.RelationshipType.authors,
                   contentType: CommentXML.modernAuthorsContentType, name: "ppt/authors.xml")
         }
     }
