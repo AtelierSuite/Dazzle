@@ -410,7 +410,10 @@ public struct ShapeWriter {
             let before = outline.children.firstIndex { Self.lineChildOrder(of: $0.name) > Self.lineChildOrder(of: new.name) }
             outline.insertChild(new, at: before ?? outline.children.count)
         }
-        if let fill = line.fill { place(fill.xml, replacing: Fill.elementNames) }
+        // The fill as read stays as it was, picture and all, unless it was changed.
+        if let fill = line.fill, Fill.parse(in: outline, image: { _ in nil }) != fill {
+            place(fill.xml, replacing: Fill.elementNames)
+        }
         if let dash = line.dash { place("<a:prstDash val=\"\(XMLLite.escape(dash))\"/>", replacing: ["prstDash", "custDash"]) }
         if let join = line.join { place(join.xml, replacing: ["round", "bevel", "miter"]) }
         place(line.head.map { "<a:headEnd type=\"\(XMLLite.escape($0))\"/>" }, replacing: ["headEnd"])

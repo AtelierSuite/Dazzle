@@ -98,6 +98,9 @@ public enum Fill: Equatable, Hashable, Sendable {
         /// The box the gradient spans, against the area: a path gradient ends
         /// at its edges, and a linear one runs across it.
         public var tileRect = Insets.zero
+        /// `rotWithShape` and `flip` as the file gave them, `nil` where it left them out.
+        public var rotatesWithShape: Bool? = true
+        public var flip: Tile.Flip?
 
         public init(
             stops: [Stop], angle: Double, path: Path? = nil, isScaled: Bool = false,
@@ -326,6 +329,8 @@ public enum Fill: Equatable, Hashable, Sendable {
                 if let focus = path.firstChild(named: "fillToRect") { gradient.fillToRect = Gradient.Insets(element: focus) }
             }
             if let tile = element.firstChild(named: "tileRect") { gradient.tileRect = Gradient.Insets(element: tile) }
+            gradient.rotatesWithShape = element.attribute("rotWithShape").map { $0 == "1" || $0 == "true" }
+            gradient.flip = element.attribute("flip").flatMap(Tile.Flip.init(rawValue:))
             return .gradient(gradient)
         case "blipFill":
             guard let reference = element.firstChild(named: "blip")?.attribute("embed"),
@@ -357,7 +362,9 @@ public enum Fill: Equatable, Hashable, Sendable {
             let shade = gradient.path.map { "<a:path path=\"\($0.rawValue)\">\(gradient.fillToRect.xml("fillToRect"))</a:path>" }
                 ?? "<a:lin ang=\"\(Int((gradient.angle * 60_000).rounded()))\" scaled=\"\(gradient.isScaled ? 1 : 0)\"/>"
             let tile = gradient.tileRect == .zero ? "" : gradient.tileRect.xml("tileRect")
-            return "<a:gradFill rotWithShape=\"1\"><a:gsLst>\(stops.joined())</a:gsLst>\(shade)\(tile)</a:gradFill>"
+            let flip = gradient.flip.map { " flip=\"\($0.rawValue)\"" } ?? ""
+            let rotation = gradient.rotatesWithShape.map { " rotWithShape=\"\($0 ? 1 : 0)\"" } ?? ""
+            return "<a:gradFill\(flip)\(rotation)><a:gsLst>\(stops.joined())</a:gsLst>\(shade)\(tile)</a:gradFill>"
         }
     }
 }
