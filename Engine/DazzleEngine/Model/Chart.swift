@@ -408,7 +408,7 @@ extension Chart {
     }
 
     /// The cached values of a `c:val`, `c:xVal` or `c:yVal`, by point index.
-    private static func numbers(in element: XMLElement?) -> [Double?] {
+    static func numbers(in element: XMLElement?) -> [Double?] {
         guard let element else { return [] }
         let cache = element.firstChild(named: "numRef")?.firstChild(named: "numCache") ?? element.firstChild(named: "numLit")
             ?? element.firstChild(named: "strRef")?.firstChild(named: "strCache")
@@ -424,7 +424,7 @@ extension Chart {
     }
 
     /// The cached labels of a `c:cat`, by point index.
-    private static func labels(in element: XMLElement?) -> [String] {
+    static func labels(in element: XMLElement?) -> [String] {
         guard let element else { return [] }
         let cache = element.firstChild(named: "strRef")?.firstChild(named: "strCache")
             ?? element.firstChild(named: "numRef")?.firstChild(named: "numCache")
@@ -446,7 +446,7 @@ extension Chart {
         value == value.rounded() && abs(value) < 1e15 ? String(Int(value)) : String(value)
     }
 
-    private static func cachedText(in element: XMLElement?) -> String? {
+    static func cachedText(in element: XMLElement?) -> String? {
         guard let element else { return nil }
         if let cache = element.firstChild(named: "strRef")?.firstChild(named: "strCache") {
             return cache.children(named: "pt").compactMap { $0.firstChild(named: "v")?.text }.joined(separator: " ")

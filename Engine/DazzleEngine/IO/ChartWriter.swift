@@ -16,7 +16,7 @@ public enum ChartWriter {
 
     public static let contentType = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml"
 
-    private static func fragment(_ xml: String) -> XMLElement? {
+    static func fragment(_ xml: String) -> XMLElement? {
         XMLLite.fragment(xml, namespaces: namespaces)
     }
 
@@ -24,8 +24,9 @@ public enum ChartWriter {
 
     /// The chart part's XML with `chart` laid over `original`, or a new part
     /// if there is no original. `workbookRelationship` is the id of the
-    /// relationship to an embedded workbook, for a new part.
-    public static func data(for chart: Chart, original: Data?, workbookRelationship: String? = nil) -> Data? {
+    /// relationship to an embedded workbook, for a new part. With
+    /// `keepsReferences`, series whose data kept its shape keep their formulas.
+    public static func data(for chart: Chart, original: Data?, workbookRelationship: String? = nil, keepsReferences: Bool = false) -> Data? {
         // Office 2016's kinds are in a format of their own, which is left as it was.
         guard !chart.kind.isExtended else { return nil }
         let root = original.flatMap { try? XMLLite.parse($0) } ?? fragment(skeleton(workbookRelationship: workbookRelationship))
@@ -34,7 +35,7 @@ public enum ChartWriter {
 
         writeTitle(chart.title, into: chartElement)
         writeView3D(chart, into: chartElement)
-        writePlots(chart, into: area)
+        writePlots(chart, references: keepsReferences ? references(of: chart) : nil, into: area)
         writeLegend(chart, into: chartElement)
 
         guard let xml = XMLLite.serialize(root) else { return nil }
@@ -162,7 +163,7 @@ public enum ChartWriter {
         plot.kind == .surface || (plot.isThreeD && plot.kind == .line)
     }
 
-    private static func writePlots(_ chart: Chart, into area: XMLElement) {
+    private static func writePlots(_ chart: Chart, references: [[SeriesCells]]?, into area: XMLElement) {
         let firstPlot = area.children.firstIndex { plotNames.contains($0.name) } ?? (area.firstChild(named: "layout") != nil ? 1 : 0)
         for child in area.children where plotNames.contains(child.name) { area.removeChild(child) }
 
@@ -205,7 +206,9 @@ public enum ChartWriter {
 
         var column = 1
         for (index, plot) in chart.plots.enumerated() {
-            guard let element = plotElement(plot, chart: chart, firstColumn: column, axisIDs: axisIDs) else { continue }
+            guard let element = plotElement(
+                plot, chart: chart, firstColumn: column, axisIDs: axisIDs, references: references?[index]
+            ) else { continue }
             area.insertChild(element, at: firstPlot + index)
             column += plot.series.count * (plot.kind == .bubble ? 2 : 1)
         }
@@ -253,7 +256,9 @@ public enum ChartWriter {
         "splitPos", "custSplit", "secondPieSize", "sizeRepresents", "bubble3D",
     ]
 
-    private static func plotElement(_ plot: Chart.Plot, chart: Chart, firstColumn: Int, axisIDs: [String]) -> XMLElement? {
+    private static func plotElement(
+        _ plot: Chart.Plot, chart: Chart, firstColumn: Int, axisIDs: [String], references: [SeriesCells]?
+    ) -> XMLElement? {
         let name = elementName(for: plot)
         // A plot of the same element keeps its own XML; an of-pie chart only if it is still a pie or still a bar.
         let kept = plot.source.flatMap(fragment).flatMap { element -> XMLElement? in
@@ -322,7 +327,7 @@ public enum ChartWriter {
         for (offset, series) in plot.series.enumerated() {
             let index = firstColumn - 1 + offset
             guard let seriesElement = seriesElement(
-                series, kind: plot.kind, index: index, column: firstColumn + offset * width, chart: chart
+                series, kind: plot.kind, index: index, column: firstColumn + offset * width, chart: chart, cells: references?[offset]
             ) else { continue }
             element.insertChild(seriesElement, at: insertion + offset)
         }
@@ -411,7 +416,9 @@ public enum ChartWriter {
         }
     }
 
-    private static func seriesElement(_ series: Chart.Series, kind: Chart.Kind, index: Int, column: Int, chart: Chart) -> XMLElement? {
+    private static func seriesElement(
+        _ series: Chart.Series, kind: Chart.Kind, index: Int, column: Int, chart: Chart, cells: SeriesCells?
+    ) -> XMLElement? {
         let order = seriesChildOrder(kind)
         // A series keeps its formatting if it is still in a plot of the kind it was.
         let kept = series.source.flatMap(fragment).flatMap { element -> XMLElement? in
@@ -426,31 +433,35 @@ public enum ChartWriter {
         let letter = columnLetter(column + 1)
         let count = chart.categories.count
         let last = count + 1
+        let nameFormula = cells?.name.formula ?? "\(sheet)!$\(letter)$1"
+        let categoryFormula = cells?.categories.formula ?? "\(sheet)!$A$2:$A$\(last)"
+        let valueFormula = cells?.values.formula ?? "\(sheet)!$\(letter)$2:$\(letter)$\(last)"
         var parts = [
             "<c:idx val=\"\(index)\"/>", "<c:order val=\"\(index)\"/>",
-            "<c:tx><c:strRef><c:f>\(sheet)!$\(letter)$1</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\">"
+            "<c:tx><c:strRef><c:f>\(XMLLite.escape(nameFormula))</c:f><c:strCache><c:ptCount val=\"1\"/><c:pt idx=\"0\">"
                 + "<c:v>\(XMLLite.escape(series.name))</c:v></c:pt></c:strCache></c:strRef></c:tx>",
         ]
         let values = (0..<count).map { series.values.indices.contains($0) ? series.values[$0] : nil }
         if kind.isXY {
-            parts.append("<c:xVal>" + numberReference("\(sheet)!$A$2:$A$\(last)", chart.categories.map { Double($0) }) + "</c:xVal>")
-            parts.append("<c:yVal>" + numberReference("\(sheet)!$\(letter)$2:$\(letter)$\(last)", values) + "</c:yVal>")
+            parts.append("<c:xVal>" + numberReference(categoryFormula, chart.categories.map { Double($0) }) + "</c:xVal>")
+            parts.append("<c:yVal>" + numberReference(valueFormula, values) + "</c:yVal>")
             if kind == .bubble {
                 let sizes = (0..<count).map { series.sizes.indices.contains($0) ? series.sizes[$0] : nil }
                 let sizeLetter = columnLetter(column + 2)
-                parts.append("<c:bubbleSize>" + numberReference("\(sheet)!$\(sizeLetter)$2:$\(sizeLetter)$\(last)", sizes) + "</c:bubbleSize>")
+                let sizeFormula = cells?.sizes?.formula ?? "\(sheet)!$\(sizeLetter)$2:$\(sizeLetter)$\(last)"
+                parts.append("<c:bubbleSize>" + numberReference(sizeFormula, sizes) + "</c:bubbleSize>")
             }
         } else {
             let numbers = chart.categories.map { Double($0) }
             if let format = chart.categoryFormat, numbers.allSatisfy({ $0 != nil }) {
                 // Categories the file gave as numbers, such as dates, stay numbers in their format.
-                parts.append("<c:cat>" + numberReference("\(sheet)!$A$2:$A$\(last)", numbers, format: format) + "</c:cat>")
+                parts.append("<c:cat>" + numberReference(categoryFormula, numbers, format: format) + "</c:cat>")
             } else {
                 let points = chart.categories.enumerated().map { "<c:pt idx=\"\($0)\"><c:v>\(XMLLite.escape($1))</c:v></c:pt>" }.joined()
-                parts.append("<c:cat><c:strRef><c:f>\(sheet)!$A$2:$A$\(last)</c:f><c:strCache><c:ptCount val=\"\(count)\"/>"
+                parts.append("<c:cat><c:strRef><c:f>\(XMLLite.escape(categoryFormula))</c:f><c:strCache><c:ptCount val=\"\(count)\"/>"
                     + "\(points)</c:strCache></c:strRef></c:cat>")
             }
-            parts.append("<c:val>" + numberReference("\(sheet)!$\(letter)$2:$\(letter)$\(last)", values) + "</c:val>")
+            parts.append("<c:val>" + numberReference(valueFormula, values) + "</c:val>")
         }
         let isLine = [.line, .scatter, .radar, .stock].contains(kind)
         if kept == nil, kind == .stock, series.hasLine != true {
@@ -505,7 +516,7 @@ public enum ChartWriter {
 
     private static func quotedSheet(_ name: String) -> String {
         let plain = name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
-        return XMLLite.escape(plain ? name : "'" + name.replacingOccurrences(of: "'", with: "''") + "'")
+        return plain ? name : "'" + name.replacingOccurrences(of: "'", with: "''") + "'"
     }
 
     // MARK: - Workbook

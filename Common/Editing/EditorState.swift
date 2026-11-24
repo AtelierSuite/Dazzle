@@ -1064,7 +1064,7 @@ final class EditorState {
         return chart
     }
 
-    /// Changes the selected chart, writing its part and its workbook anew.
+    /// Changes the selected chart, writing its part and the cells of its workbook that changed.
     func updateChart(in presentation: inout Presentation, _ change: (inout Chart) -> Void) {
         guard let shape = selectedShape(in: presentation), shape.isEditable, case .chart(var chart?) = shape.kind, !chart.kind.isExtended,
               let slideIndex = presentation.index(of: selectedSlideID ?? presentation.slides.first?.id),
@@ -1096,9 +1096,14 @@ final class EditorState {
             }
         }
 
-        guard let data = ChartWriter.data(for: chart, original: presentation.data(at: chart.path)) else { return }
+        let workbook = ChartWriter.workbookPath(of: chart, in: presentation)
+        let patched = workbook.flatMap(presentation.data(at:)).flatMap { ChartWriter.workbook(for: chart, patching: $0) }
+        guard let data = ChartWriter.data(
+            for: chart, original: presentation.data(at: chart.path), keepsReferences: patched != nil || workbook == nil
+        ) else { return }
         presentation.addedParts[chart.path] = data
-        if let workbook = ChartWriter.workbookPath(of: chart, in: presentation), let contents = ChartWriter.workbook(for: chart) {
+        // A workbook whose cells no longer fit the chart's data, or can't be patched safely, is made anew.
+        if let workbook, let contents = patched ?? ChartWriter.workbook(for: chart) {
             presentation.addedParts[workbook] = contents
         }
         // Read back, so each plot and series holds the XML it now has.
